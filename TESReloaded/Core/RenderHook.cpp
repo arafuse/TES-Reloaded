@@ -76,7 +76,6 @@ public:
 	void	TrackCullingBSFadeNode(NiCullingProcess*);
 	float	TrackFarPlane();
 	HRESULT TrackSetSamplerState(UInt32, D3DSAMPLERSTATETYPE, UInt32, UInt8);
-	void	TrackSetDirectionalLight(NiTransform* WorldTransform);
 #elif defined(SKYRIM)
 	void	TrackRender(BSRenderedTexture* RenderedTexture, int Arg2, int Arg3);
 	bool	TrackSetupRenderingPass(UInt32 Arg1, UInt32 Arg2);
@@ -297,15 +296,21 @@ float RenderHook::TrackFarPlane() {
 
 }
 
-void(__thiscall RenderHook::* SetDirectionalLight)(NiTransform* WorldTransform);
-void(__thiscall RenderHook::* TrackSetDirectionalLight)(NiTransform* WorldTransform);
-void RenderHook::TrackSetDirectionalLight(NiTransform* WorldTransform) {
-	return (this->*SetDirectionalLight)(WorldTransform);
-}
-
 UInt32 (__thiscall RenderHook::* SetupShaderPrograms)(NiGeometry*, NiSkinInstance*, NiSkinPartition::Partition*, NiGeometryBufferData*, NiPropertyState*, NiDynamicEffectState*, NiTransform*, UInt32);
 UInt32 (__thiscall RenderHook::* TrackSetupShaderPrograms)(NiGeometry*, NiSkinInstance*, NiSkinPartition::Partition*, NiGeometryBufferData*, NiPropertyState*, NiDynamicEffectState*, NiTransform*, UInt32);
 UInt32 RenderHook::TrackSetupShaderPrograms(NiGeometry* Geometry, NiSkinInstance* SkinInstance, NiSkinPartition::Partition* SkinPartition, NiGeometryBufferData* GeometryBufferData, NiPropertyState* PropertyState, NiDynamicEffectState* EffectState, NiTransform* WorldTransform, UInt32 WorldBound) {
+
+	D3DMATRIX* Proj = &TheRenderManager->projMatrix;
+
+	if (!TheShaderManager->jitterSet) {
+		D3DMATRIX ProjV = TheRenderManager->projMatrix;		
+		TheShaderManager->jitterProjectionX = Proj->_31 + TheShaderManager->ShaderConst.Jitter.x;
+		TheShaderManager->jitterProjectionY = Proj->_32 + TheShaderManager->ShaderConst.Jitter.y;
+		TheShaderManager->jitterSet = true;
+	}
+
+	Proj->_31 = TheShaderManager->jitterProjectionX;
+	Proj->_32 = TheShaderManager->jitterProjectionY;
 
 	NiDX9RenderState* RenderState = TheRenderManager->renderState;
 	NiD3DPass* Pass = ((NiD3DShader*)this)->CurrentPass;
@@ -370,7 +375,7 @@ UInt32 RenderHook::TrackSetupShaderPrograms(NiGeometry* Geometry, NiSkinInstance
 		}
 	}
 	else {
-		if (!MenuManager->IsActive(Menu::MenuType::kMenuType_BigFour)) {
+		if (!MenuManager->IsActive(Menu::MenuType::kMenuType_BigFour) && TheShaderManager->LocationState == CellLocation::Exterior) {
 			RenderState->SetRenderState(D3DRS_ZWRITEENABLE, FALSE, 0);
 		}
 	}
@@ -725,8 +730,6 @@ void CreateRenderHook() {
 #elif defined(OBLIVION)
 	*((int*)&SetupShaderPrograms)			= 0x0077A1F0;
 	TrackSetupShaderPrograms				= &RenderHook::TrackSetupShaderPrograms;
-	*((int*)&SetDirectionalLight)			= 0x007c8520;
-	TrackSetDirectionalLight				= &RenderHook::TrackSetDirectionalLight;
 	*((int*)&EndTargetGroup)				= 0x007AAA30;
 	TrackEndTargetGroup						= &RenderHook::TrackEndTargetGroup;
 	*((int*)&HDRRender)						= 0x007BDFC0;
@@ -756,7 +759,6 @@ void CreateRenderHook() {
 	//DetourAttach(&(PVOID&)SetShaderPackage,						  &TrackSetShaderPackage);
 #elif defined(OBLIVION)
 	DetourAttach(&(PVOID&)SetupShaderPrograms,			*((PVOID*)&TrackSetupShaderPrograms));
-	//DetourAttach(&(PVOID&)SetDirectionalLight,			*((PVOID*)&TrackSetDirectionalLight));
 	DetourAttach(&(PVOID&)EndTargetGroup,				*((PVOID*)&TrackEndTargetGroup));
 	DetourAttach(&(PVOID&)HDRRender,					*((PVOID*)&TrackHDRRender));
 	DetourAttach(&(PVOID&)FarPlane,						*((PVOID*)&TrackFarPlane));
