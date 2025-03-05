@@ -1015,6 +1015,7 @@ void SettingManager::LoadSettings() {
 	SettingsTAA.ClampRadius = atof(value);
 	GetPrivateProfileStringA("Default", "Sharpening", "0.15", value, SettingStringBuffer, Filename);
 	SettingsTAA.Sharpening = atof(value);
+	SettingsTAA.JitterEnabled = GetPrivateProfileIntA("Default", "JitterEnabled", 1, Filename);
 
 	strcpy(Filename, CurrentPath);
 	strcat(Filename, SettingsPath);
@@ -1700,6 +1701,7 @@ void SettingManager::SaveSettings(const char* Item, const char* Definition, cons
 			WritePrivateProfileStringA("Default", "BlendWeight", ToString(SettingsTAA.BlendWeight).c_str(), Filename);
 			WritePrivateProfileStringA("Default", "ClampRadius", ToString(SettingsTAA.ClampRadius).c_str(), Filename);
 			WritePrivateProfileStringA("Default", "Sharpening", ToString(SettingsTAA.Sharpening).c_str(), Filename);
+			WritePrivateProfileStringA("Default", "JitterEnabled", ToString(SettingsTAA.JitterEnabled).c_str(), Filename);
 		}
 		else if (!strcmp(Definition, "SnowAccumulation")) {
 			WritePrivateProfileStringA("Effects", "SnowAccumulation", ToString(SettingsMain.Effects.SnowAccumulation).c_str(), SettingsMain.Main.MainFile);
@@ -2395,6 +2397,7 @@ SettingsList SettingManager::GetMenuSettings(const char* Item, const char* Defin
 			Settings["BlendWeight"] = SettingsTAA.BlendWeight;
 			Settings["ClampRadius"] = SettingsTAA.ClampRadius;
 			Settings["Sharpening"] = SettingsTAA.Sharpening;
+			Settings["JitterEnabled"] = SettingsTAA.JitterEnabled;
 		}
 		else if (!strcmp(Definition, "Skin")) {
 			Settings["UseVanillaShaders"] = SettingsSkin.UseVanillaShaders;
@@ -3224,6 +3227,8 @@ void SettingManager::SetMenuSetting(const char* Item, const char* Definition, co
 				SettingsTAA.ClampRadius = Value;
 			else if (!strcmp(Setting, "Sharpening"))
 				SettingsTAA.Sharpening = Value;
+			else if (!strcmp(Setting, "JitterEnabled"))
+				SettingsTAA.JitterEnabled = Value;
 		}
 		else if (!strcmp(Definition, "Skin")) {
 			if (!strcmp(Setting, "Attenuation"))
