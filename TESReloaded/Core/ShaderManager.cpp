@@ -332,6 +332,8 @@ bool ShaderProgram::SetConstantTableValue2(LPCSTR Name, UInt32 Index) {
 		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.Specular.SpecularData;
 	else if (!strcmp(Name, "TESR_TAAData"))
 		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.TAA.Data;
+	else if (!strcmp(Name, "TESR_Jitter"))
+		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.Jitter;
 	else if (!strcmp(Name, "TESR_PrevWorldViewProjectionTransform"))
 		FloatShaderValues[Index].Value = (D3DXVECTOR4*)&TheShaderManager->PrevWorldViewProjMatrix;
 	else {
@@ -1056,10 +1058,6 @@ void ShaderManager::UpdateConstants() {
 			else if (ShaderConst.GameTime.y > ShaderConst.SunTiming.z && fabs(deltaz) - ShaderConst.SunDir.z < 0.0f)
 			{
 				ShaderConst.SunDir.z = -ShaderConst.SunDir.z;
-			}
-			else if (ShaderConst.GameTime.y < ShaderConst.SunTiming.y && fabs(deltaz) - ShaderConst.SunDir.z > 0.0f) {
-				//Will leave this for now, but truly dont know what it does besides making the sun direction incorrect.
-				//ShaderConst.SunDir.z = -ShaderConst.SunDir.z;
 			}
 
 			//TODO: use kClimate_Masser and kClimate_Secunda but not sure what to compare against?
@@ -1920,11 +1918,23 @@ void ShaderManager::UpdateConstants() {
 			if (weatherPercent == 1.0f && ShaderConst.fogData.y > TheSettingManager->SettingsVolumetricFog.MaxDistance) ShaderConst.VolumetricFog.Data.w = 0.0f;
 		}
 
+		TheShaderManager->ShaderConst.Jitter.x = 0.0f;
+		TheShaderManager->ShaderConst.Jitter.y = 0.0f;
 		if (TheSettingManager->SettingsMain.Effects.TAA) {
 			ShaderConst.TAA.Data.x = TheSettingManager->SettingsTAA.BlendWeight;
 			ShaderConst.TAA.Data.y = TheSettingManager->SettingsTAA.ClampRadius;
 			ShaderConst.TAA.Data.z = TheSettingManager->SettingsTAA.Sharpening;
+
+			if (TheSettingManager->SettingsTAA.JitterEnabled) {
+				jitterIndex++;
+				jitterIndex = jitterIndex % 3;
+				float haltonX = 2.0f * Halton(jitterIndex + 1, 2) - 1.0f;
+				float haltonY = 2.0f * Halton(jitterIndex + 1, 3) - 1.0f;
+				TheShaderManager->ShaderConst.Jitter.x = (haltonX / TheRenderManager->width);
+				TheShaderManager->ShaderConst.Jitter.y = (haltonY / TheRenderManager->height);
+			}		
 		}
+		jitterSet = false;
 
 		if (TheSettingManager->SettingsMain.Effects.VolumetricLight) {
 
@@ -2110,7 +2120,6 @@ void ShaderManager::BeginScene() {
 
 	RenderedBufferFilled = false;
 	DepthBufferFilled = false;
-
 }
 
 void ShaderManager::CreateShader(const char* Name) {
@@ -3370,4 +3379,20 @@ void ShaderManager::SetPhaseLumCoeff(int phaseLength, int phaseDay) {
 		ShaderConst.RaysPhaseCoeff.x = TheSettingManager->SettingsKhajiitRays.phaseLumTQtr;
 		return;
 	}
+}
+
+//source: https://alextardif.com/TAA.html
+float Halton(uint32_t i, uint32_t b)
+{
+	float f = 1.0f;
+	float r = 0.0f;
+
+	while (i > 0)
+	{
+		f /= static_cast<float>(b);
+		r = r + f * static_cast<float>(i % b);
+		i = static_cast<uint32_t>(floorf(static_cast<float>(i) / static_cast<float>(b)));
+	}
+
+	return r;
 }
