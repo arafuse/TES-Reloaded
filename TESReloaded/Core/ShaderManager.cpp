@@ -3382,7 +3382,7 @@ void ShaderManager::SetPhaseLumCoeff(int phaseLength, int phaseDay) {
 }
 
 //source: https://alextardif.com/TAA.html
-float Halton(uint32_t i, uint32_t b)
+float ShaderManager::Halton(uint32_t i, uint32_t b)
 {
 	float f = 1.0f;
 	float r = 0.0f;
