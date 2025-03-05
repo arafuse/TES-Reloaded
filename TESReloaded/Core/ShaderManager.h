@@ -403,6 +403,7 @@ public:
 	void					SetCustomConstant(const char* Name, D3DXVECTOR4 Value);
 	void					SetExtraEffectEnabled(const char* Name, bool Value);
 	void					SetPhaseLumCoeff(int phaseLength, int phaseDay);
+	float					Halton(uint32_t i, uint32_t b);
 
 	int						jitterIndex = 0;
 	float					jitterProjectionX;
