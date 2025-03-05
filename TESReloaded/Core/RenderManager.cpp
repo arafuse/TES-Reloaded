@@ -38,6 +38,7 @@ void RenderManager::SetupSceneCamera() {
 		D3DMATRIX* View = &TheRenderManager->viewMatrix;
 		D3DMATRIX* InvView = &TheRenderManager->invViewMatrix;
 		D3DMATRIX* Proj = &TheRenderManager->projMatrix;
+		D3DXMATRIX JitterProj;
 		D3DXMATRIX InvProj;
 		NiMatrix33* WorldRotate = &Camera->m_worldTransform.rot;
 		NiPoint3* WorldTranslate = &Camera->m_worldTransform.pos;
@@ -130,7 +131,10 @@ void RenderManager::SetupSceneCamera() {
 		Proj->_43 = -(Frustum->Near * Frustum->Far * InvFmN);
 		Proj->_44 = 0.0f;
 
-		D3DXMatrixInverse(&InvProj, NULL, (D3DXMATRIX*)Proj);
+		memcpy(&JitterProj, (D3DXMATRIX*)Proj, sizeof(JitterProj));
+		JitterProj._31 += TheShaderManager->ShaderConst.Jitter.x;
+		JitterProj._32 += TheShaderManager->ShaderConst.Jitter.y;
+		D3DXMatrixInverse(&InvProj, NULL, &JitterProj);
 		InvViewProjMatrix = InvProj * invViewMatrix;
 
 		WorldViewProjMatrix = worldMatrix * viewMatrix * projMatrix;
