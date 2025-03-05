@@ -65,15 +65,11 @@ ShadowManager::ShadowManager() {
 	TheShaderManager->ShaderConst.ShadowMap.ShadowBiasDeferred.z = TheSettingManager->SettingsShadows.Exteriors.deferredConstBias;
 	TheShaderManager->ShaderConst.ShadowMap.ShadowBiasDeferred.w = TheSettingManager->SettingsShadows.Exteriors.deferredFarConstBias;
 
-	UINT ShadowMapSize = 0;
-
 	//TODO: should this setting be on it's own? choose smaller of two for now
 	UINT ShadowCubeMapSize = min(ShadowsInteriors->ShadowCubeMapSize, ShadowsExteriorsPoint->ShadowCubeMapSize);
 
 	CurrentCell = NULL;
 	ShadowCubeMapState = ShadowCubeMapStateEnum::None;
-	int ShadowCubeLightCount = 0;
-	int ShadowCubeCullLightCount = 0;
 
 	ShadowMapVertex = new ShaderRecord();
 	if (ShadowMapVertex->LoadShader("ShadowMap.vso")) Device->CreateVertexShader((const DWORD*)ShadowMapVertex->Function, &ShadowMapVertexShader);
