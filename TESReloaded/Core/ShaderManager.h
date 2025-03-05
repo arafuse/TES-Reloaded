@@ -303,6 +303,7 @@ struct ShaderConstants {
 	D3DXVECTOR4				EveningTransLightDir;
 	bool					MorningTransLightDirSet;
 	D3DXVECTOR4				MorningTransLightDir;
+	D3DXVECTOR4			    Jitter;
 };
 
 struct ShaderValue {
@@ -403,7 +404,10 @@ public:
 	void					SetExtraEffectEnabled(const char* Name, bool Value);
 	void					SetPhaseLumCoeff(int phaseLength, int phaseDay);
 
-
+	int						jitterIndex = 0;
+	float					jitterProjectionX;
+	float					jitterProjectionY;
+	bool					jitterSet;
 	int						GameDay;
 	int						InitFrameCount;
 	int						InitFrameTarget;
