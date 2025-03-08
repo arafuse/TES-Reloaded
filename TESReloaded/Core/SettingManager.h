@@ -594,6 +594,7 @@ struct SettingsTAAStruct {
 	float ClampRadius;
 	float BlendWeight;
 	bool  JitterEnabled;
+	int	  JitterPattern;
 };
 
 struct SettingsVolumetricFogStruct {

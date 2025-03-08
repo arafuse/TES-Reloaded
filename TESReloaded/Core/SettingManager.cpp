@@ -1016,6 +1016,8 @@ void SettingManager::LoadSettings() {
 	GetPrivateProfileStringA("Default", "Sharpening", "0.15", value, SettingStringBuffer, Filename);
 	SettingsTAA.Sharpening = atof(value);
 	SettingsTAA.JitterEnabled = GetPrivateProfileIntA("Default", "JitterEnabled", 1, Filename);
+	GetPrivateProfileStringA("Default", "JitterRadius", "0.5", value, SettingStringBuffer, Filename);
+	SettingsTAA.JitterPattern = GetPrivateProfileIntA("Default", "JitterPattern", 1, Filename);
 
 	strcpy(Filename, CurrentPath);
 	strcat(Filename, SettingsPath);
@@ -1702,6 +1704,7 @@ void SettingManager::SaveSettings(const char* Item, const char* Definition, cons
 			WritePrivateProfileStringA("Default", "ClampRadius", ToString(SettingsTAA.ClampRadius).c_str(), Filename);
 			WritePrivateProfileStringA("Default", "Sharpening", ToString(SettingsTAA.Sharpening).c_str(), Filename);
 			WritePrivateProfileStringA("Default", "JitterEnabled", ToString(SettingsTAA.JitterEnabled).c_str(), Filename);
+			WritePrivateProfileStringA("Default", "JitterPattern", ToString(SettingsTAA.JitterPattern).c_str(), Filename);
 		}
 		else if (!strcmp(Definition, "SnowAccumulation")) {
 			WritePrivateProfileStringA("Effects", "SnowAccumulation", ToString(SettingsMain.Effects.SnowAccumulation).c_str(), SettingsMain.Main.MainFile);
@@ -2398,6 +2401,7 @@ SettingsList SettingManager::GetMenuSettings(const char* Item, const char* Defin
 			Settings["ClampRadius"] = SettingsTAA.ClampRadius;
 			Settings["Sharpening"] = SettingsTAA.Sharpening;
 			Settings["JitterEnabled"] = SettingsTAA.JitterEnabled;
+			Settings["JitterPattern"] = SettingsTAA.JitterPattern;
 		}
 		else if (!strcmp(Definition, "Skin")) {
 			Settings["UseVanillaShaders"] = SettingsSkin.UseVanillaShaders;
@@ -3229,6 +3233,8 @@ void SettingManager::SetMenuSetting(const char* Item, const char* Definition, co
 				SettingsTAA.Sharpening = Value;
 			else if (!strcmp(Setting, "JitterEnabled"))
 				SettingsTAA.JitterEnabled = Value;
+			else if (!strcmp(Setting, "JitterPattern"))
+				SettingsTAA.JitterPattern = Value;
 		}
 		else if (!strcmp(Definition, "Skin")) {
 			if (!strcmp(Setting, "Attenuation"))
