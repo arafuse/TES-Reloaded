@@ -1927,11 +1927,9 @@ void ShaderManager::UpdateConstants() {
 
 			if (TheSettingManager->SettingsTAA.JitterEnabled) {
 				jitterIndex++;
-				jitterIndex = jitterIndex % 3;
-				float haltonX = 2.0f * Halton(jitterIndex + 1, 2) - 1.0f;
-				float haltonY = 2.0f * Halton(jitterIndex + 1, 3) - 1.0f;
-				TheShaderManager->ShaderConst.Jitter.x = (haltonX / TheRenderManager->width);
-				TheShaderManager->ShaderConst.Jitter.y = (haltonY / TheRenderManager->height);
+				jitterIndex = jitterIndex % 2;
+				TheShaderManager->ShaderConst.Jitter.x = (jitterPattern[TheSettingManager->SettingsTAA.JitterPattern].pattern[jitterIndex].x / TheRenderManager->width);
+				TheShaderManager->ShaderConst.Jitter.y = (jitterPattern[TheSettingManager->SettingsTAA.JitterPattern].pattern[jitterIndex].y / TheRenderManager->height);
 			}		
 		}
 		jitterSet = false;
@@ -3379,20 +3377,4 @@ void ShaderManager::SetPhaseLumCoeff(int phaseLength, int phaseDay) {
 		ShaderConst.RaysPhaseCoeff.x = TheSettingManager->SettingsKhajiitRays.phaseLumTQtr;
 		return;
 	}
-}
-
-//source: https://alextardif.com/TAA.html
-float ShaderManager::Halton(uint32_t i, uint32_t b)
-{
-	float f = 1.0f;
-	float r = 0.0f;
-
-	while (i > 0)
-	{
-		f /= static_cast<float>(b);
-		r = r + f * static_cast<float>(i % b);
-		i = static_cast<uint32_t>(floorf(static_cast<float>(i) / static_cast<float>(b)));
-	}
-
-	return r;
 }

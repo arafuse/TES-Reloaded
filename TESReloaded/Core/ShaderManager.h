@@ -379,6 +379,18 @@ typedef std::map<std::string, D3DXVECTOR4> CustomConstants;
 class ShaderManager { // Never disposed
 public:
 	ShaderManager();
+
+
+	
+	struct JitterPair {
+		float x;
+		float y;
+	};
+
+	struct JitterPattern {
+		JitterPair pattern[2];
+	};
+
 	void					CreateEffects();
 	void					CompileShader(char* FileName, char* FileNameBinary, char* Source, ShaderType Type, ID3DXBuffer* Errors, ID3DXBuffer* Shader, ID3DXConstantTable* Table);
 	void					CompileEffect(char* FileName, char* FileNameBinary, char* Source, ID3DXBuffer* Errors);
@@ -403,11 +415,11 @@ public:
 	void					SetCustomConstant(const char* Name, D3DXVECTOR4 Value);
 	void					SetExtraEffectEnabled(const char* Name, bool Value);
 	void					SetPhaseLumCoeff(int phaseLength, int phaseDay);
-	float					Halton(uint32_t i, uint32_t b);
 
 	int						jitterIndex = 0;
 	float					jitterProjectionX;
 	float					jitterProjectionY;
+	const JitterPattern     jitterPattern[2] = { {-0.25f,0.25f,0.25f,-0.25f},{-0.5f,0.5f,0.5f,-0.5f} };
 	bool					jitterSet;
 	int						GameDay;
 	int						InitFrameCount;
