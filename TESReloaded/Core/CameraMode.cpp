@@ -58,7 +58,7 @@ void CameraMode::TrackToggleCamera(UInt8 FirstPerson) {
 #if defined(NEWVEGAS)
 	if (Player->isPipBoy) { (this->*ToggleCamera)(1); return; }
 #endif
-	(this->*ToggleCamera)(0);
+	(this->*ToggleCamera)(FirstPerson);
 
 }
 
