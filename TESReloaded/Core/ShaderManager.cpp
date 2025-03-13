@@ -1932,7 +1932,6 @@ void ShaderManager::UpdateConstants() {
 				TheShaderManager->ShaderConst.Jitter.y = (jitterPattern[TheSettingManager->SettingsTAA.JitterPattern].pattern[jitterIndex].y / TheRenderManager->height);
 			}		
 		}
-		jitterSet = false;
 
 		if (TheSettingManager->SettingsMain.Effects.VolumetricLight) {
 
@@ -2109,6 +2108,13 @@ void ShaderManager::SetVolumetricLightModifiers(SettingsVolumetricLightStruct* c
 }
 
 void ShaderManager::BeginScene() {
+
+	if (MenuManager->IsActive(Menu::MenuType::kMenuType_BigFour)) {
+		TheShaderManager->ShaderConst.Jitter.x = 0.0f;
+		TheShaderManager->ShaderConst.Jitter.y = 0.0f;
+	}
+
+	jitterSet = false;
 
 	if (ShaderConst.OverrideVanillaDirectionalLight) {
 		Tes->niDirectionalLight->m_direction.x = TheShaderManager->ShaderConst.DirectionalLight.x;
