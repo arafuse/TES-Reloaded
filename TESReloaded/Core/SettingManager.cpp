@@ -1311,6 +1311,12 @@ void SettingManager::LoadSettings() {
 	GetPrivateProfileStringA("ExteriorsPoint", "Darkness", "1.0", value, SettingStringBuffer, Filename);
 	SettingsShadows.ExteriorsPoint.Darkness = atof(value);
 	
+	// araf Alt settings for weather switch
+	SettingsShadows.ExteriorsAlt = SettingsShadowStruct::ExteriorsStruct(SettingsShadows.Exteriors);
+	SettingsShadows.ExteriorsPointAlt = SettingsShadowStruct::InteriorsStruct(SettingsShadows.ExteriorsPoint);
+	SettingsShadows.ExteriorsAlt.Darkness = SettingsShadows.Exteriors.Darkness + 0.35f;
+	SettingsShadows.ExteriorsPointAlt.Darkness = SettingsShadows.ExteriorsPointAlt.Darkness + 0.35f;
+
 	ValueList FormValue;
 	char Form[12] = { NULL };
 	char FormType[4] = { NULL };
@@ -3121,6 +3127,7 @@ void SettingManager::SetMenuSetting(const char* Item, const char* Definition, co
 			if (!strcmp(Section, "Exteriors")) {
 				if (!strcmp(Setting, "Darkness")) {
 					SettingsShadows.Exteriors.Darkness = Value;
+					SettingsShadows.ExteriorsAlt.Darkness = Value + 0.35f; // araf
 				}
 				else if (!strcmp(Setting, "ShadowMapFarPlane")) {
 					SettingsShadows.Exteriors.ShadowMapFarPlane = Value;
@@ -3208,6 +3215,7 @@ void SettingManager::SetMenuSetting(const char* Item, const char* Definition, co
 				}
 				else if (!strcmp(Setting, "Darkness")) {
 					SettingsShadows.ExteriorsPoint.Darkness = Value;
+					SettingsShadows.ExteriorsPointAlt.Darkness = Value + 0.35f; // araf
 				}
 				else if (!strcmp(Setting, "UsePostProcessing")) {
 					// Special case for forward or post-process shadowing
