@@ -4,5 +4,6 @@
 
 /.vs
 *.obj
+*.aps
 Debug/
 Release/

@@ -342,6 +342,10 @@ struct SettingsShadowStruct {
 	ExteriorsStruct		Exteriors;
 	InteriorsStruct		Interiors;
 	InteriorsStruct		ExteriorsPoint;
+
+	// araf
+	ExteriorsStruct		ExteriorsAlt;
+	InteriorsStruct		ExteriorsPointAlt;
 };
 
 struct SettingsShadowPointLightsStruct {

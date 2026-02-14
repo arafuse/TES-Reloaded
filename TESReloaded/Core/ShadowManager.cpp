@@ -754,7 +754,11 @@ void ShadowManager::RenderShadowCubeMapExt(NiPointLight** Lights, int LightIndex
 									forceRedrawMap[L] = true;
 								}
 								if (isActorType) {
-									actorMap[L].emplace_back(Ref->GetNode());
+									// araf Exclude torches on the player, bugs in IFPV
+									// TODO: Exclude player's own torch
+									if (Ref->refID != Player->refID || !Lights[L]->CanCarry) {
+										actorMap[L].emplace_back(Ref->GetNode());
+									}
 								}
 								else {
 									refMap[L].emplace_back(Ref->GetNode());
@@ -817,7 +821,11 @@ void ShadowManager::RenderShadowCubeMapInt(NiPointLight** Lights, int LightIndex
 						forceRedrawMap[L] = true;
 					}
 					if (isActorType) {
-						actorMap[L].emplace_back(Ref->GetNode());
+						// araf Exclude torches on the player, bugs in IFPV
+						// TODO: Exclude player's own torch
+						if (Ref->refID != Player->refID || !Lights[L]->CanCarry) {
+							actorMap[L].emplace_back(Ref->GetNode());
+						}
 					}
 					else {
 						refMap[L].emplace_back(Ref->GetNode());
@@ -958,9 +966,9 @@ void ShadowManager::RenderShadowCubeMapActor(int LightIndex, std::map<int, std::
 	D3DXMATRIX View, Proj;
 	D3DXVECTOR3 Eye, At, Up;
 
-
-	for (int L = 0; L <= LightIndex; L++) {
-
+	// araf Cap this due exterior shadows hack
+	// for (int L = 0; L <= LightIndex; L++) {
+	for (int L = 0; L <= 1; L++) {	
 		SetShadowCubeMapRegisters(L);
 
 		if (ShadowCubeMapStaticTracker[L] && EnableStaticMaps) {
@@ -997,7 +1005,18 @@ void ShadowManager::RenderExteriorShadows() {
 		return;
 	}
 
-	SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors = &TheSettingManager->SettingsShadows.Exteriors;
+	// araf adjust darkness based on weather		
+	Sky* WorldSky = Tes->sky;
+	TESWeather* currentWeather = WorldSky->firstWeather;
+	SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors;
+
+	if (currentWeather->weatherType != TESWeather::WeatherType::kType_Pleasant && currentWeather->weatherType != TESWeather::WeatherType::kType_None) {
+		ShadowsExteriors = &TheSettingManager->SettingsShadows.ExteriorsAlt;
+	}
+	else {
+		ShadowsExteriors = &TheSettingManager->SettingsShadows.Exteriors;
+	}
+
 	IDirect3DDevice9* Device = TheRenderManager->device;
 	D3DXVECTOR4* ShadowData = &TheShaderManager->ShaderConst.Shadow.Data;
 	D3DXVECTOR4* ShadowSkinData = &TheShaderManager->ShaderConst.Shadow.ShadowSkinData;
@@ -1131,7 +1150,17 @@ void ShadowManager::RenderInteriorShadows() {
 	CurrentVertex = ShadowCubeMapVertex;
 
 	if (Player->GetWorldSpace()) {
-		ShadowSettings = &TheSettingManager->SettingsShadows.ExteriorsPoint;
+		// araf adjust darkness based on weather		
+		Sky* WorldSky = Tes->sky;
+		TESWeather* currentWeather = WorldSky->firstWeather;
+
+		if (currentWeather->weatherType != TESWeather::WeatherType::kType_Pleasant && currentWeather->weatherType != TESWeather::WeatherType::kType_None) {
+			ShadowSettings = &TheSettingManager->SettingsShadows.ExteriorsPointAlt;
+		}
+		else {
+			ShadowSettings = &TheSettingManager->SettingsShadows.ExteriorsPoint;
+		}
+
 		CurrentPixel = ShadowCubeMapExteriorPixel;
 	}
 	else {
@@ -1166,7 +1195,10 @@ void ShadowManager::RenderInteriorShadows() {
 	int GeneralPointLightIndex = -1;
 
 	if (ShadowLightPointSettings->bEnabled) {
+		// araf Int shadows in 'behaves as exterior' cells for Immersive Interiors
+		/*
 		if (!(Player->parentCell->flags0 & Player->parentCell->kFlags0_BehaveLikeExterior && ShadowLightDir->z > 0.01f)) {
+		*/
 			FakeExtShadowLightDirSet = false;
 			FakeExtShadowLightDirCnt = 0;
 			GetShadowSceneLights(SceneLights, ShadowCastLights, ShadowCullLights, GeneralPointLights, ShadowCastLightIndex, ShadowCullLightIndex, GeneralPointLightIndex, ShadowLightPointSettings);
@@ -1182,13 +1214,14 @@ void ShadowManager::RenderInteriorShadows() {
 				GeneralPointLightIndex = -1; //not needed for interiors
 			}
 			ShadowData->y = ShadowSettings->Darkness;
-		}
+		/*
 		else {
 			ShadowCastLightIndex = 0;
 			RenderShadowCubeMapFakeInt(ShadowCastLightIndex, ShadowSettings, ShadowData);
 			ClearShadowCubeMaps(Device, ShadowCastLightIndex, ShadowCubeMapStateEnum::Interior);
 			ShadowData->y = 2.0f;
 		}
+		*/
 	}
 	else {
 		if (Player->GetWorldSpace()) { //set these to cull the normal exterior shadows

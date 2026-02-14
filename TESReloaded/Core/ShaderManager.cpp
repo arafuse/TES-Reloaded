@@ -1473,7 +1473,9 @@ void ShaderManager::UpdateConstants() {
 			ShaderConst.InteriorDimmer.x = dimmer;
 
 			if (TheSettingManager->SettingsMain.Main.InteriorDimmerCoeff < 1.0f) {
-				float dimmerAdj = std::clamp(dimmer, TheSettingManager->SettingsMain.Main.InteriorDimmerCoeff, 1.0f);
+				// araf InteriorDimmerCoeff is now a dimmer switch
+				// float dimmerAdj = std::clamp(dimmer, TheSettingManager->SettingsMain.Main.InteriorDimmerCoeff, 1.0f);
+				float dimmerAdj = TheSettingManager->SettingsMain.Main.InteriorDimmerCoeff;
 
 				LightData->ambient.r = InteriorLighting.r * dimmerAdj;
 				LightData->ambient.g = InteriorLighting.g * dimmerAdj;
@@ -1572,18 +1574,19 @@ void ShaderManager::UpdateConstants() {
 			ShaderConst.WetWorld.Coeffs.w = TheSettingManager->SettingsPrecipitations.WetWorld.PuddleSpecularMultiplier;
 		}
 		
+		// araf Stretch out rain transition time from 1.0 - 8.0 to 1.0 - 0.5
 		if (TheSettingManager->SettingsMain.Effects.Precipitations) {
 			if (currentWeather->weatherType == TESWeather::WeatherType::kType_Rainy) {
-				if (weatherPercent > 0.8f) {
-					ShaderConst.Precipitations.RainData.x = (weatherPercent - 0.8f) / (1.0f - 0.8f);
+				if (weatherPercent > 0.5f) {
+					ShaderConst.Precipitations.RainData.x = (weatherPercent - 0.5f) / (1.0f - 0.5f);
 				}
 				else {
 					ShaderConst.Precipitations.RainData.x = 0.0f;
 				}
 			}
 			else if (!previousWeather || (previousWeather && previousWeather->weatherType == TESWeather::WeatherType::kType_Rainy)) {
-				if ((1.0f - weatherPercent) > 0.8f) {
-					ShaderConst.Precipitations.RainData.x = ((1.0f - weatherPercent) - 0.8f) / (1.0f - 0.8f);
+				if ((1.0f - weatherPercent) > 0.5f) {
+					ShaderConst.Precipitations.RainData.x = ((1.0f - weatherPercent) - 0.5f) / (1.0f - 0.5f);
 				}
 				else {
 					ShaderConst.Precipitations.RainData.x = 0.0f;
@@ -2904,7 +2907,7 @@ void ShaderManager::RenderEffects(IDirect3DSurface9* RenderTarget) {
 		BloomEffect->SetCT();
 		BloomEffect->Render(Device, RenderTarget, RenderedSurface, false);
 	}
-	if (Effects->Underwater && ShaderConst.HasWater && TheRenderManager->CameraPosition.z < ShaderConst.Water.waterSettings.x + 20.0f) {
+	if (Effects->Underwater && ShaderConst.HasWater && TheRenderManager->CameraPosition.z < ShaderConst.Water.waterSettings.x + 3.0f) { //  + 20.0f araf Bad offset with Enhanced Camera
 		if (TheRenderManager->CameraPosition.z < ShaderConst.Water.waterSettings.x) {
 			if (ShaderConst.WaterLens.Percent > -2.0f) ShaderConst.WaterLens.Percent = ShaderConst.WaterLens.Percent - 1.0f;
 		}
