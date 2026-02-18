@@ -25,6 +25,8 @@ static const float3x3 p = float3x3(30.323122,30.323122,30.323122,30.323122,30.32
 
 #define DEPTH 8.0
 #define SPEED 8.0
+#define OCCLUSION_STEPS 10
+#define MAX_RAIN_DEPTH 2000.0
 
 struct VSOUT
 {
@@ -94,28 +96,21 @@ float4 Rain( VSOUT IN ) : COLOR0
 	float3 world = toWorld(IN.UVCoord);
 	
 	float depth = readDepth(IN.UVCoord);
-	float3 camera_vector = world * depth;
-	float4 world_pos = float4(TESR_CameraPosition.xyz + camera_vector, 1.0f);
-	float4 pos = mul(world_pos, TESR_WorldViewProjectionTransform);
-	float4 ortho_pos = mul(pos, TESR_ShadowCameraToLightTransformOrtho);	
-	float ortho = GetOrtho(ortho_pos);
-	
-	if (ortho == 0.0f) {
-		float stepdepth = (depth - nearZ) / 10.0f;
-		[unroll]
-		for (int i = 1; i <= 10; i++) {
-			float3 camera_vectorS = world * (depth - stepdepth * i);
-			float4 world_posS = float4(TESR_CameraPosition.xyz + camera_vectorS, 1.0f);
-			float4 posS = mul(world_posS, TESR_WorldViewProjectionTransform);
-			float4 ortho_posS = mul(posS, TESR_ShadowCameraToLightTransformOrtho);
-			float orthoS = GetOrtho(ortho_posS);
-			if (orthoS) {
-				ortho = 1.0f;
-				break;
-			}
-		}
+	float marchDepth = min(depth, MAX_RAIN_DEPTH);
+	float stepSize = marchDepth / OCCLUSION_STEPS;
+
+	// Forward ray march: accumulate open-air fraction from camera to surface
+	float openSteps = 0.0f;
+	for (int i = 1; i <= OCCLUSION_STEPS; i++) {
+		float3 stepPos = TESR_CameraPosition.xyz + world * (stepSize * i);
+		float4 stepWorld = float4(stepPos, 1.0f);
+		float4 stepClip = mul(stepWorld, TESR_WorldViewProjectionTransform);
+		float4 stepOrtho = mul(stepClip, TESR_ShadowCameraToLightTransformOrtho);
+		openSteps += GetOrtho(stepOrtho);
 	}
-	if (ortho == 0.0f) discard;
+	float ortho = openSteps / OCCLUSION_STEPS;
+
+	if (ortho < 0.01f) discard;
 	
 	float2 q;
 	float3 n;
@@ -142,7 +137,7 @@ float4 Rain( VSOUT IN ) : COLOR0
 		edge = 0.005f + 0.05f * min(0.25f * i, 1.5f);
 		sn += smoothstep(edge, -edge, d) * (r.x / (1.0f + 0.01f * i * DEPTH));
 	}
-	color += (sn * (TESR_FogColor + 0.5f));
+	color += (sn * ortho * (TESR_FogColor + 0.5f));
 	return float4(color.rgb, 1.0f);
 
 }
