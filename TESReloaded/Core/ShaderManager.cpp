@@ -1574,7 +1574,7 @@ void ShaderManager::UpdateConstants() {
 			ShaderConst.WetWorld.Coeffs.w = TheSettingManager->SettingsPrecipitations.WetWorld.PuddleSpecularMultiplier;
 		}
 		
-		// araf Stretch out rain transition time from 1.0 - 8.0 to 1.0 - 0.5
+		// araf Stretch out rain transition time from 1.0 - 0.8 to 1.0 - 0.5
 		if (TheSettingManager->SettingsMain.Effects.Precipitations) {
 			if (currentWeather->weatherType == TESWeather::WeatherType::kType_Rainy) {
 				if (weatherPercent > 0.5f) {
