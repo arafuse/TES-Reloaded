@@ -1775,6 +1775,7 @@ void ShaderManager::UpdateConstants() {
 				GrassCollisionActors[i].x = nearest[i].x;
 				GrassCollisionActors[i].y = nearest[i].y;
 			}
+
 		}
 
 		if (TheSettingManager->SettingsMain.Shaders.HDR) {
