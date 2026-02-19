@@ -428,6 +428,8 @@ public:
 	int						InitFrameTarget;
 	struct					EffectQuad { float x, y, z; float u, v; };
 	ShaderConstants			ShaderConst;
+	struct { float x, y; }	GrassCollisionActors[4];
+	int						GrassCollisionActorCount;
 	CustomConstants			CustomConst;
 	CellLocation			LocationState;
 	bool					DialogState;

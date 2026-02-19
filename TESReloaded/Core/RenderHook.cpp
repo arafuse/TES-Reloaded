@@ -337,6 +337,23 @@ UInt32 RenderHook::TrackSetupShaderPrograms(NiGeometry* Geometry, NiSkinInstance
 			VertexShader->ShaderProg->SetPerGeomCT();
 		}
 
+		if (VertexShader->ShaderProg && VertexShader->isGrass) {
+			float cx = WorldTransform->pos.x;
+			float cy = WorldTransform->pos.y;
+			D3DXVECTOR4 xy0(
+				TheShaderManager->GrassCollisionActors[0].x - cx,
+				TheShaderManager->GrassCollisionActors[0].y - cy,
+				TheShaderManager->GrassCollisionActors[1].x - cx,
+				TheShaderManager->GrassCollisionActors[1].y - cy);
+			D3DXVECTOR4 xy1(
+				TheShaderManager->GrassCollisionActors[2].x - cx,
+				TheShaderManager->GrassCollisionActors[2].y - cy,
+				TheShaderManager->GrassCollisionActors[3].x - cx,
+				TheShaderManager->GrassCollisionActors[3].y - cy);
+			TheRenderManager->device->SetVertexShaderConstantF(254, (const float*)&xy0, 1);
+			TheRenderManager->device->SetVertexShaderConstantF(255, (const float*)&xy1, 1);
+		}
+
 		if (VertexShader->ShaderProg && VertexShader->isEyePosition) {
 			NiPoint3 eye = Geometry->GetEye(&WorldSceneGraph->camera->m_worldTransform.pos);
 			eye = Geometry->m_worldTransform.rot < eye;

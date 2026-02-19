@@ -1770,10 +1770,11 @@ void ShaderManager::UpdateConstants() {
 			}
 
 			ShaderConst.Grass.CollisionParams.w = (float)count;
-			ShaderConst.Grass.CollisionXY[0] = D3DXVECTOR4(
-				nearest[0].x, nearest[0].y, nearest[1].x, nearest[1].y);
-			ShaderConst.Grass.CollisionXY[1] = D3DXVECTOR4(
-				nearest[2].x, nearest[2].y, nearest[3].x, nearest[3].y);
+			GrassCollisionActorCount = count;
+			for (int i = 0; i < 4; i++) {
+				GrassCollisionActors[i].x = nearest[i].x;
+				GrassCollisionActors[i].y = nearest[i].y;
+			}
 		}
 
 		if (TheSettingManager->SettingsMain.Shaders.HDR) {

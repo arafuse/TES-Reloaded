@@ -15,6 +15,7 @@ public:
 	bool					isEyePosition;
 	bool					isSun;
 	bool					isTree;
+	bool					isGrass;
 };
 
 class NiD3DPixelShaderEx : public NiD3DPixelShader {
