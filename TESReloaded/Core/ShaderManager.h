@@ -93,7 +93,7 @@ struct ShaderConstants {
 	struct GrassStruct {
 		D3DXVECTOR4		Scale;
 		D3DXVECTOR4		CollisionParams;
-		D3DXVECTOR4		CollisionXY[2];
+		D3DXVECTOR4		CollisionXY[3];
 	};
 	struct POMStruct {
 		D3DXVECTOR4		ParallaxData;
@@ -428,7 +428,7 @@ public:
 	int						InitFrameTarget;
 	struct					EffectQuad { float x, y, z; float u, v; };
 	ShaderConstants			ShaderConst;
-	struct { float x, y; }	GrassCollisionActors[4];
+	struct { float x, y; }	GrassCollisionActors[6];
 	int						GrassCollisionActorCount;
 	CustomConstants			CustomConst;
 	CellLocation			LocationState;
