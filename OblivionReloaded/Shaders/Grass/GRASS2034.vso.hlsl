@@ -24,6 +24,9 @@ float4 TESR_GrassScale : register(c248);
 row_major float4x4 TESR_ShadowCameraToLightTransformNear : register(c249);
 float4 TESR_PointLightPosition[2]: register(c16);
 float4 TESR_PointLightColor[2]: register(c18);
+float4 TESR_GrassCollisionParams : register(c253);
+float4 TESR_GrassCollisionXY0 : register(c254);
+float4 TESR_GrassCollisionXY1 : register(c255);
 
 //
 //
@@ -122,7 +125,7 @@ VS_OUTPUT main(VS_INPUT IN) {
     r1.xyz = (r4.x * r1.xyz) + r3.xyz;
     r5.xyz = normalize(r1.xyz);
     r1.x = expand(frac(q0.x / 17));	// [0,1] to [-1,+1]
-    r1.w = sqrt(1.0 - sqr(r1.x));	// arcsin = 1 / sqrt(1 - x²)
+    r1.w = sqrt(1.0 - sqr(r1.x));	// arcsin = 1 / sqrt(1 - xï¿½)
     r1.yz = const_16.yz;
     scale.xyz = ScaleMask.xyz * TESR_GrassScale.xyz;
     r3.xyz = (((r1.y * InstanceData[0 + IN.texcoord_1.x].w) * scale.xyz) + TESR_GrassScale.w) * IN.position.xyz;
@@ -133,6 +136,38 @@ VS_OUTPUT main(VS_INPUT IN) {
     r1.xyz = (r3.z * r0.xyz) + r4.xyz;
     r4.x = dot(DiffuseDir.xyz, r0.xyz);
     r1.xy = (((sin(fracr((q0.x / 128) + WindData.w)) * WindData.z) * sqr(IN.color_0.a)) * WindData.xy) + r1.xy;
+
+    // Grass collision
+    {
+        float2 bladeXY = InstanceData[0 + IN.texcoord_1.x].xy;
+        float tipWeight = sqr(IN.color_0.a);
+        float radius = TESR_GrassCollisionParams.x;
+        float pushStr = TESR_GrassCollisionParams.y;
+        float flatStr = TESR_GrassCollisionParams.z;
+        int numActors = (int)TESR_GrassCollisionParams.w;
+        float invRadius = 1.0 / max(radius, 0.001);
+
+        float3 collisionDisp = 0;
+        float2 actors[4] = {
+            TESR_GrassCollisionXY0.xy, TESR_GrassCollisionXY0.zw,
+            TESR_GrassCollisionXY1.xy, TESR_GrassCollisionXY1.zw
+        };
+
+        [unroll]
+        for (int i = 0; i < 4; i++) {
+            if (i >= numActors) break;
+            float2 diff = bladeXY - actors[i];
+            float dist = length(diff);
+            float t = saturate(dist * invRadius);
+            float influence = smoothstep(1.0, 0.0, t);
+
+            float2 pushDir = (dist > 0.001) ? (diff / dist) : float2(1, 0);
+            collisionDisp.xy += pushDir * influence * pushStr * tipWeight;
+            collisionDisp.z -= influence * flatStr * tipWeight;
+        }
+        r1.xyz += collisionDisp;
+    }
+
     r1.xyz = r1.xyz + InstanceData[0 + IN.texcoord_1.x];
     OUT.texcoord_1.w = 0.5;
     OUT.texcoord_1.xyz = compress((LightPosition.xyz - r1.xyz) / LightPosition.w);    if (distance(LightPosition.xyz, TESR_PointLightPosition[0].xyz) < 3.5f)   {        OUT.texcoord_2.w = 0.5;        OUT.texcoord_2.xyz = compress((TESR_PointLightPosition[1].xyz - r1.xyz) / TESR_PointLightPosition[1].w);        OUT.texcoord_3.xyz = TESR_PointLightColor[1];    }    else {        OUT.texcoord_2.w = 0.5;            OUT.texcoord_2.xyz = compress((TESR_PointLightPosition[0].xyz - r1.xyz) / TESR_PointLightPosition[0].w);        OUT.texcoord_3.xyz = TESR_PointLightColor[0];    }	// [-1,+1] to [0,1]

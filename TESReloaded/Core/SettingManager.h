@@ -393,6 +393,9 @@ struct SettingsGrassStruct {
 	float MinHeight;
 	float MinDistance;
 	float MaxDistance;
+	float CollisionRadius;
+	float CollisionStrength;
+	float CollisionFlattenStrength;
 };
 
 struct SettingsHDRStruct {

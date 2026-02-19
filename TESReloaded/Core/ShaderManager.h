@@ -92,6 +92,8 @@ struct ShaderConstants {
 	};
 	struct GrassStruct {
 		D3DXVECTOR4		Scale;
+		D3DXVECTOR4		CollisionParams;
+		D3DXVECTOR4		CollisionXY[2];
 	};
 	struct POMStruct {
 		D3DXVECTOR4		ParallaxData;
