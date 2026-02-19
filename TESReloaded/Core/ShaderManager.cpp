@@ -80,6 +80,12 @@ bool ShaderProgram::SetConstantTableValue1(LPCSTR Name, UInt32 Index) {
 		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.POM.ParallaxData;
 	else if (!strcmp(Name, "TESR_GrassScale"))
 		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.Grass.Scale;
+	else if (!strcmp(Name, "TESR_GrassCollisionParams"))
+		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.Grass.CollisionParams;
+	else if (!strcmp(Name, "TESR_GrassCollisionXY0"))
+		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.Grass.CollisionXY[0];
+	else if (!strcmp(Name, "TESR_GrassCollisionXY1"))
+		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.Grass.CollisionXY[1];
 	else if (!strcmp(Name, "TESR_TerrainData"))
 		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.Terrain.Data;
 	else if (!strcmp(Name, "TESR_SkinData"))
@@ -1681,6 +1687,96 @@ void ShaderManager::UpdateConstants() {
 				*SettingGrassWindMagnitudeMax = *LocalGrassWindMagnitudeMax = TheSettingManager->SettingsGrass.WindCoefficient * ShaderConst.currentwindSpeed;
 				*SettingGrassWindMagnitudeMin = *LocalGrassWindMagnitudeMin = *SettingGrassWindMagnitudeMax * 0.5f;
 			}
+
+			// Grass collision: find nearest 4 actors
+			ShaderConst.Grass.CollisionParams.x = TheSettingManager->SettingsGrass.CollisionRadius;
+			ShaderConst.Grass.CollisionParams.y = TheSettingManager->SettingsGrass.CollisionStrength;
+			ShaderConst.Grass.CollisionParams.z = TheSettingManager->SettingsGrass.CollisionFlattenStrength;
+			memset(ShaderConst.Grass.CollisionXY, 0, sizeof(ShaderConst.Grass.CollisionXY));
+
+			struct ActorDist { float x, y, distSq; };
+			ActorDist nearest[4] = {};
+			int count = 0;
+			float maxTrackDist = ShaderConst.Grass.CollisionParams.x * 2.0f;
+			float maxTrackDistSq = maxTrackDist * maxTrackDist;
+
+			if (Player) {
+				nearest[0] = { Player->pos.x, Player->pos.y, 0.0f };
+				count = 1;
+			}
+
+			if (Player && Player->parentCell) {
+				TESWorldSpace* currentWorldSpace = Player->GetWorldSpace();
+				if (currentWorldSpace) {
+					for (UInt32 x = 0; x < *SettingGridsToLoad; x++) {
+						for (UInt32 y = 0; y < *SettingGridsToLoad; y++) {
+							TESObjectCELL* Cell = Tes->gridCellArray->GetCell(x, y);
+							if (!Cell) continue;
+							TList<TESObjectREFR>::Entry* Entry = &Cell->objectList.First;
+							while (Entry) {
+								if (TESObjectREFR* Ref = Entry->item) {
+									if (Ref->baseForm && Ref != Player) {
+										UInt8 formType = Ref->baseForm->formType;
+										if (formType >= 0x2A && formType <= 0x2C) {
+											float dx = Ref->pos.x - Player->pos.x;
+											float dy = Ref->pos.y - Player->pos.y;
+											float distSq = dx * dx + dy * dy;
+											if (distSq < maxTrackDistSq) {
+												if (count < 4) {
+													nearest[count] = { Ref->pos.x, Ref->pos.y, distSq };
+													count++;
+												} else {
+													int farthestIdx = 1;
+													for (int i = 2; i < 4; i++)
+														if (nearest[i].distSq > nearest[farthestIdx].distSq)
+															farthestIdx = i;
+													if (distSq < nearest[farthestIdx].distSq)
+														nearest[farthestIdx] = { Ref->pos.x, Ref->pos.y, distSq };
+												}
+											}
+										}
+									}
+								}
+								Entry = Entry->next;
+							}
+						}
+					}
+				} else {
+					TList<TESObjectREFR>::Entry* Entry = &Player->parentCell->objectList.First;
+					while (Entry) {
+						if (TESObjectREFR* Ref = Entry->item) {
+							if (Ref->baseForm && Ref != Player) {
+								UInt8 formType = Ref->baseForm->formType;
+								if (formType >= 0x2A && formType <= 0x2C) {
+									float dx = Ref->pos.x - Player->pos.x;
+									float dy = Ref->pos.y - Player->pos.y;
+									float distSq = dx * dx + dy * dy;
+									if (distSq < maxTrackDistSq) {
+										if (count < 4) {
+											nearest[count] = { Ref->pos.x, Ref->pos.y, distSq };
+											count++;
+										} else {
+											int farthestIdx = 1;
+											for (int i = 2; i < 4; i++)
+												if (nearest[i].distSq > nearest[farthestIdx].distSq)
+													farthestIdx = i;
+											if (distSq < nearest[farthestIdx].distSq)
+												nearest[farthestIdx] = { Ref->pos.x, Ref->pos.y, distSq };
+										}
+									}
+								}
+							}
+						}
+						Entry = Entry->next;
+					}
+				}
+			}
+
+			ShaderConst.Grass.CollisionParams.w = (float)count;
+			ShaderConst.Grass.CollisionXY[0] = D3DXVECTOR4(
+				nearest[0].x, nearest[0].y, nearest[1].x, nearest[1].y);
+			ShaderConst.Grass.CollisionXY[1] = D3DXVECTOR4(
+				nearest[2].x, nearest[2].y, nearest[3].x, nearest[3].y);
 		}
 
 		if (TheSettingManager->SettingsMain.Shaders.HDR) {

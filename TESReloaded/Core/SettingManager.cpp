@@ -562,6 +562,12 @@ void SettingManager::LoadSettings() {
 	SettingsGrass.MinDistance = atof(value);
 	GetPrivateProfileStringA("Default", "MaxDistance", "12000.0", value, SettingStringBuffer, Filename);
 	SettingsGrass.MaxDistance = atof(value);
+	GetPrivateProfileStringA("Default", "CollisionRadius", "80.0", value, SettingStringBuffer, Filename);
+	SettingsGrass.CollisionRadius = atof(value);
+	GetPrivateProfileStringA("Default", "CollisionStrength", "150.0", value, SettingStringBuffer, Filename);
+	SettingsGrass.CollisionStrength = atof(value);
+	GetPrivateProfileStringA("Default", "CollisionFlattenStrength", "60.0", value, SettingStringBuffer, Filename);
+	SettingsGrass.CollisionFlattenStrength = atof(value);
 
 	strcpy(Filename, CurrentPath);
 	strcat(Filename, SettingsPath);
@@ -1625,6 +1631,9 @@ void SettingManager::SaveSettings(const char* Item, const char* Definition, cons
 			WritePrivateProfileStringA("Default", "ScaleZ", ToString(SettingsGrass.ScaleZ).c_str(), Filename);
 			WritePrivateProfileStringA("Default", "WindCoefficient", ToString(SettingsGrass.WindCoefficient).c_str(), Filename);
 			WritePrivateProfileStringA("Default", "WindEnabled", ToString(SettingsGrass.WindEnabled).c_str(), Filename);
+			WritePrivateProfileStringA("Default", "CollisionRadius", ToString(SettingsGrass.CollisionRadius).c_str(), Filename);
+			WritePrivateProfileStringA("Default", "CollisionStrength", ToString(SettingsGrass.CollisionStrength).c_str(), Filename);
+			WritePrivateProfileStringA("Default", "CollisionFlattenStrength", ToString(SettingsGrass.CollisionFlattenStrength).c_str(), Filename);
 		}
 		else if (!strcmp(Definition, "HDR")) {
 			strcat(Filename, "HDR\\HDR.ini");
@@ -2338,6 +2347,9 @@ SettingsList SettingManager::GetMenuSettings(const char* Item, const char* Defin
 			Settings["ScaleZ"] = SettingsGrass.ScaleZ;
 			Settings["WindCoefficient"] = SettingsGrass.WindCoefficient;
 			Settings["WindEnabled"] = SettingsGrass.WindEnabled;
+			Settings["CollisionRadius"] = SettingsGrass.CollisionRadius;
+			Settings["CollisionStrength"] = SettingsGrass.CollisionStrength;
+			Settings["CollisionFlattenStrength"] = SettingsGrass.CollisionFlattenStrength;
 		}
 		else if (!strcmp(Definition, "HDR")) {
 			Settings["ToneMapping"] = SettingsHDR.ToneMapping;
@@ -3089,6 +3101,12 @@ void SettingManager::SetMenuSetting(const char* Item, const char* Definition, co
 				SettingsGrass.WindCoefficient = Value;
 			else if (!strcmp(Setting, "WindEnabled"))
 				SettingsGrass.WindEnabled = Value;
+			else if (!strcmp(Setting, "CollisionRadius"))
+				SettingsGrass.CollisionRadius = Value;
+			else if (!strcmp(Setting, "CollisionStrength"))
+				SettingsGrass.CollisionStrength = Value;
+			else if (!strcmp(Setting, "CollisionFlattenStrength"))
+				SettingsGrass.CollisionFlattenStrength = Value;
 		}
 		else if (!strcmp(Definition, "HDR")) {
 			if (!strcmp(Setting, "ToneMapping"))

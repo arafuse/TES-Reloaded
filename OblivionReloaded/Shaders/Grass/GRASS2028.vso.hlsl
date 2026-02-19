@@ -22,6 +22,9 @@ float4 InstanceData[228] : register(c20);
 float4 TESR_GrassScale : register(c248);
 row_major float4x4 TESR_ShadowCameraToLightTransformNear : register(c249);
 row_major float4x4 TESR_ShadowCameraToLightTransformFar : register(c16);
+float4 TESR_GrassCollisionParams : register(c253);
+float4 TESR_GrassCollisionXY0 : register(c254);
+float4 TESR_GrassCollisionXY1 : register(c255);
 
 // Registers:
 //
@@ -104,6 +107,38 @@ VS_OUTPUT main(VS_INPUT IN) {
     r2.x = dot(r0.xyz, r1.xyz);
     r0.z = r1.z;
     r0.xy = (((sin(fracr((q0.x / 128) + WindData.w)) * WindData.z) * sqr(IN.LCOLOR_0.w)) * WindData.xy) + r2.xy;
+
+    // Grass collision
+    {
+        float2 bladeXY = InstanceData[0 + IN.LTEXCOORD_1.x].xy;
+        float tipWeight = sqr(IN.LCOLOR_0.w);
+        float radius = TESR_GrassCollisionParams.x;
+        float pushStr = TESR_GrassCollisionParams.y;
+        float flatStr = TESR_GrassCollisionParams.z;
+        int numActors = (int)TESR_GrassCollisionParams.w;
+        float invRadius = 1.0 / max(radius, 0.001);
+
+        float3 collisionDisp = 0;
+        float2 actors[4] = {
+            TESR_GrassCollisionXY0.xy, TESR_GrassCollisionXY0.zw,
+            TESR_GrassCollisionXY1.xy, TESR_GrassCollisionXY1.zw
+        };
+
+        [unroll]
+        for (int i = 0; i < 4; i++) {
+            if (i >= numActors) break;
+            float2 diff = bladeXY - actors[i];
+            float dist = length(diff);
+            float t = saturate(dist * invRadius);
+            float influence = smoothstep(1.0, 0.0, t);
+
+            float2 pushDir = (dist > 0.001) ? (diff / dist) : float2(1, 0);
+            collisionDisp.xy += pushDir * influence * pushStr * tipWeight;
+            collisionDisp.z -= influence * flatStr * tipWeight;
+        }
+        r0.xyz += collisionDisp;
+    }
+
     r1.xyz = r0.xyz + InstanceData[0 + IN.LTEXCOORD_1.x].xyz;
     r0.xyzw = frac(InstanceData[0 + IN.LTEXCOORD_1.x]);
     r2.xyz = ((r0.w * IN.LCOLOR_0.xyz) * shades(DiffuseDir.xyz, expand(r0.xyz))) * DiffuseColor.rgb;
