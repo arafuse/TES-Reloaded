@@ -25,6 +25,7 @@ row_major float4x4 TESR_ShadowCameraToLightTransformFar : register(c16);
 float4 TESR_GrassCollisionParams : register(c253);
 float4 TESR_GrassCollisionXY0 : register(c254);
 float4 TESR_GrassCollisionXY1 : register(c255);
+float4 TESR_GrassCollisionXY2 : register(c3);
 
 //
 //
@@ -135,13 +136,14 @@ VS_OUTPUT main(VS_INPUT IN) {
         float invRadius = 1.0 / max(radius, 0.001);
 
         float3 collisionDisp = 0;
-        float2 actors[4] = {
+        float2 actors[6] = {
             TESR_GrassCollisionXY0.xy, TESR_GrassCollisionXY0.zw,
-            TESR_GrassCollisionXY1.xy, TESR_GrassCollisionXY1.zw
+            TESR_GrassCollisionXY1.xy, TESR_GrassCollisionXY1.zw,
+            TESR_GrassCollisionXY2.xy, TESR_GrassCollisionXY2.zw
         };
 
         [unroll]
-        for (int i = 0; i < 4; i++) {
+        for (int i = 0; i < 6; i++) {
             if (i >= numActors) break;
             float2 diff = bladeXY - actors[i];
             float dist = length(diff);
