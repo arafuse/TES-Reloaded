@@ -1716,7 +1716,7 @@ void ShaderManager::UpdateConstants() {
 								if (TESObjectREFR* Ref = Entry->item) {
 									if (Ref->baseForm && Ref != Player) {
 										UInt8 formType = Ref->baseForm->formType;
-										if (formType >= 0x2A && formType <= 0x2C) {
+										if (formType >= TESForm::FormType::kFormType_NPC && formType <= TESForm::FormType::kFormType_LeveledCreature) {
 											float dx = Ref->pos.x - Player->pos.x;
 											float dy = Ref->pos.y - Player->pos.y;
 											float distSq = dx * dx + dy * dy;
@@ -1746,7 +1746,7 @@ void ShaderManager::UpdateConstants() {
 						if (TESObjectREFR* Ref = Entry->item) {
 							if (Ref->baseForm && Ref != Player) {
 								UInt8 formType = Ref->baseForm->formType;
-								if (formType >= 0x2A && formType <= 0x2C) {
+								if (formType >= TESForm::FormType::kFormType_NPC && formType <= TESForm::FormType::kFormType_LeveledCreature) {
 									float dx = Ref->pos.x - Player->pos.x;
 									float dy = Ref->pos.y - Player->pos.y;
 									float distSq = dx * dx + dy * dy;
