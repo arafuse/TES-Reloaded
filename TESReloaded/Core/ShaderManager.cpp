@@ -1697,8 +1697,7 @@ void ShaderManager::UpdateConstants() {
 			struct ActorDist { float x, y, distSq; };
 			ActorDist nearest[4] = {};
 			int count = 0;
-			float maxTrackDist = ShaderConst.Grass.CollisionParams.x * 2.0f;
-			float maxTrackDistSq = maxTrackDist * maxTrackDist;
+			float maxTrackDistSq = TheSettingManager->SettingsGrass.MaxDistance * TheSettingManager->SettingsGrass.MaxDistance;
 
 			if (Player) {
 				nearest[0] = { Player->pos.x, Player->pos.y, 0.0f };
@@ -1751,18 +1750,16 @@ void ShaderManager::UpdateConstants() {
 									float dx = Ref->pos.x - Player->pos.x;
 									float dy = Ref->pos.y - Player->pos.y;
 									float distSq = dx * dx + dy * dy;
-									if (distSq < maxTrackDistSq) {
-										if (count < 4) {
-											nearest[count] = { Ref->pos.x, Ref->pos.y, distSq };
-											count++;
-										} else {
-											int farthestIdx = 1;
-											for (int i = 2; i < 4; i++)
-												if (nearest[i].distSq > nearest[farthestIdx].distSq)
-													farthestIdx = i;
-											if (distSq < nearest[farthestIdx].distSq)
-												nearest[farthestIdx] = { Ref->pos.x, Ref->pos.y, distSq };
-										}
+									if (count < 4) {
+										nearest[count] = { Ref->pos.x, Ref->pos.y, distSq };
+										count++;
+									} else {
+										int farthestIdx = 1;
+										for (int i = 2; i < 4; i++)
+											if (nearest[i].distSq > nearest[farthestIdx].distSq)
+												farthestIdx = i;
+										if (distSq < nearest[farthestIdx].distSq)
+											nearest[farthestIdx] = { Ref->pos.x, Ref->pos.y, distSq };
 									}
 								}
 							}
