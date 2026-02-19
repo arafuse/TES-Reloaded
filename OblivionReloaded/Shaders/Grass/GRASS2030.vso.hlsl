@@ -151,7 +151,8 @@ VS_OUTPUT main(VS_INPUT IN) {
             float influence = smoothstep(1.0, 0.0, t);
 
             float2 pushDir = (dist > 0.001) ? (diff / dist) : float2(1, 0);
-            collisionDisp.xy += pushDir * influence * pushStr * tipWeight;
+            float pushFade = smoothstep(0.0, 0.3, t);
+            collisionDisp.xy += pushDir * influence * pushFade * pushStr * tipWeight;
             collisionDisp.z -= influence * flatStr * tipWeight;
         }
         r1.xyz += collisionDisp;
