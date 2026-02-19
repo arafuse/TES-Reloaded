@@ -101,6 +101,7 @@ NiD3DVertexShader* ShaderIOHook::TrackCreateVertexShader(char* FileName, char* A
 	VertexShader->isEyePosition = strstr(EyePositionShaders, VertexShader->ShaderName) != NULL;
 	VertexShader->isSun = strstr(SunVertexShaders, VertexShader->ShaderName) != NULL;
 	VertexShader->isTree = strstr(TreeVertexShaders, VertexShader->ShaderName) != NULL;
+	VertexShader->isGrass = !memcmp(VertexShader->ShaderName, "GRASS", 5);
 	TheShaderManager->LoadShader(VertexShader);
 	return (NiD3DVertexShader*)VertexShader;
 
