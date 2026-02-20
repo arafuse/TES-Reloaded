@@ -249,7 +249,7 @@ void ShadowManager::RenderObject(NiAVObject* Object, D3DXVECTOR4* ShadowData, bo
 		else if (VFT == VFTNiTriShape || VFT == VFTNiTriStrips) {
 			NiGeometry* Geo = (NiGeometry*)Object;
 			if (Geo->shader) {
-				if (!HasWater || (HasWater && Geo->GetWorldBound()->Center.z > 0.0f)) {
+				if (Geo->skinInstance || !HasWater || (HasWater && Geo->GetWorldBound()->Center.z > 0.0f)) {
 					NiGeometryBufferData* GeoData = Geo->geomData->BuffData;
 					if (GeoData) {
 						Render(Geo, ShadowData);
@@ -278,7 +278,7 @@ void ShadowManager::RenderObjectPoint(NiAVObject* Object, D3DXVECTOR4* ShadowDat
 		else if (VFT == VFTNiTriShape || VFT == VFTNiTriStrips) {
 			NiGeometry* Geo = (NiGeometry*)Object;
 			if (Geo->shader) {
-				if (!HasWater || (HasWater && Geo->GetWorldBound()->Center.z > TheShaderManager->ShaderConst.Water.waterSettings.x)) {
+				if (Geo->skinInstance || !HasWater || (HasWater && Geo->GetWorldBound()->Center.z > TheShaderManager->ShaderConst.Water.waterSettings.x)) {
 					NiGeometryBufferData* GeoData = Geo->geomData->BuffData;
 					if (GeoData) {
 						Render(Geo, ShadowData);
@@ -307,7 +307,7 @@ void ShadowManager::RenderObjectPointActor(NiAVObject* Object, D3DXVECTOR4* Shad
 		else if (VFT == VFTNiTriShape || VFT == VFTNiTriStrips) {
 			NiGeometry* Geo = (NiGeometry*)Object;
 			if (Geo->shader) {
-				if (!HasWater || (HasWater && Geo->GetWorldBound()->Center.z > TheShaderManager->ShaderConst.Water.waterSettings.x)) {
+				if (Geo->skinInstance || !HasWater || (HasWater && Geo->GetWorldBound()->Center.z > TheShaderManager->ShaderConst.Water.waterSettings.x)) {
 					NiGeometryBufferData* GeoData = Geo->geomData->BuffData;
 					if (GeoData) {
 						RenderActor(Geo, ShadowData, lightIndex);
