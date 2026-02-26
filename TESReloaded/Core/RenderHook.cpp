@@ -398,14 +398,7 @@ UInt32 RenderHook::TrackSetupShaderPrograms(NiGeometry* Geometry, NiSkinInstance
 			TheShaderManager->GrassCollisionActors[3].y - cy);
 		TheRenderManager->device->SetVertexShaderConstantF(254, (const float*)&xy0, 1);
 		TheRenderManager->device->SetVertexShaderConstantF(255, (const float*)&xy1, 1);
-		if (memcmp(VertexShader->ShaderName, "GRASS2034", 9)) {
-			D3DXVECTOR4 xy2(
-				TheShaderManager->GrassCollisionActors[4].x - cx,
-				TheShaderManager->GrassCollisionActors[4].y - cy,
-				TheShaderManager->GrassCollisionActors[5].x - cx,
-				TheShaderManager->GrassCollisionActors[5].y - cy);
-			TheRenderManager->device->SetVertexShaderConstantF(3, (const float*)&xy2, 1);
-		}
+
 	}
 
 	return result;
