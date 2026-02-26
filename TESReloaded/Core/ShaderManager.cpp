@@ -86,8 +86,6 @@ bool ShaderProgram::SetConstantTableValue1(LPCSTR Name, UInt32 Index) {
 		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.Grass.CollisionXY[0];
 	else if (!strcmp(Name, "TESR_GrassCollisionXY1"))
 		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.Grass.CollisionXY[1];
-	else if (!strcmp(Name, "TESR_GrassCollisionXY2"))
-		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.Grass.CollisionXY[2];
 	else if (!strcmp(Name, "TESR_TerrainData"))
 		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.Terrain.Data;
 	else if (!strcmp(Name, "TESR_SkinData"))
@@ -1697,7 +1695,7 @@ void ShaderManager::UpdateConstants() {
 			memset(ShaderConst.Grass.CollisionXY, 0, sizeof(ShaderConst.Grass.CollisionXY));
 
 			struct ActorDist { float x, y, distSq; };
-			ActorDist nearest[6] = {};
+			ActorDist nearest[4] = {};
 			int count = 0;
 			float maxTrackDistSq = TheSettingManager->SettingsGrass.MaxDistance * TheSettingManager->SettingsGrass.MaxDistance;
 
@@ -1723,12 +1721,12 @@ void ShaderManager::UpdateConstants() {
 											float dy = Ref->pos.y - Player->pos.y;
 											float distSq = dx * dx + dy * dy;
 											if (distSq < maxTrackDistSq) {
-												if (count < 6) {
+												if (count < 4) {
 													nearest[count] = { Ref->pos.x, Ref->pos.y, distSq };
 													count++;
 												} else {
 													int farthestIdx = 1;
-													for (int i = 2; i < 6; i++)
+													for (int i = 2; i < 4; i++)
 														if (nearest[i].distSq > nearest[farthestIdx].distSq)
 															farthestIdx = i;
 													if (distSq < nearest[farthestIdx].distSq)
@@ -1752,12 +1750,12 @@ void ShaderManager::UpdateConstants() {
 									float dx = Ref->pos.x - Player->pos.x;
 									float dy = Ref->pos.y - Player->pos.y;
 									float distSq = dx * dx + dy * dy;
-									if (count < 6) {
+									if (count < 4) {
 										nearest[count] = { Ref->pos.x, Ref->pos.y, distSq };
 										count++;
 									} else {
 										int farthestIdx = 1;
-										for (int i = 2; i < 6; i++)
+										for (int i = 2; i < 4; i++)
 											if (nearest[i].distSq > nearest[farthestIdx].distSq)
 												farthestIdx = i;
 										if (distSq < nearest[farthestIdx].distSq)
@@ -1773,7 +1771,7 @@ void ShaderManager::UpdateConstants() {
 
 			ShaderConst.Grass.CollisionParams.w = (float)count;
 			GrassCollisionActorCount = count;
-			for (int i = 0; i < 6; i++) {
+			for (int i = 0; i < 4; i++) {
 				GrassCollisionActors[i].x = nearest[i].x;
 				GrassCollisionActors[i].y = nearest[i].y;
 			}
