@@ -427,8 +427,9 @@ public:
 	int						InitFrameCount;
 	int						InitFrameTarget;
 	struct					EffectQuad { float x, y, z; float u, v; };
+	struct					GrassActorPos { float x, y; };
 	ShaderConstants			ShaderConst;
-	struct { float x, y; }	GrassCollisionActors[4];
+	GrassActorPos			GrassCollisionActors[4];
 	int						GrassCollisionActorCount;
 	CustomConstants			CustomConst;
 	CellLocation			LocationState;
@@ -497,4 +498,34 @@ public:
 	NiD3DPixelShader*		WaterHeightMapPixelShader;
 	NiD3DVertexShader*		WaterVertexShaders[51];
 	NiD3DPixelShader*		WaterPixelShaders[51];
+
+private:
+	// UpdateConstants helpers — one function per rendering concern
+	static void UpdateGameTime(ShaderConstants& ShaderConst);
+	static void UpdateCelestialDirections(ShaderConstants& ShaderConst, NiNode* SunRoot, Moon* Masser, Moon* Secunda, TESClimate* climate, float lastGameTime);
+	static void UpdateMoonPhaseCoeff(ShaderConstants& ShaderConst, TESClimate* climate, int& GameDay);
+	static float UpdateExteriorLighting(ShaderConstants& ShaderConst, TESWeather* currentWeather, TESWeather* previousWeather, float weatherPercent);
+	static void UpdateInteriorLighting(ShaderConstants& ShaderConst, TESObjectCELL* currentCell, ShaderConstants::SimpleLightingStruct& InteriorLighting, bool& isFullyInitialized, int& InitFrameCount);
+	static void UpdateWater(ShaderConstants& ShaderConst, TESObjectCELL* currentCell, SettingsWaterStruct* sws);
+	static void UpdateSnowAccumulation(ShaderConstants& ShaderConst, TESWeather* currentWeather, TESWeather* previousWeather);
+	static void UpdateWetWorld(ShaderConstants& ShaderConst, TESWeather* currentWeather, TESWeather* previousWeather, float weatherPercent);
+	static void UpdatePrecipitation(ShaderConstants& ShaderConst, TESWeather* currentWeather, TESWeather* previousWeather, float weatherPercent);
+	static void UpdateGrass(ShaderConstants& ShaderConst, GrassActorPos GrassCollisionActors[4], int& GrassCollisionActorCount);
+	static void UpdateHDR(ShaderConstants& ShaderConst);
+	static void UpdatePOM(ShaderConstants& ShaderConst);
+	static void UpdateTerrain(ShaderConstants& ShaderConst);
+	static void UpdateSkin(ShaderConstants& ShaderConst);
+	static void UpdateGodRays(ShaderConstants& ShaderConst);
+	static void UpdateKhajiitRays(ShaderConstants& ShaderConst);
+	static void UpdateAmbientOcclusion(ShaderConstants& ShaderConst, SettingsAmbientOcclusionStruct* sas);
+	static void UpdateBloom(ShaderConstants& ShaderConst, SettingsBloomStruct* sbs);
+	static void UpdateColoring(ShaderConstants& ShaderConst, SettingsColoringStruct* scs);
+	static void UpdateDepthOfField(ShaderConstants& ShaderConst, bool IsThirdPersonView);
+	static void UpdateCinema(ShaderConstants& ShaderConst);
+	static void UpdateMotionBlur(ShaderConstants& ShaderConst, bool IsThirdPersonView);
+	static void UpdateSharpening(ShaderConstants& ShaderConst);
+	static void UpdateVolumetricFog(ShaderConstants& ShaderConst, float weatherPercent);
+	static void UpdateTAA(ShaderConstants& ShaderConst, int& jitterIndex, const JitterPattern jitterPattern[2]);
+	static void UpdateVolumetricLight(ShaderConstants& ShaderConst, TESWeather* currentWeather, TESWeather* previousWeather, float weatherPercent, float dayPercent);
+	static void UpdateSpecular(ShaderConstants& ShaderConst);
 };
