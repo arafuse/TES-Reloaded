@@ -1625,9 +1625,11 @@ void ShaderManager::UpdateGrass(ShaderConstants& ShaderConst, GrassActorPos Gras
 	ShaderConst.Grass.Scale.y = TheSettingManager->SettingsGrass.ScaleY;
 	ShaderConst.Grass.Scale.z = TheSettingManager->SettingsGrass.ScaleZ;
 	ShaderConst.Grass.Scale.w = TheSettingManager->SettingsGrass.MinHeight;
+
 	ApplyGrassDensitySettings(TheSettingManager->SettingsGrass.GrassDensity);
 	*SettingGrassStartFadeDistance = TheSettingManager->SettingsGrass.MinDistance;
 	*SettingGrassEndDistance = TheSettingManager->SettingsGrass.MaxDistance;
+
 	if (TheSettingManager->SettingsGrass.WindEnabled) {
 		*SettingGrassWindMagnitudeMax = *LocalGrassWindMagnitudeMax = TheSettingManager->SettingsGrass.WindCoefficient * ShaderConst.currentwindSpeed;
 		*SettingGrassWindMagnitudeMin = *LocalGrassWindMagnitudeMin = *SettingGrassWindMagnitudeMax * 0.5f;
@@ -1663,6 +1665,7 @@ void ShaderManager::UpdateGrass(ShaderConstants& ShaderConst, GrassActorPos Gras
 
 	ShaderConst.Grass.CollisionParams.w = (float)count;
 	GrassCollisionActorCount = count;
+
 	for (int i = 0; i < 4; i++) {
 		GrassCollisionActors[i].x = nearest[i].x;
 		GrassCollisionActors[i].y = nearest[i].y;
