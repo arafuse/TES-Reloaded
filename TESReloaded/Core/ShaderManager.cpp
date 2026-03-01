@@ -1570,80 +1570,62 @@ void ShaderManager::UpdatePrecipitation(ShaderConstants& ShaderConst, TESWeather
 	ShaderConst.Precipitations.SnowData.w = TheSettingManager->SettingsPrecipitations.Snow.Speed;
 }
 
+namespace {
+
+struct ActorDist { float x, y, distSq; };
+
+static void ApplyGrassDensitySettings(int density) {
+	static const int   kMinSize[]   = { 240, 240, 240, 240, 120, 120, 120, 120, 80, 80, 80, 80, 20, 20, 20, 20 };
+	static const float kThreshold[] = { 0.3f, 0.2f, 0.1f, 0.0f, 0.3f, 0.2f, 0.1f, 0.0f,
+	                                     0.3f, 0.2f, 0.1f, 0.0f, 0.3f, 0.2f, 0.1f, 0.0f };
+	if (density >= 1 && density <= 16) {
+		*SettingMinGrassSize        = kMinSize[density - 1];
+		*SettingTexturePctThreshold = kThreshold[density - 1];
+	}
+}
+
+static void TryInsertActor(ActorDist nearest[], int& count, float x, float y, float distSq) {
+	if (count < 4) {
+		nearest[count++] = { x, y, distSq };
+	} else {
+		int farthestIdx = 1;
+		for (int i = 2; i < 4; i++)
+			if (nearest[i].distSq > nearest[farthestIdx].distSq)
+				farthestIdx = i;
+		if (distSq < nearest[farthestIdx].distSq)
+			nearest[farthestIdx] = { x, y, distSq };
+	}
+}
+
+static void CollectActorsFromObjectList(TList<TESObjectREFR>::Entry* entry, TESObjectREFR* player,
+                                        ActorDist nearest[], int& count, float maxTrackDistSq) {
+	while (entry) {
+		if (TESObjectREFR* ref = entry->item) {
+			if (ref->baseForm && ref != player) {
+				UInt8 formType = ref->baseForm->formType;
+				if (formType >= TESForm::FormType::kFormType_NPC &&
+				    formType <= TESForm::FormType::kFormType_LeveledCreature &&
+				    !((Actor*)ref)->LifeState) {
+					float dx = ref->pos.x - player->pos.x;
+					float dy = ref->pos.y - player->pos.y;
+					float distSq = dx * dx + dy * dy;
+					if (distSq < maxTrackDistSq)
+						TryInsertActor(nearest, count, ref->pos.x, ref->pos.y, distSq);
+				}
+			}
+		}
+		entry = entry->next;
+	}
+}
+
+} // namespace
+
 void ShaderManager::UpdateGrass(ShaderConstants& ShaderConst, GrassActorPos GrassCollisionActors[4], int& GrassCollisionActorCount) {
 	ShaderConst.Grass.Scale.x = TheSettingManager->SettingsGrass.ScaleX;
 	ShaderConst.Grass.Scale.y = TheSettingManager->SettingsGrass.ScaleY;
 	ShaderConst.Grass.Scale.z = TheSettingManager->SettingsGrass.ScaleZ;
 	ShaderConst.Grass.Scale.w = TheSettingManager->SettingsGrass.MinHeight;
-	switch (TheSettingManager->SettingsGrass.GrassDensity)
-	{
-		case 1:
-			*SettingMinGrassSize = 240;
-			*SettingTexturePctThreshold = 0.3f;
-			break;
-		case 2:
-			*SettingMinGrassSize = 240;
-			*SettingTexturePctThreshold = 0.2f;
-			break;
-		case 3:
-			*SettingMinGrassSize = 240;
-			*SettingTexturePctThreshold = 0.1f;
-			break;
-		case 4:
-			*SettingMinGrassSize = 240;
-			*SettingTexturePctThreshold = 0.0f;
-			break;
-		case 5:
-			*SettingMinGrassSize = 120;
-			*SettingTexturePctThreshold = 0.3f;
-			break;
-		case 6:
-			*SettingMinGrassSize = 120;
-			*SettingTexturePctThreshold = 0.2f;
-			break;
-		case 7:
-			*SettingMinGrassSize = 120;
-			*SettingTexturePctThreshold = 0.1f;
-			break;
-		case 8:
-			*SettingMinGrassSize = 120;
-			*SettingTexturePctThreshold = 0.0f;
-			break;
-		case 9:
-			*SettingMinGrassSize = 80;
-			*SettingTexturePctThreshold = 0.3f;
-			break;
-		case 10:
-			*SettingMinGrassSize = 80;
-			*SettingTexturePctThreshold = 0.2f;
-			break;
-		case 11:
-			*SettingMinGrassSize = 80;
-			*SettingTexturePctThreshold = 0.1f;
-			break;
-		case 12:
-			*SettingMinGrassSize = 80;
-			*SettingTexturePctThreshold = 0.0f;
-			break;
-		case 13:
-			*SettingMinGrassSize = 20;
-			*SettingTexturePctThreshold = 0.3f;
-			break;
-		case 14:
-			*SettingMinGrassSize = 20;
-			*SettingTexturePctThreshold = 0.2f;
-			break;
-		case 15:
-			*SettingMinGrassSize = 20;
-			*SettingTexturePctThreshold = 0.1f;
-			break;
-		case 16:
-			*SettingMinGrassSize = 20;
-			*SettingTexturePctThreshold = 0.0f;
-			break;
-		default:
-			break;
-	}
+	ApplyGrassDensitySettings(TheSettingManager->SettingsGrass.GrassDensity);
 	*SettingGrassStartFadeDistance = TheSettingManager->SettingsGrass.MinDistance;
 	*SettingGrassEndDistance = TheSettingManager->SettingsGrass.MaxDistance;
 	if (TheSettingManager->SettingsGrass.WindEnabled) {
@@ -1651,13 +1633,11 @@ void ShaderManager::UpdateGrass(ShaderConstants& ShaderConst, GrassActorPos Gras
 		*SettingGrassWindMagnitudeMin = *LocalGrassWindMagnitudeMin = *SettingGrassWindMagnitudeMax * 0.5f;
 	}
 
-	// Grass collision: find nearest 4 actors
 	ShaderConst.Grass.CollisionParams.x = TheSettingManager->SettingsGrass.CollisionRadius;
 	ShaderConst.Grass.CollisionParams.y = TheSettingManager->SettingsGrass.CollisionStrength;
 	ShaderConst.Grass.CollisionParams.z = TheSettingManager->SettingsGrass.CollisionFlattenStrength;
 	memset(ShaderConst.Grass.CollisionXY, 0, sizeof(ShaderConst.Grass.CollisionXY));
 
-	struct ActorDist { float x, y, distSq; };
 	ActorDist nearest[4] = {};
 	int count = 0;
 	float maxTrackDistSq = TheSettingManager->SettingsGrass.MaxDistance * TheSettingManager->SettingsGrass.MaxDistance;
@@ -1668,67 +1648,16 @@ void ShaderManager::UpdateGrass(ShaderConstants& ShaderConst, GrassActorPos Gras
 	}
 
 	if (Player && Player->parentCell) {
-		TESWorldSpace* currentWorldSpace = Player->GetWorldSpace();
-		if (currentWorldSpace) {
+		if (Player->GetWorldSpace()) {
 			for (UInt32 x = 0; x < *SettingGridsToLoad; x++) {
 				for (UInt32 y = 0; y < *SettingGridsToLoad; y++) {
 					TESObjectCELL* Cell = Tes->gridCellArray->GetCell(x, y);
-					if (!Cell) continue;
-					TList<TESObjectREFR>::Entry* Entry = &Cell->objectList.First;
-					while (Entry) {
-						if (TESObjectREFR* Ref = Entry->item) {
-							if (Ref->baseForm && Ref != Player) {
-								UInt8 formType = Ref->baseForm->formType;
-								if (formType >= TESForm::FormType::kFormType_NPC && formType <= TESForm::FormType::kFormType_LeveledCreature && !((Actor*)Ref)->LifeState) {
-									float dx = Ref->pos.x - Player->pos.x;
-									float dy = Ref->pos.y - Player->pos.y;
-									float distSq = dx * dx + dy * dy;
-									if (distSq < maxTrackDistSq) {
-										if (count < 4) {
-											nearest[count] = { Ref->pos.x, Ref->pos.y, distSq };
-											count++;
-										} else {
-											int farthestIdx = 1;
-											for (int i = 2; i < 4; i++)
-												if (nearest[i].distSq > nearest[farthestIdx].distSq)
-													farthestIdx = i;
-											if (distSq < nearest[farthestIdx].distSq)
-												nearest[farthestIdx] = { Ref->pos.x, Ref->pos.y, distSq };
-										}
-									}
-								}
-							}
-						}
-						Entry = Entry->next;
-					}
+					if (Cell)
+						CollectActorsFromObjectList(&Cell->objectList.First, Player, nearest, count, maxTrackDistSq);
 				}
 			}
 		} else {
-			TList<TESObjectREFR>::Entry* Entry = &Player->parentCell->objectList.First;
-			while (Entry) {
-				if (TESObjectREFR* Ref = Entry->item) {
-					if (Ref->baseForm && Ref != Player) {
-						UInt8 formType = Ref->baseForm->formType;
-						if (formType >= TESForm::FormType::kFormType_NPC && formType <= TESForm::FormType::kFormType_LeveledCreature && !((Actor*)Ref)->LifeState) {
-							float dx = Ref->pos.x - Player->pos.x;
-							float dy = Ref->pos.y - Player->pos.y;
-							float distSq = dx * dx + dy * dy;
-							if (count < 4) {
-								nearest[count] = { Ref->pos.x, Ref->pos.y, distSq };
-								count++;
-							} else {
-								int farthestIdx = 1;
-								for (int i = 2; i < 4; i++)
-									if (nearest[i].distSq > nearest[farthestIdx].distSq)
-										farthestIdx = i;
-								if (distSq < nearest[farthestIdx].distSq)
-									nearest[farthestIdx] = { Ref->pos.x, Ref->pos.y, distSq };
-							}
-						}
-					}
-				}
-				Entry = Entry->next;
-			}
+			CollectActorsFromObjectList(&Player->parentCell->objectList.First, Player, nearest, count, maxTrackDistSq);
 		}
 	}
 
