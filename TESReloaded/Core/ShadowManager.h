@@ -65,6 +65,10 @@ public:
 	void					LoadShadowLightPointSettings();
 	bool					IsLightFromMagic(NiPointLight* Light);
 
+	// --- Helpers ---
+	void					SetupGeoStreams(NiGeometryBufferData* GeoData);
+	void					DrawGeoArrays(NiGeometryBufferData* GeoData, D3DPRIMITIVETYPE PrimitiveType, UINT VertCount);
+
 	IDirect3DTexture9*		ShadowMapTexture[4];
 	IDirect3DSurface9*		ShadowMapSurface[4];
 	IDirect3DSurface9*		ShadowMapDepthSurface[4];
