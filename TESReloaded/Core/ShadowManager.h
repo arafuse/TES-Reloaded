@@ -79,6 +79,10 @@ public:
 	void					SetupCubeMapRenderState();
 	void					ClassifyRefForLight(TESObjectREFR* Ref, NiPointLight** Lights, int L, float radiusScan, std::map<int, std::vector<NiNode*>>& refMap, std::map<int, std::vector<NiNode*>>& actorMap, double* StaticValues, bool* forceRedrawMap);
 	void					UpdateStaticTrackers(int LightIndex, double* StaticValues, bool* forceRedrawMap);
+	SettingsShadowStruct::ExteriorsStruct* SelectExteriorShadowSettings();
+	void					ComputeExteriorLookAt(D3DXVECTOR3& At, D3DXVECTOR3& SkinAt, SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors);
+	void					AdjustShadowLightDir(D3DXVECTOR4*& ShadowLightDir);
+	bool					UpdateShadowLightDirInterval(D3DXVECTOR4* ShadowLightDir, D3DXVECTOR4& ShadowLightDirInterval);
 
 	IDirect3DTexture9*		ShadowMapTexture[4];
 	IDirect3DSurface9*		ShadowMapSurface[4];
