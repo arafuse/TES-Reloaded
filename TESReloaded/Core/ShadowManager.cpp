@@ -1484,6 +1484,28 @@ bool ShadowManager::IsLightFromMagic(NiPointLight* light) {
 	return light->m_parent && strstr(light->m_parent->m_pcName, "agic") != NULL;
 }
 
+void ShadowManager::SetupGeoStreams(NiGeometryBufferData* GeoData) {
+	IDirect3DDevice9* Device = TheRenderManager->device;
+	NiDX9RenderState* RenderState = TheRenderManager->renderState;
+	for (UInt32 i = 0; i < GeoData->StreamCount; i++)
+		Device->SetStreamSource(i, GeoData->VBChip[i]->VB, 0, GeoData->VertexStride[i]);
+	Device->SetIndices(GeoData->IB);
+	if (GeoData->FVF)
+		RenderState->SetFVF(GeoData->FVF, false);
+	else
+		RenderState->SetVertexDeclaration(GeoData->VertexDeclaration, false);
+}
+
+void ShadowManager::DrawGeoArrays(NiGeometryBufferData* GeoData, D3DPRIMITIVETYPE PrimitiveType, UINT VertCount) {
+	IDirect3DDevice9* Device = TheRenderManager->device;
+	int StartIndex = 0;
+	for (UInt32 i = 0; i < GeoData->NumArrays; i++) {
+		int PrimitiveCount = GeoData->ArrayLengths ? (int)GeoData->ArrayLengths[i] - 2 : GeoData->TriCount;
+		Device->DrawIndexedPrimitive(PrimitiveType, GeoData->BaseVertexIndex, 0, VertCount, StartIndex, PrimitiveCount);
+		StartIndex += PrimitiveCount + 2;
+	}
+}
+
 static __declspec(naked) void RenderShadowMapHook() {
 
 	__asm
