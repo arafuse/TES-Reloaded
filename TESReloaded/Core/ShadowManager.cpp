@@ -630,75 +630,31 @@ void ShadowManager::RenderShadowCubeMapFakeInt(int LightIndex, SettingsShadowStr
 
 void ShadowManager::RenderShadowCubeMap(int LightIndex, std::map<int, std::vector<NiNode*>>& refMap, D3DXVECTOR4* ShadowData, bool enabled) {
 	IDirect3DDevice9* Device = TheRenderManager->device;
-	NiDX9RenderState* RenderState = TheRenderManager->renderState;
 	D3DXMATRIX View, Proj;
 	D3DXVECTOR3 Eye, At, Up;
 
-
 	for (int L = 0; L <= LightIndex; L++) {
-
 		SetShadowCubeMapRegisters(L);
-
-		if (ShadowCubeMapStaticTracker[L] && EnableStaticMaps) {
-			continue;
-		}
+		if (ShadowCubeMapStaticTracker[L] && EnableStaticMaps) continue;
 
 		float FarPlane = TheShaderManager->ShaderConst.ShadowMap.ShadowCastLightPosition[L].w;
 		D3DXMatrixPerspectiveFovRH(&Proj, D3DXToRadian(90.0f), 1.0f, 1.0f, FarPlane);
 		for (int Face = 0; Face < 6; Face++) {
-			Device->SetDepthStencilSurface(ShadowCubeMapDepthSurface[L][Face]);
 			At.x = TheShaderManager->ShaderConst.ShadowMap.ShadowCastLightPosition[L].x;
 			At.y = TheShaderManager->ShaderConst.ShadowMap.ShadowCastLightPosition[L].y;
 			At.z = TheShaderManager->ShaderConst.ShadowMap.ShadowCastLightPosition[L].z;
 			Eye = At;
-			switch (Face) {
-			case D3DCUBEMAP_FACE_POSITIVE_X:
-				At += D3DXVECTOR3(1.0f, 0.0f, 0.0f);
-				Up = D3DXVECTOR3(0.0f, 1.0f, 0.0f);
-				break;
-			case D3DCUBEMAP_FACE_NEGATIVE_X:
-				At += D3DXVECTOR3(-1.0f, 0.0f, 0.0f);
-				Up = D3DXVECTOR3(0.0f, 1.0f, 0.0f);
-				break;
-			case D3DCUBEMAP_FACE_POSITIVE_Y:
-				At += D3DXVECTOR3(0.0f, 1.0f, 0.0f);
-				Up = D3DXVECTOR3(0.0f, 0.0f, 1.0f);
-				break;
-			case D3DCUBEMAP_FACE_NEGATIVE_Y:
-				At += D3DXVECTOR3(0.0f, -1.0f, 0.0f);
-				Up = D3DXVECTOR3(0.0f, 0.0f, -1.0f);
-				break;
-			case D3DCUBEMAP_FACE_POSITIVE_Z:
-				At += D3DXVECTOR3(0.0f, 0.0f, -1.0f);
-				Up = D3DXVECTOR3(0.0f, 1.0f, 0.0f);
-				break;
-			case D3DCUBEMAP_FACE_NEGATIVE_Z:
-				At += D3DXVECTOR3(0.0f, 0.0f, 1.0f);
-				Up = D3DXVECTOR3(0.0f, 1.0f, 0.0f);
-				break;
-			}
+			GetCubeFaceAtUp(Face, At, Up);
 			D3DXMatrixLookAtRH(&View, &Eye, &At, &Up);
 			TheShaderManager->ShaderConst.ShadowMap.ShadowViewProj = View * Proj;
+			Device->SetDepthStencilSurface(ShadowCubeMapDepthSurface[L][Face]);
 			Device->SetRenderTarget(0, ShadowCubeMapSurface[L][Face]);
 			Device->Clear(0L, NULL, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, D3DXCOLOR(1.0f, 0.25f, 0.25f, 0.55f), 1.0f, 0L);
 			if (enabled) {
 				Device->BeginScene();
-				RenderState->SetRenderState(D3DRS_ZENABLE, D3DZB_TRUE, RenderStateArgs);
-				RenderState->SetRenderState(D3DRS_ZWRITEENABLE, 1, RenderStateArgs);
-				RenderState->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE, RenderStateArgs);
-				RenderState->SetRenderState(D3DRS_ALPHABLENDENABLE, 0, RenderStateArgs);
-				Device->SetViewport(&ShadowCubeMapViewPort);
-				RenderState->SetVertexShader(ShadowCubeMapVertexShader, false);
-				if (Player->GetWorldSpace()) {
-					RenderState->SetPixelShader(ShadowCubeMapExteriorPixelShader, false);
-				}
-				else {
-					RenderState->SetPixelShader(ShadowCubeMapPixelShader, false);
-				}
-				std::vector<NiNode*>::iterator RefNode;
-				for (RefNode = refMap[L].begin(); RefNode != refMap[L].end(); ++RefNode) {
-					RenderObjectPoint((*RefNode), ShadowData, TheShaderManager->ShaderConst.HasWater);
-				}
+				SetupCubeMapRenderState();
+				for (NiNode* RefNode : refMap[L])
+					RenderObjectPoint(RefNode, ShadowData, TheShaderManager->ShaderConst.HasWater);
 				Device->EndScene();
 			}
 		}
@@ -707,37 +663,17 @@ void ShadowManager::RenderShadowCubeMap(int LightIndex, std::map<int, std::vecto
 
 void ShadowManager::RenderShadowCubeMapActor(int LightIndex, std::map<int, std::vector<NiNode*>>& refMap, D3DXVECTOR4* ShadowData, bool enabled) {
 	IDirect3DDevice9* Device = TheRenderManager->device;
-	NiDX9RenderState* RenderState = TheRenderManager->renderState;
-	D3DXMATRIX View, Proj;
-	D3DXVECTOR3 Eye, At, Up;
 
 	// araf Cap this due exterior shadows hack
-	// for (int L = 0; L <= LightIndex; L++) {
-	for (int L = 0; L <= 1; L++) {	
+	for (int L = 0; L <= 1; L++) {
 		SetShadowCubeMapRegisters(L);
-
-		if (ShadowCubeMapStaticTracker[L] && EnableStaticMaps) {
-			continue;
-		}
+		if (ShadowCubeMapStaticTracker[L] && EnableStaticMaps) continue;
 
 		if (enabled) {
 			Device->BeginScene();
-			RenderState->SetRenderState(D3DRS_ZENABLE, D3DZB_TRUE, RenderStateArgs);
-			RenderState->SetRenderState(D3DRS_ZWRITEENABLE, 1, RenderStateArgs);
-			RenderState->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE, RenderStateArgs);
-			RenderState->SetRenderState(D3DRS_ALPHABLENDENABLE, 0, RenderStateArgs);
-			Device->SetViewport(&ShadowCubeMapViewPort);
-			RenderState->SetVertexShader(ShadowCubeMapVertexShader, false);
-			if (Player->GetWorldSpace()) {
-				RenderState->SetPixelShader(ShadowCubeMapExteriorPixelShader, false);
-			}
-			else {
-				RenderState->SetPixelShader(ShadowCubeMapPixelShader, false);
-			}
-			std::vector<NiNode*>::iterator RefNode;
-			for (RefNode = refMap[L].begin(); RefNode != refMap[L].end(); ++RefNode) {
-				RenderObjectPointActor((*RefNode), ShadowData, TheShaderManager->ShaderConst.HasWater, L);
-			}
+			SetupCubeMapRenderState();
+			for (NiNode* RefNode : refMap[L])
+				RenderObjectPointActor(RefNode, ShadowData, TheShaderManager->ShaderConst.HasWater, L);
 			Device->EndScene();
 		}
 	}
@@ -1372,6 +1308,21 @@ void ShadowManager::RenderActorSkinnedGeo(NiGeometry* Geo, D3DXVECTOR4* ShadowDa
 		SetupGeoStreams(GeoData);
 		RenderActorFaces(GeoData, PrimitiveType, Partition->Vertices, lightIndex, Proj);
 	}
+}
+
+void ShadowManager::SetupCubeMapRenderState() {
+	IDirect3DDevice9* Device = TheRenderManager->device;
+	NiDX9RenderState* RenderState = TheRenderManager->renderState;
+	RenderState->SetRenderState(D3DRS_ZENABLE, D3DZB_TRUE, RenderStateArgs);
+	RenderState->SetRenderState(D3DRS_ZWRITEENABLE, 1, RenderStateArgs);
+	RenderState->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE, RenderStateArgs);
+	RenderState->SetRenderState(D3DRS_ALPHABLENDENABLE, 0, RenderStateArgs);
+	Device->SetViewport(&ShadowCubeMapViewPort);
+	RenderState->SetVertexShader(ShadowCubeMapVertexShader, false);
+	if (Player->GetWorldSpace())
+		RenderState->SetPixelShader(ShadowCubeMapExteriorPixelShader, false);
+	else
+		RenderState->SetPixelShader(ShadowCubeMapPixelShader, false);
 }
 
 static __declspec(naked) void RenderShadowMapHook() {
