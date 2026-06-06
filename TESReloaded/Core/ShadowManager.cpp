@@ -589,142 +589,43 @@ void ShadowManager::RenderShadowCubeMapActor(int LightIndex, std::map<int, std::
 
 //TODO: rename
 void ShadowManager::RenderExteriorShadows() {
+	if (!Player->GetWorldSpace()) return;
 
-	if (!Player->GetWorldSpace()) {
-		return;
-	}
-
-	// araf adjust darkness based on weather		
-	Sky* WorldSky = Tes->sky;
-	TESWeather* currentWeather = WorldSky->firstWeather;
-	SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors;
-
-	if (currentWeather->weatherType != TESWeather::WeatherType::kType_Pleasant && currentWeather->weatherType != TESWeather::WeatherType::kType_None) {
-		ShadowsExteriors = &TheSettingManager->SettingsShadows.ExteriorsAlt;
-	}
-	else {
-		ShadowsExteriors = &TheSettingManager->SettingsShadows.Exteriors;
-	}
+	SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors = SelectExteriorShadowSettings();
 
 	IDirect3DDevice9* Device = TheRenderManager->device;
-	D3DXVECTOR4* ShadowData = &TheShaderManager->ShaderConst.Shadow.Data;
+	D3DXVECTOR4* ShadowData     = &TheShaderManager->ShaderConst.Shadow.Data;
 	D3DXVECTOR4* ShadowSkinData = &TheShaderManager->ShaderConst.Shadow.ShadowSkinData;
-	D3DXVECTOR4* OrthoData = &TheShaderManager->ShaderConst.Shadow.OrthoData;
+	D3DXVECTOR4* OrthoData      = &TheShaderManager->ShaderConst.Shadow.OrthoData;
 	D3DXVECTOR4* ShadowLightDir = &TheShaderManager->ShaderConst.ShadowMap.ShadowLightDir;
-	D3DXVECTOR4 ShadowLightDirInterval;
-
-	D3DXVECTOR4 OrthoDir = D3DXVECTOR3(0.05f, 0.05f, 1.0f);
-	NiNode* PlayerNode = Player->GetNode();
-	D3DXVECTOR3 At, Eye, SkinAt;
+	D3DXVECTOR4 OrthoDir        = D3DXVECTOR3(0.05f, 0.05f, 1.0f);
 
 	CurrentVertex = ShadowMapVertex;
-	CurrentPixel = ShadowMapPixel;
-
+	CurrentPixel  = ShadowMapPixel;
 	ClearShadowCubeMaps(Device, -1, ShadowCubeMapStateEnum::Exterior);
 
-	SkinAt.x = PlayerNode->m_worldTransform.pos.x - TheRenderManager->CameraPosition.x;
-	SkinAt.y = PlayerNode->m_worldTransform.pos.y - TheRenderManager->CameraPosition.y;
-	SkinAt.z = PlayerNode->m_worldTransform.pos.z - TheRenderManager->CameraPosition.z;
+	D3DXVECTOR3 At, SkinAt;
+	ComputeExteriorLookAt(At, SkinAt, ShadowsExteriors);
+	AdjustShadowLightDir(ShadowLightDir);
 
-	At.x = LookAtPosition.x - TheRenderManager->CameraPosition.x;
-	At.y = LookAtPosition.y - TheRenderManager->CameraPosition.y;
-	At.z = LookAtPosition.z - TheRenderManager->CameraPosition.z;
-	D3DXVECTOR3 newPos(PlayerNode->m_worldTransform.pos.x, PlayerNode->m_worldTransform.pos.y, PlayerNode->m_worldTransform.pos.z);
-
-	if (D3DXVec3Length(&(newPos - LookAtPosition)) > ShadowsExteriors->ShadowMapRadius[MapNear] / 2.0f) {
-		LookAtPosition = newPos;
-	}
-
-	if (ShadowLightDir->z < 0.0f && TheShaderManager->ShaderConst.DayPhase == Dusk) {
-		ShadowLightDir = &TheShaderManager->ShaderConst.MasserDir;
-	}
-	else if (ShadowLightDir->z < 0.0f && TheShaderManager->ShaderConst.DayPhase == Dawn) {
-		ShadowLightDir = &TheShaderManager->ShaderConst.SunDir;
-	}
-
-	//reduces shadow artifacts caused by low z value
-	if (ShadowLightDir->z < 0.3f) {
-		ShadowLightDir->z = 0.3f;
-	}
 	if (TheSettingManager->SettingsShadows.Exteriors.UseIntervalUpdate && TheShaderManager->isFullyInitialized) {
-		float NewGameTime = TheShaderManager->ShaderConst.GameTime.y;
-
-		if (NewGameTime < GameTime) {
-			NewGameTime += 24.0f;
-		}
-
-		float gameTimeDiff = NewGameTime - GameTime;
-		if ((gameTimeDiff) > .10f) {
-			if (GameTime > 0) {
-				if (!(gameTimeDiff > .15f)) {
-					UpdateShadowLightDir = true;
-					UpdateTargetTime = NewGameTime + 0.025f;
-					ShadowLightDirNew.x = ShadowLightDir->x;
-					ShadowLightDirNew.y = ShadowLightDir->y;
-					ShadowLightDirNew.z = ShadowLightDir->z;
-					ShadowLightDirNew.w = ShadowLightDir->w;
-					GameTime = NewGameTime;
-				}
-				else {
-					TheShaderManager->isFullyInitialized = false;
-					return;
-				}
-			}
-			else {
-				ShadowLightDirInterval.x = ShadowLightDir->x;
-				ShadowLightDirInterval.y = ShadowLightDir->y;
-				ShadowLightDirInterval.z = ShadowLightDir->z;
-				ShadowLightDirInterval.w = ShadowLightDir->w;
-				ShadowLightDirOld = ShadowLightDirInterval;
-				UpdateShadowLightDir = false;
-				GameTime = NewGameTime;
-			}
-
-		}
-
-		if (ShadowLightDir->z > .985) {
-			UpdateShadowLightDir = false;
-		}
-
-		if (UpdateShadowLightDir) {
-			float newTime = NewGameTime - GameTime;
-			float targetTime = UpdateTargetTime - GameTime;
-			float t = newTime / targetTime;
-
-			ShadowLightDirInterval.x = std::lerp(ShadowLightDirOld.x, ShadowLightDirNew.x, t);
-			ShadowLightDirInterval.y = std::lerp(ShadowLightDirOld.y, ShadowLightDirNew.y, t);
-			ShadowLightDirInterval.z = std::lerp(ShadowLightDirOld.z, ShadowLightDirNew.z, t);
-
-			if (newTime >= targetTime) {
-				UpdateShadowLightDir = false;
-				ShadowLightDirOld = ShadowLightDirInterval;
-				if (UpdateTargetTime >= 24.0f) {
-					GameTime = 0.0f;
-				}
-			}
-		}
-		else {
-			ShadowLightDirInterval = ShadowLightDirOld;
-		}
-
-		RenderShadowMap(MapNear, ShadowsExteriors, &At, &ShadowLightDirInterval, ShadowData);
-		RenderShadowMap(MapFar, ShadowsExteriors, &At, &ShadowLightDirInterval, ShadowData);
+		D3DXVECTOR4 ShadowLightDirInterval;
+		if (!UpdateShadowLightDirInterval(ShadowLightDir, ShadowLightDirInterval)) return;
+		RenderShadowMap(MapNear, ShadowsExteriors, &At,     &ShadowLightDirInterval, ShadowData);
+		RenderShadowMap(MapFar,  ShadowsExteriors, &At,     &ShadowLightDirInterval, ShadowData);
 		RenderShadowMap(MapSkin, ShadowsExteriors, &SkinAt, &ShadowLightDirInterval, ShadowData);
-	}
-	else {
-		RenderShadowMap(MapNear, ShadowsExteriors, &At, ShadowLightDir, ShadowData);
-		RenderShadowMap(MapFar, ShadowsExteriors, &At, ShadowLightDir, ShadowData);
+	} else {
+		RenderShadowMap(MapNear, ShadowsExteriors, &At,     ShadowLightDir, ShadowData);
+		RenderShadowMap(MapFar,  ShadowsExteriors, &At,     ShadowLightDir, ShadowData);
 		RenderShadowMap(MapSkin, ShadowsExteriors, &SkinAt, ShadowLightDir, ShadowData);
 	}
 
 	RenderShadowMap(MapOrtho, ShadowsExteriors, &At, &OrthoDir, ShadowData);
 
-	//ShadowData->x = ShadowsExteriors->Quality;
-	ShadowData->y = ShadowsExteriors->Darkness;
-
-	ShadowData->z = 1.0f / (float)ShadowsExteriors->ShadowMapSize[MapNear];
-	ShadowData->w = 1.0f / (float)ShadowsExteriors->ShadowMapSize[MapFar];
-	OrthoData->z = 1.0f / (float)ShadowsExteriors->ShadowMapSize[MapOrtho];
+	ShadowData->y    = ShadowsExteriors->Darkness;
+	ShadowData->z    = 1.0f / (float)ShadowsExteriors->ShadowMapSize[MapNear];
+	ShadowData->w    = 1.0f / (float)ShadowsExteriors->ShadowMapSize[MapFar];
+	OrthoData->z     = 1.0f / (float)ShadowsExteriors->ShadowMapSize[MapOrtho];
 	ShadowSkinData->z = 1.0f / (float)ShadowsExteriors->ShadowMapSize[MapSkin];
 }
 
@@ -1264,6 +1165,79 @@ void ShadowManager::UpdateStaticTrackers(int LightIndex, double* StaticValues, b
 			ShadowCubeMapStaticValue[i] = StaticValues[i];
 		}
 	}
+}
+
+SettingsShadowStruct::ExteriorsStruct* ShadowManager::SelectExteriorShadowSettings() {
+	TESWeather* currentWeather = Tes->sky->firstWeather;
+	if (currentWeather->weatherType != TESWeather::WeatherType::kType_Pleasant && currentWeather->weatherType != TESWeather::WeatherType::kType_None)
+		return &TheSettingManager->SettingsShadows.ExteriorsAlt;
+	return &TheSettingManager->SettingsShadows.Exteriors;
+}
+
+void ShadowManager::ComputeExteriorLookAt(D3DXVECTOR3& At, D3DXVECTOR3& SkinAt, SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors) {
+	NiNode* PlayerNode = Player->GetNode();
+	SkinAt.x = PlayerNode->m_worldTransform.pos.x - TheRenderManager->CameraPosition.x;
+	SkinAt.y = PlayerNode->m_worldTransform.pos.y - TheRenderManager->CameraPosition.y;
+	SkinAt.z = PlayerNode->m_worldTransform.pos.z - TheRenderManager->CameraPosition.z;
+	At.x = LookAtPosition.x - TheRenderManager->CameraPosition.x;
+	At.y = LookAtPosition.y - TheRenderManager->CameraPosition.y;
+	At.z = LookAtPosition.z - TheRenderManager->CameraPosition.z;
+	D3DXVECTOR3 newPos(PlayerNode->m_worldTransform.pos.x, PlayerNode->m_worldTransform.pos.y, PlayerNode->m_worldTransform.pos.z);
+	if (D3DXVec3Length(&(newPos - LookAtPosition)) > ShadowsExteriors->ShadowMapRadius[MapNear] / 2.0f)
+		LookAtPosition = newPos;
+}
+
+void ShadowManager::AdjustShadowLightDir(D3DXVECTOR4*& ShadowLightDir) {
+	if (ShadowLightDir->z < 0.0f && TheShaderManager->ShaderConst.DayPhase == Dusk)
+		ShadowLightDir = &TheShaderManager->ShaderConst.MasserDir;
+	else if (ShadowLightDir->z < 0.0f && TheShaderManager->ShaderConst.DayPhase == Dawn)
+		ShadowLightDir = &TheShaderManager->ShaderConst.SunDir;
+	if (ShadowLightDir->z < 0.3f)
+		ShadowLightDir->z = 0.3f;
+}
+
+bool ShadowManager::UpdateShadowLightDirInterval(D3DXVECTOR4* ShadowLightDir, D3DXVECTOR4& ShadowLightDirInterval) {
+	float NewGameTime = TheShaderManager->ShaderConst.GameTime.y;
+	if (NewGameTime < GameTime) NewGameTime += 24.0f;
+
+	float gameTimeDiff = NewGameTime - GameTime;
+	if (gameTimeDiff > 0.10f) {
+		if (GameTime > 0) {
+			if (!(gameTimeDiff > 0.15f)) {
+				UpdateShadowLightDir = true;
+				UpdateTargetTime = NewGameTime + 0.025f;
+				ShadowLightDirNew = *ShadowLightDir;
+				GameTime = NewGameTime;
+			} else {
+				TheShaderManager->isFullyInitialized = false;
+				return false;
+			}
+		} else {
+			ShadowLightDirInterval = *ShadowLightDir;
+			ShadowLightDirOld = ShadowLightDirInterval;
+			UpdateShadowLightDir = false;
+			GameTime = NewGameTime;
+		}
+	}
+
+	if (ShadowLightDir->z > 0.985f) UpdateShadowLightDir = false;
+
+	if (UpdateShadowLightDir) {
+		float newTime = NewGameTime - GameTime;
+		float targetTime = UpdateTargetTime - GameTime;
+		float t = newTime / targetTime;
+		ShadowLightDirInterval.x = std::lerp(ShadowLightDirOld.x, ShadowLightDirNew.x, t);
+		ShadowLightDirInterval.y = std::lerp(ShadowLightDirOld.y, ShadowLightDirNew.y, t);
+		ShadowLightDirInterval.z = std::lerp(ShadowLightDirOld.z, ShadowLightDirNew.z, t);
+		if (newTime >= targetTime) {
+			UpdateShadowLightDir = false;
+			ShadowLightDirOld = ShadowLightDirInterval;
+			if (UpdateTargetTime >= 24.0f) GameTime = 0.0f;
+		}
+	} else {
+		ShadowLightDirInterval = ShadowLightDirOld;
+	}
+	return true;
 }
 
 static __declspec(naked) void RenderShadowMapHook() {
