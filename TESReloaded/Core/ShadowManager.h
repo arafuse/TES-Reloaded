@@ -69,6 +69,9 @@ public:
 	void					SetupGeoStreams(NiGeometryBufferData* GeoData);
 	void					DrawGeoArrays(NiGeometryBufferData* GeoData, D3DPRIMITIVETYPE PrimitiveType, UINT VertCount);
 	void					GetCubeFaceAtUp(int Face, D3DXVECTOR3& At, D3DXVECTOR3& Up);
+	void					SetupSpeedTreeLeafShader(NiGeometry* Geo, D3DXVECTOR4* ShadowData);
+	void					SetupAlphaTexture(NiGeometry* Geo, BSShaderProperty* LProp, D3DXVECTOR4* ShadowData);
+	void					RenderSkinnedGeo(NiGeometry* Geo, D3DXVECTOR4* ShadowData);
 
 	IDirect3DTexture9*		ShadowMapTexture[4];
 	IDirect3DSurface9*		ShadowMapSurface[4];
