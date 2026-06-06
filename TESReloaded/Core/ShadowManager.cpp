@@ -1506,6 +1506,17 @@ void ShadowManager::DrawGeoArrays(NiGeometryBufferData* GeoData, D3DPRIMITIVETYP
 	}
 }
 
+void ShadowManager::GetCubeFaceAtUp(int Face, D3DXVECTOR3& At, D3DXVECTOR3& Up) {
+	switch (Face) {
+	case D3DCUBEMAP_FACE_POSITIVE_X: At += D3DXVECTOR3( 1.0f,  0.0f,  0.0f); Up = D3DXVECTOR3(0.0f,  1.0f,  0.0f); break;
+	case D3DCUBEMAP_FACE_NEGATIVE_X: At += D3DXVECTOR3(-1.0f,  0.0f,  0.0f); Up = D3DXVECTOR3(0.0f,  1.0f,  0.0f); break;
+	case D3DCUBEMAP_FACE_POSITIVE_Y: At += D3DXVECTOR3( 0.0f,  1.0f,  0.0f); Up = D3DXVECTOR3(0.0f,  0.0f,  1.0f); break;
+	case D3DCUBEMAP_FACE_NEGATIVE_Y: At += D3DXVECTOR3( 0.0f, -1.0f,  0.0f); Up = D3DXVECTOR3(0.0f,  0.0f, -1.0f); break;
+	case D3DCUBEMAP_FACE_POSITIVE_Z: At += D3DXVECTOR3( 0.0f,  0.0f, -1.0f); Up = D3DXVECTOR3(0.0f,  1.0f,  0.0f); break;
+	case D3DCUBEMAP_FACE_NEGATIVE_Z: At += D3DXVECTOR3( 0.0f,  0.0f,  1.0f); Up = D3DXVECTOR3(0.0f,  1.0f,  0.0f); break;
+	}
+}
+
 static __declspec(naked) void RenderShadowMapHook() {
 
 	__asm
