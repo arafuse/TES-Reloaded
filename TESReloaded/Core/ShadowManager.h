@@ -90,6 +90,8 @@ public:
 	void					LoadShadowShaders(IDirect3DDevice9* Device);
 	void					CreateShadowMapSurfaces(IDirect3DDevice9* Device, SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors);
 	void					CreateCubeMapSurfaces(IDirect3DDevice9* Device, UINT CubeMapSize);
+	void					CollectSceneLights(std::map<int, NiPointLight*>& SceneLights);
+	bool					CategorizeSceneLight(NiPointLight* Light, int& shadowCastIndex, int& shadowCullIndex, NiPointLight** ShadowCastLights, NiPointLight** ShadowCullLights, SettingsShadowPointLightsStruct* ShadowSettings, bool CastShadow);
 
 	IDirect3DTexture9*		ShadowMapTexture[4];
 	IDirect3DSurface9*		ShadowMapSurface[4];

@@ -793,55 +793,24 @@ void ShadowManager::ClearShadowCubeMaps(IDirect3DDevice9* Device, int From) {
 
 int ShadowManager::GetShadowSceneLights(std::map<int, NiPointLight*>& SceneLights, NiPointLight** ShadowCastLights, NiPointLight** ShadowCullLights, NiPointLight** GeneralPointLights, int& shadowCastLightIndex, int& shadowCullLightIndex, int& GeneralPointLightIndex, SettingsShadowPointLightsStruct* ShadowSettings) {
 	SettingsMainStruct::EquipmentModeStruct* EquipmentModeSettings = &TheSettingManager->SettingsMain.EquipmentMode;
-	ShadowSceneNode* SceneNode = *(ShadowSceneNode**)kShadowSceneNode; // ShadowSceneNode array, first element is for gamemode
 	bool TorchOnBeltEnabled = EquipmentModeSettings->Enabled && EquipmentModeSettings->TorchKey != 255;
+	int shadowCastIndex = -1, shadowCullIndex = -1, LightIndex = -1;
 
-	int shadowCastIndex = -1;
-	int shadowCullIndex = -1;
-	int LightIndex = -1;
+	CollectSceneLights(SceneLights);
 
-	NiTList<ShadowSceneLight>::Entry* Entry = SceneNode->lights.start;
-	while (Entry) {
-		NiPointLight* Light = Entry->data->sourceLight;
-		int distance = (int)Light->GetDistance(&Player->pos);
-		AddSceneLight(Light, distance, SceneLights);
-		Entry = Entry->next;
-	}
-
-	std::map<int, NiPointLight*>::iterator v = SceneLights.begin();
-	while (v != SceneLights.end()) {
-		NiPointLight* Light = v->second;
-		if (LightIndex < 1) {
-			GeneralPointLights[++LightIndex] = Light;
-		}
+	for (auto& [key, Light] : SceneLights) {
+		if (LightIndex < 1) GeneralPointLights[++LightIndex] = Light;
 		bool CastShadow = true;
 		if (TorchOnBeltEnabled && Light->CanCarry == 2) {
 			HighProcessEx* Process = (HighProcessEx*)Player->process;
 			if (Process->OnBeltState == HighProcessEx::State::In) CastShadow = false;
 		}
-
-		//Magic effects typically cause problematic shadows, just allow them to cull
-		if (IsLightFromMagic(Light) && shadowCullIndex < (ShadowSettings->iShadowCullLightPoints - 1)) {
-			Light->CanCarry = 1;
-			ShadowCullLights[++shadowCullIndex] = Light;
-		} 
-		else if (Light->CastShadows && CastShadow) {
-
-			if (Light->Spec.r >= ShadowSettings->fShadowLightRadiusMin && Light->Spec.r <= ShadowSettings->fShadowLightRadiusMax && shadowCastIndex < (ShadowSettings->iShadowLightPoints - 1) && Player->GetNode()->GetDistance(&Light->m_worldTransform.pos) < 4000.0f) {
-				ShadowCastLights[++shadowCastIndex] = Light;
-			}
-			else if (Light->Spec.r >= ShadowSettings->fShadowCullLightRadiusMin && Light->Spec.r <= ShadowSettings->fShadowCullLightRadiusMax && shadowCullIndex < (ShadowSettings->iShadowCullLightPoints - 1)) {
-				ShadowCullLights[++shadowCullIndex] = Light;
-			}			
-		}
-		if ((shadowCastIndex + shadowCullIndex) == (ShadowSettings->iShadowLightPoints + ShadowSettings->iShadowCullLightPoints) - 1) break;
-		v++;
+		if (CategorizeSceneLight(Light, shadowCastIndex, shadowCullIndex, ShadowCastLights, ShadowCullLights, ShadowSettings, CastShadow)) break;
 	}
 
-	shadowCastLightIndex = shadowCastIndex;
-	shadowCullLightIndex = shadowCullIndex;
+	shadowCastLightIndex  = shadowCastIndex;
+	shadowCullLightIndex  = shadowCullIndex;
 	GeneralPointLightIndex = LightIndex;
-
 	return shadowCastIndex;
 }
 
@@ -1232,6 +1201,34 @@ void ShadowManager::UpdateStaticMapsCounter() {
 		else
 			EnableStaticMaps = true;
 	}
+}
+
+void ShadowManager::CollectSceneLights(std::map<int, NiPointLight*>& SceneLights) {
+	ShadowSceneNode* SceneNode = *(ShadowSceneNode**)kShadowSceneNode;
+	NiTList<ShadowSceneLight>::Entry* Entry = SceneNode->lights.start;
+	while (Entry) {
+		NiPointLight* Light = Entry->data->sourceLight;
+		int distance = (int)Light->GetDistance(&Player->pos);
+		AddSceneLight(Light, distance, SceneLights);
+		Entry = Entry->next;
+	}
+}
+
+bool ShadowManager::CategorizeSceneLight(NiPointLight* Light, int& shadowCastIndex, int& shadowCullIndex, NiPointLight** ShadowCastLights, NiPointLight** ShadowCullLights, SettingsShadowPointLightsStruct* ShadowSettings, bool CastShadow) {
+	if (IsLightFromMagic(Light) && shadowCullIndex < (ShadowSettings->iShadowCullLightPoints - 1)) {
+		Light->CanCarry = 1;
+		ShadowCullLights[++shadowCullIndex] = Light;
+	} else if (Light->CastShadows && CastShadow) {
+		if (Light->Spec.r >= ShadowSettings->fShadowLightRadiusMin && Light->Spec.r <= ShadowSettings->fShadowLightRadiusMax
+				&& shadowCastIndex < (ShadowSettings->iShadowLightPoints - 1)
+				&& Player->GetNode()->GetDistance(&Light->m_worldTransform.pos) < 4000.0f) {
+			ShadowCastLights[++shadowCastIndex] = Light;
+		} else if (Light->Spec.r >= ShadowSettings->fShadowCullLightRadiusMin && Light->Spec.r <= ShadowSettings->fShadowCullLightRadiusMax
+				&& shadowCullIndex < (ShadowSettings->iShadowCullLightPoints - 1)) {
+			ShadowCullLights[++shadowCullIndex] = Light;
+		}
+	}
+	return (shadowCastIndex + shadowCullIndex) == (ShadowSettings->iShadowLightPoints + ShadowSettings->iShadowCullLightPoints) - 1;
 }
 
 static __declspec(naked) void RenderShadowMapHook() {
