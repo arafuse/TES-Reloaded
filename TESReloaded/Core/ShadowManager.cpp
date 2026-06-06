@@ -46,8 +46,52 @@ static const void* VFTNiTriStrips = (void*)0x00A7F27C;
 #define ShadowMapObjectMinBound 10.0f
 
 #if defined(NEWVEGAS) || defined(OBLIVION)
-ShadowManager::ShadowManager() {
+void ShadowManager::InitShadowBiasConstants() {
+	auto& Ext = TheSettingManager->SettingsShadows.Exteriors;
+	TheShaderManager->ShaderConst.ShadowMap.ShadowBiasForward.x  = Ext.forwardNormBias;
+	TheShaderManager->ShaderConst.ShadowMap.ShadowBiasForward.y  = Ext.forwardFarNormBias;
+	TheShaderManager->ShaderConst.ShadowMap.ShadowBiasForward.z  = Ext.forwardConstBias;
+	TheShaderManager->ShaderConst.ShadowMap.ShadowBiasForward.w  = Ext.forwardFarConstBias;
+	TheShaderManager->ShaderConst.ShadowMap.ShadowBiasDeferred.x = Ext.deferredNormBias;
+	TheShaderManager->ShaderConst.ShadowMap.ShadowBiasDeferred.y = Ext.deferredFarNormBias;
+	TheShaderManager->ShaderConst.ShadowMap.ShadowBiasDeferred.z = Ext.deferredConstBias;
+	TheShaderManager->ShaderConst.ShadowMap.ShadowBiasDeferred.w = Ext.deferredFarConstBias;
+}
 
+void ShadowManager::LoadShadowShaders(IDirect3DDevice9* Device) {
+	ShadowMapVertex = new ShaderRecord();
+	if (ShadowMapVertex->LoadShader("ShadowMap.vso")) Device->CreateVertexShader((const DWORD*)ShadowMapVertex->Function, &ShadowMapVertexShader);
+	ShadowMapPixel = new ShaderRecord();
+	if (ShadowMapPixel->LoadShader("ShadowMap.pso")) Device->CreatePixelShader((const DWORD*)ShadowMapPixel->Function, &ShadowMapPixelShader);
+	ShadowCubeMapVertex = new ShaderRecord();
+	if (ShadowCubeMapVertex->LoadShader("ShadowCubeMap.vso")) Device->CreateVertexShader((const DWORD*)ShadowCubeMapVertex->Function, &ShadowCubeMapVertexShader);
+	ShadowCubeMapPixel = new ShaderRecord();
+	if (ShadowCubeMapPixel->LoadShader("ShadowCubeMap.pso")) Device->CreatePixelShader((const DWORD*)ShadowCubeMapPixel->Function, &ShadowCubeMapPixelShader);
+	ShadowCubeMapExteriorPixel = new ShaderRecord();
+	if (ShadowCubeMapExteriorPixel->LoadShader("ShadowCubeMapExterior.pso")) Device->CreatePixelShader((const DWORD*)ShadowCubeMapExteriorPixel->Function, &ShadowCubeMapExteriorPixelShader);
+}
+
+void ShadowManager::CreateShadowMapSurfaces(IDirect3DDevice9* Device, SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors) {
+	for (int i = 0; i < 4; i++) {
+		UINT ShadowMapSize = ShadowsExteriors->ShadowMapSize[i];
+		Device->CreateTexture(ShadowMapSize, ShadowMapSize, 1, D3DUSAGE_RENDERTARGET, D3DFMT_R32F, D3DPOOL_DEFAULT, &ShadowMapTexture[i], NULL);
+		ShadowMapTexture[i]->GetSurfaceLevel(0, &ShadowMapSurface[i]);
+		Device->CreateDepthStencilSurface(ShadowMapSize, ShadowMapSize, D3DFMT_D24S8, D3DMULTISAMPLE_NONE, 0, true, &ShadowMapDepthSurface[i], NULL);
+		ShadowMapViewPort[i] = { 0, 0, ShadowMapSize, ShadowMapSize, 0.0f, 1.0f };
+	}
+}
+
+void ShadowManager::CreateCubeMapSurfaces(IDirect3DDevice9* Device, UINT CubeMapSize) {
+	for (int i = 0; i < 12; i++) {
+		Device->CreateCubeTexture(CubeMapSize, 1, D3DUSAGE_RENDERTARGET, D3DFMT_R32F, D3DPOOL_DEFAULT, &ShadowCubeMapTexture[i], NULL);
+		for (int j = 0; j < 6; j++) {
+			ShadowCubeMapTexture[i]->GetCubeMapSurface((D3DCUBEMAP_FACES)j, 0, &ShadowCubeMapSurface[i][j]);
+			Device->CreateDepthStencilSurface(CubeMapSize, CubeMapSize, D3DFMT_D24S8, D3DMULTISAMPLE_NONE, 0, true, &ShadowCubeMapDepthSurface[i][j], NULL);
+		}
+	}
+}
+
+ShadowManager::ShadowManager() {
 	Logger::Log("Starting the shadows manager...");
 	TheShadowManager = this;
 
@@ -56,14 +100,7 @@ ShadowManager::ShadowManager() {
 	SettingsShadowStruct::InteriorsStruct* ShadowsInteriors = &TheSettingManager->SettingsShadows.Interiors;
 	SettingsShadowStruct::InteriorsStruct* ShadowsExteriorsPoint = &TheSettingManager->SettingsShadows.ExteriorsPoint;
 
-	TheShaderManager->ShaderConst.ShadowMap.ShadowBiasForward.x = TheSettingManager->SettingsShadows.Exteriors.forwardNormBias;
-	TheShaderManager->ShaderConst.ShadowMap.ShadowBiasForward.y = TheSettingManager->SettingsShadows.Exteriors.forwardFarNormBias;
-	TheShaderManager->ShaderConst.ShadowMap.ShadowBiasForward.z = TheSettingManager->SettingsShadows.Exteriors.forwardConstBias;
-	TheShaderManager->ShaderConst.ShadowMap.ShadowBiasForward.w = TheSettingManager->SettingsShadows.Exteriors.forwardFarConstBias;
-	TheShaderManager->ShaderConst.ShadowMap.ShadowBiasDeferred.x = TheSettingManager->SettingsShadows.Exteriors.deferredNormBias;
-	TheShaderManager->ShaderConst.ShadowMap.ShadowBiasDeferred.y = TheSettingManager->SettingsShadows.Exteriors.deferredFarNormBias;
-	TheShaderManager->ShaderConst.ShadowMap.ShadowBiasDeferred.z = TheSettingManager->SettingsShadows.Exteriors.deferredConstBias;
-	TheShaderManager->ShaderConst.ShadowMap.ShadowBiasDeferred.w = TheSettingManager->SettingsShadows.Exteriors.deferredFarConstBias;
+	InitShadowBiasConstants();
 
 	//TODO: should this setting be on it's own? choose smaller of two for now
 	UINT ShadowCubeMapSize = min(ShadowsInteriors->ShadowCubeMapSize, ShadowsExteriorsPoint->ShadowCubeMapSize);
@@ -71,39 +108,14 @@ ShadowManager::ShadowManager() {
 	CurrentCell = NULL;
 	ShadowCubeMapState = ShadowCubeMapStateEnum::None;
 
-	ShadowMapVertex = new ShaderRecord();
-	if (ShadowMapVertex->LoadShader("ShadowMap.vso")) Device->CreateVertexShader((const DWORD*)ShadowMapVertex->Function, &ShadowMapVertexShader);
-	ShadowMapPixel = new ShaderRecord();
-	if (ShadowMapPixel->LoadShader("ShadowMap.pso")) Device->CreatePixelShader((const DWORD*)ShadowMapPixel->Function, &ShadowMapPixelShader);
-
-	ShadowCubeMapVertex = new ShaderRecord();
-	if (ShadowCubeMapVertex->LoadShader("ShadowCubeMap.vso")) Device->CreateVertexShader((const DWORD*)ShadowCubeMapVertex->Function, &ShadowCubeMapVertexShader);
-	ShadowCubeMapPixel = new ShaderRecord();
-	if (ShadowCubeMapPixel->LoadShader("ShadowCubeMap.pso")) Device->CreatePixelShader((const DWORD*)ShadowCubeMapPixel->Function, &ShadowCubeMapPixelShader);
-	ShadowCubeMapExteriorPixel = new ShaderRecord();
-	if (ShadowCubeMapExteriorPixel->LoadShader("ShadowCubeMapExterior.pso")) Device->CreatePixelShader((const DWORD*)ShadowCubeMapExteriorPixel->Function, &ShadowCubeMapExteriorPixelShader);
-
-	for (int i = 0; i < 4; i++) {
-		UINT ShadowMapSize = ShadowsExteriors->ShadowMapSize[i];
-		Device->CreateTexture(ShadowMapSize, ShadowMapSize, 1, D3DUSAGE_RENDERTARGET, D3DFMT_R32F, D3DPOOL_DEFAULT, &ShadowMapTexture[i], NULL);
-		ShadowMapTexture[i]->GetSurfaceLevel(0, &ShadowMapSurface[i]);
-		Device->CreateDepthStencilSurface(ShadowMapSize, ShadowMapSize, D3DFMT_D24S8, D3DMULTISAMPLE_NONE, 0, true, &ShadowMapDepthSurface[i], NULL);
-		ShadowMapViewPort[i] = { 0, 0, ShadowMapSize, ShadowMapSize, 0.0f, 1.0f };
-	}
-	for (int i = 0; i < 12; i++) {
-		Device->CreateCubeTexture(ShadowCubeMapSize, 1, D3DUSAGE_RENDERTARGET, D3DFMT_R32F, D3DPOOL_DEFAULT, &ShadowCubeMapTexture[i], NULL);
-		for (int j = 0; j < 6; j++) {
-			ShadowCubeMapTexture[i]->GetCubeMapSurface((D3DCUBEMAP_FACES)j, 0, &ShadowCubeMapSurface[i][j]);
-			Device->CreateDepthStencilSurface(ShadowCubeMapSize, ShadowCubeMapSize, D3DFMT_D24S8, D3DMULTISAMPLE_NONE, 0, true, &ShadowCubeMapDepthSurface[i][j], NULL);
-		}
-	}
+	LoadShadowShaders(Device);
+	CreateShadowMapSurfaces(Device, ShadowsExteriors);
+	CreateCubeMapSurfaces(Device, ShadowCubeMapSize);
 
 	ShadowCubeMapViewPort = { 0, 0, ShadowCubeMapSize, ShadowCubeMapSize, 0.0f, 1.0f };
-
 	ShadowCubeMapLights[12] = { NULL };
 
 	ResetIntervals();
-
 }
 
 void ShadowManager::CreateD3DMatrix(D3DMATRIX* Matrix, NiTransform* Transform) {

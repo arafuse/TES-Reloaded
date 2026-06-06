@@ -86,6 +86,10 @@ public:
 	SettingsShadowStruct::InteriorsStruct* SelectInteriorShadowSettings();
 	void					HandleCellChange();
 	void					UpdateStaticMapsCounter();
+	void					InitShadowBiasConstants();
+	void					LoadShadowShaders(IDirect3DDevice9* Device);
+	void					CreateShadowMapSurfaces(IDirect3DDevice9* Device, SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors);
+	void					CreateCubeMapSurfaces(IDirect3DDevice9* Device, UINT CubeMapSize);
 
 	IDirect3DTexture9*		ShadowMapTexture[4];
 	IDirect3DSurface9*		ShadowMapSurface[4];
