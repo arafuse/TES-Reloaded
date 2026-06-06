@@ -72,6 +72,8 @@ public:
 	void					SetupSpeedTreeLeafShader(NiGeometry* Geo, D3DXVECTOR4* ShadowData);
 	void					SetupAlphaTexture(NiGeometry* Geo, BSShaderProperty* LProp, D3DXVECTOR4* ShadowData);
 	void					RenderSkinnedGeo(NiGeometry* Geo, D3DXVECTOR4* ShadowData);
+	void					RenderActorFaces(NiGeometryBufferData* GeoData, D3DPRIMITIVETYPE PrimitiveType, UINT VertCount, int lightIndex, const D3DXMATRIX& Proj);
+	void					RenderActorSkinnedGeo(NiGeometry* Geo, D3DXVECTOR4* ShadowData, int lightIndex, const D3DXMATRIX& Proj);
 
 	IDirect3DTexture9*		ShadowMapTexture[4];
 	IDirect3DSurface9*		ShadowMapSurface[4];
