@@ -421,7 +421,7 @@ void ShadowManager::SetupShadowMapMatrices(ShadowMapTypeEnum ShadowMapType, Sett
 }
 
 void ShadowManager::RenderShadowMapCell(TESObjectCELL* Cell, ShadowMapTypeEnum ShadowMapType, SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors, D3DXVECTOR4* ShadowData) {
-	static const float MinRadii[] = { 9.0f, 100.0f, 100.0f, 0.0f }; // Near, Far, Ortho, Skin
+	static const float MinRadii[4] = { 9.0f, 100.0f, 100.0f, 0.0f }; // Near, Far, Ortho, Skin
 	NiNode* CellNode = Cell->niNode;
 	for (int i = 2; i < 6; i++) {
 		NiNode* TerrainNode = (NiNode*)CellNode->m_children.data[i];
