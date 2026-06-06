@@ -83,6 +83,9 @@ public:
 	void					ComputeExteriorLookAt(D3DXVECTOR3& At, D3DXVECTOR3& SkinAt, SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors);
 	void					AdjustShadowLightDir(D3DXVECTOR4*& ShadowLightDir);
 	bool					UpdateShadowLightDirInterval(D3DXVECTOR4* ShadowLightDir, D3DXVECTOR4& ShadowLightDirInterval);
+	SettingsShadowStruct::InteriorsStruct* SelectInteriorShadowSettings();
+	void					HandleCellChange();
+	void					UpdateStaticMapsCounter();
 
 	IDirect3DTexture9*		ShadowMapTexture[4];
 	IDirect3DSurface9*		ShadowMapSurface[4];
