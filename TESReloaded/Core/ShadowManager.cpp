@@ -631,58 +631,22 @@ void ShadowManager::RenderExteriorShadows() {
 
 //TODO: rename, doesn't apply solely to interiors
 void ShadowManager::RenderInteriorShadows() {
-
 	IDirect3DDevice9* Device = TheRenderManager->device;
 	D3DXVECTOR4* ShadowData = &TheShaderManager->ShaderConst.ShadowCube.Data;
-	D3DXVECTOR4* ShadowLightDir = &TheShaderManager->ShaderConst.ShadowMap.ShadowLightDir;
-	SettingsShadowStruct::InteriorsStruct* ShadowSettings;
-	
+
 	CurrentVertex = ShadowCubeMapVertex;
+	SettingsShadowStruct::InteriorsStruct* ShadowSettings = SelectInteriorShadowSettings();
 
-	if (Player->GetWorldSpace()) {
-		// araf adjust darkness based on weather		
-		Sky* WorldSky = Tes->sky;
-		TESWeather* currentWeather = WorldSky->firstWeather;
-
-		if (currentWeather->weatherType != TESWeather::WeatherType::kType_Pleasant && currentWeather->weatherType != TESWeather::WeatherType::kType_None) {
-			ShadowSettings = &TheSettingManager->SettingsShadows.ExteriorsPointAlt;
-		}
-		else {
-			ShadowSettings = &TheSettingManager->SettingsShadows.ExteriorsPoint;
-		}
-
-		CurrentPixel = ShadowCubeMapExteriorPixel;
-	}
-	else {
-		ShadowSettings = &TheSettingManager->SettingsShadows.Interiors;
-		CurrentPixel = ShadowCubeMapPixel;
-	}
-
-	if (CurrentCell != Player->parentCell) {
-		ShadowCubeMapState = ShadowCubeMapStateEnum::None; CurrentCell = Player->parentCell;
-		LoadShadowLightPointSettings();
-		EnableStaticMapsFrameCount = 0;
-		EnableStaticMaps = false;
-	}
-
-	if (!EnableStaticMaps) {
-		if (EnableStaticMapsFrameCount < EnableStaticMapsFrameThreshold) {
-			EnableStaticMapsFrameCount++;
-		}
-		else {
-			EnableStaticMaps = true;
-		}
-	}
+	if (CurrentCell != Player->parentCell) HandleCellChange();
+	UpdateStaticMapsCounter();
 
 	AlphaEnabled = ShadowSettings->AlphaEnabled;
 
 	std::map<int, NiPointLight*> SceneLights;
-	NiPointLight* ShadowCastLights[12] = { NULL };
-	NiPointLight* ShadowCullLights[24] = { NULL };
-	NiPointLight* GeneralPointLights[2] = { NULL }; //certainly a more appropriate place for this, but this is convenient
-	int ShadowCastLightIndex = -1;
-	int ShadowCullLightIndex = -1;
-	int GeneralPointLightIndex = -1;
+	NiPointLight* ShadowCastLights[12]  = { NULL };
+	NiPointLight* ShadowCullLights[24]  = { NULL };
+	NiPointLight* GeneralPointLights[2] = { NULL };
+	int ShadowCastLightIndex = -1, ShadowCullLightIndex = -1, GeneralPointLightIndex = -1;
 
 	if (ShadowLightPointSettings->bEnabled) {
 		// araf Int shadows in 'behaves as exterior' cells for Immersive Interiors
@@ -697,11 +661,10 @@ void ShadowManager::RenderInteriorShadows() {
 			if (Player->GetWorldSpace()) {
 				RenderShadowCubeMapExt(ShadowCastLights, ShadowCastLightIndex, ShadowLightPointSettings->fShadowObjectScanRadius, ShadowSettings, ShadowData);
 				SetAllGeneralLightPos(GeneralPointLights, GeneralPointLightIndex);
-			}
-			else {
+			} else {
 				RenderShadowCubeMapInt(ShadowCastLights, ShadowCastLightIndex, ShadowLightPointSettings->fShadowObjectScanRadius, ShadowSettings, ShadowData);
 				ClearShadowCubeMaps(Device, ShadowCastLightIndex, ShadowCubeMapStateEnum::Interior);
-				GeneralPointLightIndex = -1; //not needed for interiors
+				GeneralPointLightIndex = -1;
 			}
 			ShadowData->y = ShadowSettings->Darkness;
 		/*
@@ -712,34 +675,24 @@ void ShadowManager::RenderInteriorShadows() {
 			ShadowData->y = 2.0f;
 		}
 		*/
-	}
-	else {
-		if (Player->GetWorldSpace()) { //set these to cull the normal exterior shadows
+	} else {
+		if (Player->GetWorldSpace()) {
 			GetShadowSceneLights(SceneLights, ShadowCastLights, ShadowCullLights, GeneralPointLights, ShadowCastLightIndex, ShadowCullLightIndex, GeneralPointLightIndex, ShadowLightPointSettings);
 			SetAllShadowCastLightPos(ShadowCastLights, ShadowCastLightIndex);
 			SetAllShadowCullLightPos(ShadowCullLights, ShadowCullLightIndex);
 			SetAllGeneralLightPos(GeneralPointLights, GeneralPointLightIndex);
 		}
-		ShadowCastLightIndex = -1; //clears shadowmaps
+		ShadowCastLightIndex = -1;
 	}
 
-	if (ShadowCastLightIndex < ShadowCubeLightCount) {
-		ClearShadowCubeMaps(Device, ShadowCastLightIndex);
-	}
+	if (ShadowCastLightIndex   < ShadowCubeLightCount)    ClearShadowCubeMaps(Device, ShadowCastLightIndex);
+	if (ShadowCullLightIndex   < ShadowCubeCullLightCount) ClearShadowCubeLightCullRegister(ShadowCullLightIndex);
+	if (GeneralPointLightIndex < GeneralPointLightCount)   ClearGeneralPointLightRegister(GeneralPointLightIndex);
 
-	if (ShadowCullLightIndex < ShadowCubeCullLightCount) {
-		ClearShadowCubeLightCullRegister(ShadowCullLightIndex);
-	}
-
-	if (GeneralPointLightIndex < GeneralPointLightCount) {
-		ClearGeneralPointLightRegister(GeneralPointLightIndex);
-	}
-
-	ShadowCubeLightCount = ShadowCastLightIndex;
+	ShadowCubeLightCount     = ShadowCastLightIndex;
 	ShadowCubeCullLightCount = ShadowCullLightIndex;
-	GeneralPointLightCount = GeneralPointLightIndex;
+	GeneralPointLightCount   = GeneralPointLightIndex;
 
-	//ShadowData->x = ShadowSettings->Quality;
 	ShadowData->z = 1.0f / (float)ShadowSettings->ShadowCubeMapSize;
 }
 
@@ -1238,6 +1191,35 @@ bool ShadowManager::UpdateShadowLightDirInterval(D3DXVECTOR4* ShadowLightDir, D3
 		ShadowLightDirInterval = ShadowLightDirOld;
 	}
 	return true;
+}
+
+SettingsShadowStruct::InteriorsStruct* ShadowManager::SelectInteriorShadowSettings() {
+	if (Player->GetWorldSpace()) {
+		TESWeather* currentWeather = Tes->sky->firstWeather;
+		CurrentPixel = ShadowCubeMapExteriorPixel;
+		if (currentWeather->weatherType != TESWeather::WeatherType::kType_Pleasant && currentWeather->weatherType != TESWeather::WeatherType::kType_None)
+			return &TheSettingManager->SettingsShadows.ExteriorsPointAlt;
+		return &TheSettingManager->SettingsShadows.ExteriorsPoint;
+	}
+	CurrentPixel = ShadowCubeMapPixel;
+	return &TheSettingManager->SettingsShadows.Interiors;
+}
+
+void ShadowManager::HandleCellChange() {
+	ShadowCubeMapState = ShadowCubeMapStateEnum::None;
+	CurrentCell = Player->parentCell;
+	LoadShadowLightPointSettings();
+	EnableStaticMapsFrameCount = 0;
+	EnableStaticMaps = false;
+}
+
+void ShadowManager::UpdateStaticMapsCounter() {
+	if (!EnableStaticMaps) {
+		if (EnableStaticMapsFrameCount < EnableStaticMapsFrameThreshold)
+			EnableStaticMapsFrameCount++;
+		else
+			EnableStaticMaps = true;
+	}
 }
 
 static __declspec(naked) void RenderShadowMapHook() {
