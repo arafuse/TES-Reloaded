@@ -402,20 +402,12 @@ void ShadowManager::RenderActor(NiGeometry* Geo, D3DXVECTOR4* ShadowData, int li
 	}
 }
 
-void ShadowManager::RenderShadowMap(ShadowMapTypeEnum ShadowMapType, SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors, D3DXVECTOR3* At, D3DXVECTOR4* ShadowLightDir, D3DXVECTOR4* ShadowData) {
-
-	IDirect3DDevice9* Device = TheRenderManager->device;
-	NiDX9RenderState* RenderState = TheRenderManager->renderState;
+void ShadowManager::SetupShadowMapMatrices(ShadowMapTypeEnum ShadowMapType, SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors, D3DXVECTOR3* At, D3DXVECTOR4* ShadowLightDir) {
 	float FarPlane = ShadowsExteriors->ShadowMapFarPlane;
 	float Radius = ShadowsExteriors->ShadowMapRadius[ShadowMapType];
-	D3DXVECTOR3 Up = D3DXVECTOR3(0.0f, 0.0f, 1.0f);
+	D3DXVECTOR3 Up(0.0f, 0.0f, 1.0f);
 	D3DXMATRIX View, Proj;
 	D3DXVECTOR3 Eye;
-	GridCellArray* CellArray = Tes->gridCellArray;
-	UInt32 CellArraySize = CellArray->size * CellArray->size;
-
-	AlphaEnabled = ShadowsExteriors->AlphaEnabled[ShadowMapType];
-
 	Eye.x = At->x - FarPlane * ShadowLightDir->x * -1;
 	Eye.y = At->y - FarPlane * ShadowLightDir->y * -1;
 	Eye.z = At->z - FarPlane * ShadowLightDir->z * -1;
@@ -424,57 +416,52 @@ void ShadowManager::RenderShadowMap(ShadowMapTypeEnum ShadowMapType, SettingsSha
 	TheShaderManager->ShaderConst.ShadowMap.ShadowViewProj = View * Proj;
 	TheShaderManager->ShaderConst.ShadowMap.ShadowCameraToLight[ShadowMapType] = TheRenderManager->InvViewProjMatrix * TheShaderManager->ShaderConst.ShadowMap.ShadowViewProj;
 	BillboardRight = { View._11, View._21, View._31, 0.0f };
-	BillboardUp = { View._12, View._22, View._32, 0.0f };
+	BillboardUp    = { View._12, View._22, View._32, 0.0f };
 	GetShadowFrustum(ShadowMapType, &TheShaderManager->ShaderConst.ShadowMap.ShadowViewProj);
+}
+
+void ShadowManager::RenderShadowMapCell(TESObjectCELL* Cell, ShadowMapTypeEnum ShadowMapType, SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors, D3DXVECTOR4* ShadowData) {
+	static const float MinRadii[] = { 9.0f, 100.0f, 100.0f, 0.0f }; // Near, Far, Ortho, Skin
+	NiNode* CellNode = Cell->niNode;
+	for (int i = 2; i < 6; i++) {
+		NiNode* TerrainNode = (NiNode*)CellNode->m_children.data[i];
+		if (TerrainNode->m_children.end) RenderTerrain(TerrainNode->m_children.data[0], ShadowMapType, ShadowData);
+	}
+	TList<TESObjectREFR>::Entry* Entry = &Cell->objectList.First;
+	while (Entry) {
+		if (TESObjectREFR* Ref = GetRef(Entry->item, &ShadowsExteriors->Forms[ShadowMapType], &ShadowsExteriors->ExcludedForms)) {
+			NiNode* RefNode = Ref->GetNode();
+			if (InShadowFrustum(ShadowMapType, RefNode))
+				RenderObject(RefNode, ShadowData, TheShaderManager->ShaderConst.HasWater, MinRadii[ShadowMapType]);
+		}
+		Entry = Entry->next;
+	}
+}
+
+void ShadowManager::RenderShadowMap(ShadowMapTypeEnum ShadowMapType, SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors, D3DXVECTOR3* At, D3DXVECTOR4* ShadowLightDir, D3DXVECTOR4* ShadowData) {
+	IDirect3DDevice9* Device = TheRenderManager->device;
+	NiDX9RenderState* RenderState = TheRenderManager->renderState;
+
+	AlphaEnabled = ShadowsExteriors->AlphaEnabled[ShadowMapType];
+	SetupShadowMapMatrices(ShadowMapType, ShadowsExteriors, At, ShadowLightDir);
 	Device->SetRenderTarget(0, ShadowMapSurface[ShadowMapType]);
 	Device->SetDepthStencilSurface(ShadowMapDepthSurface[ShadowMapType]);
 	Device->SetViewport(&ShadowMapViewPort[ShadowMapType]);
 	Device->Clear(0L, NULL, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, D3DXCOLOR(1.0f, 0.25f, 0.25f, 0.55f), 1.0f, 0L);
-	if (ShadowsExteriors->Enabled[ShadowMapType]) {
-		RenderState->SetRenderState(D3DRS_ZENABLE, D3DZB_TRUE, RenderStateArgs);
-		RenderState->SetRenderState(D3DRS_ZWRITEENABLE, 1, RenderStateArgs);
-		RenderState->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE, RenderStateArgs);
-		RenderState->SetRenderState(D3DRS_ALPHABLENDENABLE, 0, RenderStateArgs);
-		RenderState->SetVertexShader(ShadowMapVertexShader, false);
-		RenderState->SetPixelShader(ShadowMapPixelShader, false);
-		Device->BeginScene();
-		for (UInt32 x = 0; x < *SettingGridsToLoad; x++) {
-			for (UInt32 y = 0; y < *SettingGridsToLoad; y++) {
-				if (TESObjectCELL* Cell = Tes->gridCellArray->GetCell(x, y)) {
-					NiNode* CellNode = Cell->niNode;
-					for (int i = 2; i < 6; i++) {
-						NiNode* TerrainNode = (NiNode*)CellNode->m_children.data[i];
-						if (TerrainNode->m_children.end) RenderTerrain(TerrainNode->m_children.data[0], ShadowMapType, ShadowData);
-					}
-					TList<TESObjectREFR>::Entry* Entry = &Cell->objectList.First;
-					while (Entry) {
-						if (TESObjectREFR* Ref = GetRef(Entry->item, &ShadowsExteriors->Forms[ShadowMapType], &ShadowsExteriors->ExcludedForms)) {
-							NiNode* RefNode = Ref->GetNode();
-							if (InShadowFrustum(ShadowMapType, RefNode)) {
-								switch (ShadowMapType) {
-								case ShadowMapTypeEnum::MapNear:
-									RenderObject(RefNode, ShadowData, TheShaderManager->ShaderConst.HasWater, 9.0f);
-									break;
-								case ShadowMapTypeEnum::MapFar:
-									RenderObject(RefNode, ShadowData, TheShaderManager->ShaderConst.HasWater, 100.0f);
-									break;
-								case ShadowMapTypeEnum::MapSkin:
-									RenderObject(RefNode, ShadowData, TheShaderManager->ShaderConst.HasWater, 0.0f);
-									break;
-								case ShadowMapTypeEnum::MapOrtho:
-									RenderObject(RefNode, ShadowData, TheShaderManager->ShaderConst.HasWater, 100.0f);
-									break;
-								}
-							}
-						}
-						Entry = Entry->next;
-					}
-				}
-			}
-		}
-		Device->EndScene();
-	}
+	if (!ShadowsExteriors->Enabled[ShadowMapType]) return;
 
+	RenderState->SetRenderState(D3DRS_ZENABLE, D3DZB_TRUE, RenderStateArgs);
+	RenderState->SetRenderState(D3DRS_ZWRITEENABLE, 1, RenderStateArgs);
+	RenderState->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE, RenderStateArgs);
+	RenderState->SetRenderState(D3DRS_ALPHABLENDENABLE, 0, RenderStateArgs);
+	RenderState->SetVertexShader(ShadowMapVertexShader, false);
+	RenderState->SetPixelShader(ShadowMapPixelShader, false);
+	Device->BeginScene();
+	for (UInt32 x = 0; x < *SettingGridsToLoad; x++)
+		for (UInt32 y = 0; y < *SettingGridsToLoad; y++)
+			if (TESObjectCELL* Cell = Tes->gridCellArray->GetCell(x, y))
+				RenderShadowMapCell(Cell, ShadowMapType, ShadowsExteriors, ShadowData);
+	Device->EndScene();
 }
 
 void ShadowManager::RenderShadowCubeMapExt(NiPointLight** Lights, int LightIndex, float radiusScan, SettingsShadowStruct::InteriorsStruct* ShadowSettings, D3DXVECTOR4* ShadowData) {
