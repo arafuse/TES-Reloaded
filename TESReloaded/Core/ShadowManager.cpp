@@ -607,9 +607,11 @@ void ShadowManager::RenderShadowCubeMapExt(NiPointLight** Lights, int LightIndex
 			if (TESObjectCELL* Cell = Tes->gridCellArray->GetCell(x, y)) {
 				TList<TESObjectREFR>::Entry* Entry = &Cell->objectList.First;
 				while (Entry) {
-					if (TESObjectREFR* Ref = GetRef(Entry->item, &ShadowSettings->Forms, &ShadowSettings->ExcludedForms))
+					if (TESObjectREFR* Ref = GetRef(Entry->item, &ShadowSettings->Forms, &ShadowSettings->ExcludedForms)) {
+						RefLightInfo Info = BuildRefLightInfo(Ref);
 						for (int L = 0; L <= LightIndex; L++)
-							ClassifyRefForLight(Ref, Lights, L, radiusScan, CubeMapRefMap, CubeMapActorMap, StaticValues, forceRedrawMap);
+							ClassifyRefForLight(Info, Lights, L, radiusScan, CubeMapRefMap, CubeMapActorMap, StaticValues, forceRedrawMap);
+					}
 					Entry = Entry->next;
 				}
 			}
@@ -627,9 +629,11 @@ void ShadowManager::RenderShadowCubeMapInt(NiPointLight** Lights, int LightIndex
 
 	ClearCubeMapNodeLists();
 	while (Entry) {
-		if (TESObjectREFR* Ref = GetRef(Entry->item, &ShadowSettings->Forms, &ShadowSettings->ExcludedForms))
+		if (TESObjectREFR* Ref = GetRef(Entry->item, &ShadowSettings->Forms, &ShadowSettings->ExcludedForms)) {
+			RefLightInfo Info = BuildRefLightInfo(Ref);
 			for (int L = 0; L <= LightIndex; L++)
-				ClassifyRefForLight(Ref, Lights, L, radiusScan, CubeMapRefMap, CubeMapActorMap, StaticValues, forceRedrawMap);
+				ClassifyRefForLight(Info, Lights, L, radiusScan, CubeMapRefMap, CubeMapActorMap, StaticValues, forceRedrawMap);
+		}
 		Entry = Entry->next;
 	}
 	UpdateStaticTrackers(LightIndex, StaticValues, forceRedrawMap);
@@ -1205,25 +1209,34 @@ void ShadowManager::ClearCubeMapNodeLists() {
 	}
 }
 
-void ShadowManager::ClassifyRefForLight(TESObjectREFR* Ref, NiPointLight** Lights, int L, float radiusScan, std::vector<NiNode*>* refMap, std::vector<NiNode*>* actorMap, double* StaticValues, bool* forceRedrawMap) {
+ShadowManager::RefLightInfo ShadowManager::BuildRefLightInfo(TESObjectREFR* Ref) {
+	RefLightInfo Info;
+	Info.Node = Ref->GetNode();
+	UInt8 TypeID = Ref->baseForm->formType;
+	Info.IsActorType = (TypeID >= TESForm::FormType::kFormType_NPC && TypeID <= TESForm::FormType::kFormType_LeveledCreature);
+	Info.BoundRadius = Info.Node->GetWorldBoundRadius();
+	NiBound* B = Ref->niNode->GetWorldBound();
+	Info.CenterSum = (double)B->Center.x + (double)B->Center.y + (double)B->Center.z;
+	Info.IsPlayer = (Ref->refID == Player->refID);
+	return Info;
+}
+
+void ShadowManager::ClassifyRefForLight(const RefLightInfo& Info, NiPointLight** Lights, int L, float radiusScan, std::vector<NiNode*>* refMap, std::vector<NiNode*>* actorMap, double* StaticValues, bool* forceRedrawMap) {
 	NiPoint3* LightPos = &Lights[L]->m_worldTransform.pos;
 	float FarPlane = TheShaderManager->ShaderConst.ShadowMap.ShadowCastLightPosition[L].w;
-	UInt8 TypeID = Ref->baseForm->formType;
-	bool isActorType = (TypeID >= TESForm::FormType::kFormType_NPC && TypeID <= TESForm::FormType::kFormType_LeveledCreature);
-	float radius = (Lights[L]->CanCarry || isActorType) ? FarPlane * 1.2f : FarPlane * radiusScan;
+	float radius = (Lights[L]->CanCarry || Info.IsActorType) ? FarPlane * 1.2f : FarPlane * radiusScan;
 
-	if (Ref->GetNode()->GetDistance(LightPos) - Ref->GetNode()->GetWorldBoundRadius() <= radius) {
+	if (Info.Node->GetDistance(LightPos) - Info.BoundRadius <= radius) {
 		if (Lights[L]->CanCarry) forceRedrawMap[L] = true;
-		if (isActorType) {
+		if (Info.IsActorType) {
 			// araf Exclude torches on the player, bugs in IFPV
 			// TODO: Exclude player's own torch
-			if (Ref->refID != Player->refID || !Lights[L]->CanCarry)
-				actorMap[L].emplace_back(Ref->GetNode());
+			if (!Info.IsPlayer || !Lights[L]->CanCarry)
+				actorMap[L].emplace_back(Info.Node);
 		} else {
-			refMap[L].emplace_back(Ref->GetNode());
+			refMap[L].emplace_back(Info.Node);
 		}
-		NiBound* B = Ref->niNode->GetWorldBound();
-		StaticValues[L] += (double)B->Center.x + (double)B->Center.y + (double)B->Center.z;
+		StaticValues[L] += Info.CenterSum;
 	}
 }
 
