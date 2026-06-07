@@ -28,6 +28,16 @@ public:
 		PlaneBottom	= 5,
 	};
 
+	// Per-ref data needed when classifying a ref against each point light. Computed once per
+	// ref (independent of the light) so the per-light loop only does the distance test.
+	struct RefLightInfo {
+		NiNode*	Node;
+		double	CenterSum;
+		float	BoundRadius;
+		bool	IsActorType;
+		bool	IsPlayer;
+	};
+
 	void					CreateD3DMatrix(D3DMATRIX* Matrix, NiTransform* Transform);
 	void					GetShadowFrustum(ShadowMapTypeEnum ShadowMapType, D3DMATRIX* Matrix);
 	bool					InShadowFrustum(ShadowMapTypeEnum ShadowMapType, NiAVObject* Object);
@@ -82,7 +92,8 @@ public:
 	void					RenderShadowMapCellTerrain(TESObjectCELL* Cell, ShadowMapTypeEnum ShadowMapType, D3DXVECTOR4* ShadowData);
 	void					BuildExteriorRefCandidates(SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors);
 	void					SetupCubeMapRenderState();
-	void					ClassifyRefForLight(TESObjectREFR* Ref, NiPointLight** Lights, int L, float radiusScan, std::vector<NiNode*>* refMap, std::vector<NiNode*>* actorMap, double* StaticValues, bool* forceRedrawMap);
+	RefLightInfo			BuildRefLightInfo(TESObjectREFR* Ref);
+	void					ClassifyRefForLight(const RefLightInfo& Info, NiPointLight** Lights, int L, float radiusScan, std::vector<NiNode*>* refMap, std::vector<NiNode*>* actorMap, double* StaticValues, bool* forceRedrawMap);
 	void					ClearCubeMapNodeLists();
 	void					UpdateStaticTrackers(int LightIndex, double* StaticValues, bool* forceRedrawMap);
 	SettingsShadowStruct::ExteriorsStruct* SelectExteriorShadowSettings();
