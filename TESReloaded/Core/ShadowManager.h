@@ -52,13 +52,13 @@ public:
 	bool					IsInstanceable(NiGeometry* Geo, NiGeometryBufferData* GeoData);
 	IDirect3DVertexDeclaration9* GetInstancedDeclaration(NiGeometryBufferData* GeoData);
 	bool					EnsureInstanceVB(UINT InstanceCount);
-	void					DrawInstancedGroup(NiGeometryBufferData* GeoData, std::vector<NiGeometry*>& Geos);
+	void					DrawInstancedGroup(NiGeometryBufferData* GeoData, std::vector<NiGeometry*>& Geos, IDirect3DVertexDeclaration9* Decl);
 	void					FlushInstanceGroups(D3DXVECTOR4* ShadowData);
 	void					RenderObjectPoint(NiAVObject* Node, D3DXVECTOR4* ShadowData, bool HasWater);
 	void					CollectCubeMapGeometry(NiAVObject* Object, bool HasWater, std::vector<NiGeometry*>& Out);
 	void					RenderObjectPointActor(NiAVObject* Node, D3DXVECTOR4* ShadowData, bool HasWater, int lightIndex);
 	void					RenderTerrain(NiAVObject* Object, ShadowMapTypeEnum ShadowMapType, D3DXVECTOR4* ShadowData);
-	void					Render(NiGeometry* Geo, D3DXVECTOR4* ShadowData);
+	void					Render(NiGeometry* Geo, D3DXVECTOR4* ShadowData, const D3DMATRIX* PrecomputedWorld = NULL);
 	void					RenderActor(NiGeometry* Geo, D3DXVECTOR4* ShadowData, int lightIndex);
 	void					RenderShadowMap(ShadowMapTypeEnum ShadowMapType, SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors, D3DXVECTOR3* At, D3DXVECTOR4* SunDir, D3DXVECTOR4* ShadowData);
 	void					RenderShadowCubeMapExt(NiPointLight** Lights, int LightIndex, float radiusLimit, SettingsShadowStruct::InteriorsStruct* ShadowsExteriors, D3DXVECTOR4* ShadowData);
@@ -134,7 +134,9 @@ public:
 	std::unordered_map<IDirect3DVertexDeclaration9*, IDirect3DVertexDeclaration9*> InstancedDeclCache;
 	// Per-mesh instance groups, pooled so the inner vectors keep their capacity across passes:
 	// only the index map and active count are reset each pass; InstancePool grows but is reused.
-	struct InstanceGroup { NiGeometryBufferData* GeoData; std::vector<NiGeometry*> Geos; };
+	// Decl is the instanced vertex declaration for GeoData, resolved once when the group is
+	// created (NULL if the buffer can't be instanced) so the flush passes don't re-look-it-up.
+	struct InstanceGroup { NiGeometryBufferData* GeoData; std::vector<NiGeometry*> Geos; IDirect3DVertexDeclaration9* Decl; };
 	std::vector<InstanceGroup> InstancePool;
 	std::unordered_map<NiGeometryBufferData*, int> InstanceGroupIndex;
 	int						InstanceGroupCount;
@@ -196,6 +198,9 @@ public:
 	std::vector<NiNode*>	CubeMapActorMap[12];
 	// Flattened renderable geometry for the current light, reused across all 6 cube faces.
 	std::vector<NiGeometry*> CubeMapGeoList;
+	// Camera-relative world matrices for CubeMapGeoList, computed once per light and reused
+	// across all 6 faces instead of rebuilding each geo's matrix per visible face.
+	std::vector<D3DMATRIX>	CubeMapGeoWorld;
 	// Exterior shadow-casting refs gathered once per frame, reused across the 4 directional
 	// map passes (Near/Far/Ortho/Skin) instead of re-walking the cell grid for each.
 	struct ShadowRefCandidate { NiNode* Node; UInt8 TypeID; };

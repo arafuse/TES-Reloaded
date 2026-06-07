@@ -325,10 +325,9 @@ bool ShadowManager::InShadowFrustum(ShadowMapTypeEnum ShadowMapType, NiAVObject*
 }
 void ShadowManager::RenderObject(NiAVObject* Object, D3DXVECTOR4* ShadowData, bool HasWater, float MinRadius) {
 
-	float Radius = Object->GetWorldBoundRadius();
-
-
-	if (Object && !(Object->m_flags & NiAVObject::kFlag_AppCulled) && Radius >= MinRadius) {
+	// Gate the bound-radius fetch behind the null/cull checks: skip the work (and the
+	// deref) entirely for null or app-culled objects.
+	if (Object && !(Object->m_flags & NiAVObject::kFlag_AppCulled) && Object->GetWorldBoundRadius() >= MinRadius) {
 		void* VFT = *(void**)Object;
 		if (VFT == VFTNiNode || VFT == VFTBSFadeNode || VFT == VFTBSFaceGenNiNode || VFT == VFTBSTreeNode) {
 			NiNode* Node = (NiNode*)Object;
@@ -461,7 +460,7 @@ void ShadowManager::RenderTerrain(NiAVObject* Object, ShadowMapTypeEnum ShadowMa
 
 }
 
-void ShadowManager::Render(NiGeometry* Geo, D3DXVECTOR4* ShadowData) {
+void ShadowManager::Render(NiGeometry* Geo, D3DXVECTOR4* ShadowData, const D3DMATRIX* PrecomputedWorld) {
 
 	NiGeometryData* ModelData = Geo->geomData;
 	NiGeometryBufferData* GeoData = ModelData->BuffData;
@@ -473,7 +472,11 @@ void ShadowManager::Render(NiGeometry* Geo, D3DXVECTOR4* ShadowData) {
 	ShadowData->x = 0.0f;
 	ShadowData->y = 0.0f;
 	if (GeoData) {
-		CreateD3DMatrix(&TheShaderManager->ShaderConst.ShadowMap.ShadowWorld, &Geo->m_worldTransform);
+		// Reuse the matrix computed once per light for cube faces; otherwise build it now.
+		if (PrecomputedWorld)
+			TheShaderManager->ShaderConst.ShadowMap.ShadowWorld = *PrecomputedWorld;
+		else
+			CreateD3DMatrix(&TheShaderManager->ShaderConst.ShadowMap.ShadowWorld, &Geo->m_worldTransform);
 		if (Geo->m_parent->m_pcName && !memcmp(Geo->m_parent->m_pcName, "Leaves", 6)) {
 			SetupSpeedTreeLeafShader(Geo, ShadowData);
 		} else {
@@ -581,9 +584,8 @@ void ShadowManager::BuildExteriorRefCandidates(SettingsShadowStruct::ExteriorsSt
 // that can't be instanced (skinned, SpeedTree, alpha, FVF-only) draws now via the normal path.
 void ShadowManager::RenderObjectInstanced(NiAVObject* Object, D3DXVECTOR4* ShadowData, bool HasWater, float MinRadius) {
 
-	float Radius = Object->GetWorldBoundRadius();
-
-	if (Object && !(Object->m_flags & NiAVObject::kFlag_AppCulled) && Radius >= MinRadius) {
+	// Gate the bound-radius fetch behind the null/cull checks (see RenderObject).
+	if (Object && !(Object->m_flags & NiAVObject::kFlag_AppCulled) && Object->GetWorldBoundRadius() >= MinRadius) {
 		void* VFT = *(void**)Object;
 		if (VFT == VFTNiNode || VFT == VFTBSFadeNode || VFT == VFTBSFaceGenNiNode || VFT == VFTBSTreeNode) {
 			NiNode* Node = (NiNode*)Object;
@@ -621,6 +623,7 @@ void ShadowManager::AddInstance(NiGeometryBufferData* GeoData, NiGeometry* Geo) 
 		if ((size_t)idx == InstancePool.size()) InstancePool.emplace_back();
 		InstancePool[idx].GeoData = GeoData;
 		InstancePool[idx].Geos.clear(); // reuse capacity from a previous pass
+		InstancePool[idx].Decl = GetInstancedDeclaration(GeoData); // resolve once per group
 		InstanceGroupIndex.emplace(GeoData, idx);
 	} else {
 		idx = it->second;
@@ -689,12 +692,11 @@ bool ShadowManager::EnsureInstanceVB(UINT InstanceCount) {
 	return true;
 }
 
-void ShadowManager::DrawInstancedGroup(NiGeometryBufferData* GeoData, std::vector<NiGeometry*>& Geos) {
+void ShadowManager::DrawInstancedGroup(NiGeometryBufferData* GeoData, std::vector<NiGeometry*>& Geos, IDirect3DVertexDeclaration9* Decl) {
 	IDirect3DDevice9* Device = TheRenderManager->device;
 	NiDX9RenderState* RenderState = TheRenderManager->renderState;
 	UINT Count = (UINT)Geos.size();
 
-	IDirect3DVertexDeclaration9* Decl = GetInstancedDeclaration(GeoData);
 	if (!Decl) return;
 
 	// Pack each instance's camera-relative world matrix as 3 columns into the dynamic stream.
@@ -742,7 +744,7 @@ void ShadowManager::FlushInstanceGroups(D3DXVECTOR4* ShadowData) {
 	if (CanInstance) {
 		for (int i = 0; i < InstanceGroupCount; i++) {
 			InstanceGroup& Group = InstancePool[i];
-			if (Group.Geos.size() < ShadowInstanceMinCount || !GetInstancedDeclaration(Group.GeoData)) continue;
+			if (Group.Geos.size() < ShadowInstanceMinCount || !Group.Decl) continue;
 			if (!InstancedSet) {
 				ShadowData->x = 0.0f;
 				ShadowData->y = 0.0f;
@@ -752,7 +754,7 @@ void ShadowManager::FlushInstanceGroups(D3DXVECTOR4* ShadowData) {
 				ShadowMapPixel->SetCT();
 				InstancedSet = true;
 			}
-			DrawInstancedGroup(Group.GeoData, Group.Geos);
+			DrawInstancedGroup(Group.GeoData, Group.Geos, Group.Decl);
 		}
 	}
 
@@ -763,7 +765,7 @@ void ShadowManager::FlushInstanceGroups(D3DXVECTOR4* ShadowData) {
 	RenderState->SetPixelShader(ShadowMapPixelShader, false);
 	for (int i = 0; i < InstanceGroupCount; i++) {
 		InstanceGroup& Group = InstancePool[i];
-		bool Instanced = CanInstance && Group.Geos.size() >= ShadowInstanceMinCount && GetInstancedDeclaration(Group.GeoData);
+		bool Instanced = CanInstance && Group.Geos.size() >= ShadowInstanceMinCount && Group.Decl;
 		if (Instanced) continue;
 		for (NiGeometry* Geo : Group.Geos) Render(Geo, ShadowData);
 	}
@@ -906,6 +908,12 @@ void ShadowManager::RenderShadowCubeMap(int LightIndex, std::vector<NiNode*>* re
 			for (NiNode* RefNode : refMap[L])
 				CollectCubeMapGeometry(RefNode, HasWater, CubeMapGeoList);
 
+		// World transforms are constant across the 6 faces, so build each geo's camera-relative
+		// matrix once here and reuse it per face instead of rebuilding it inside Render() 6x.
+		CubeMapGeoWorld.resize(CubeMapGeoList.size());
+		for (size_t g = 0; g < CubeMapGeoList.size(); g++)
+			CreateD3DMatrix(&CubeMapGeoWorld[g], &CubeMapGeoList[g]->m_worldTransform);
+
 		float FarPlane = TheShaderManager->ShaderConst.ShadowMap.ShadowCastLightPosition[L].w;
 		D3DXMatrixPerspectiveFovRH(&Proj, D3DXToRadian(90.0f), 1.0f, 1.0f, FarPlane);
 		for (int Face = 0; Face < 6; Face++) {
@@ -926,8 +934,8 @@ void ShadowManager::RenderShadowCubeMap(int LightIndex, std::vector<NiNode*>* re
 				GetFrustumPlanes(Frustum, &TheShaderManager->ShaderConst.ShadowMap.ShadowViewProj);
 				Device->BeginScene();
 				SetupCubeMapRenderState();
-				for (NiGeometry* Geo : CubeMapGeoList)
-					if (InFrustum(Frustum, Geo)) Render(Geo, ShadowData);
+				for (size_t g = 0; g < CubeMapGeoList.size(); g++)
+					if (InFrustum(Frustum, CubeMapGeoList[g])) Render(CubeMapGeoList[g], ShadowData, &CubeMapGeoWorld[g]);
 				Device->EndScene();
 			}
 		}
