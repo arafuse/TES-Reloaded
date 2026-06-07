@@ -77,7 +77,7 @@ public:
 	void					ClearShadowCubeLightRegister(int From);
 	void					ClearShadowCubeLightCullRegister(int From);
 	void					ClearGeneralPointLightRegister(int From);
-	int                     GetShadowSceneLights(std::vector<std::pair<int, NiPointLight*>>& SceneLights, NiPointLight** ShadowCastLights, NiPointLight** ShadowCullLights, NiPointLight** GeneralPointLights, int& ShadowCastLightIndex, int& ShadowCullLightIndex, int& GeneralPointLightIndex, SettingsShadowPointLightsStruct* ShadowSettings);
+	int                     GetShadowSceneLights(NiPointLight** ShadowCastLights, NiPointLight** ShadowCullLights, NiPointLight** GeneralPointLights, int& ShadowCastLightIndex, int& ShadowCullLightIndex, int& GeneralPointLightIndex, SettingsShadowPointLightsStruct* ShadowSettings);
 	void                    SetAllShadowCastLightPos(NiPointLight** Lights, int LightIndex);
 	void                    SetShadowCastLightPos(NiPointLight** Lights, int index);
 	void                    SetAllShadowCullLightPos(NiPointLight** Lights, int LightIndex);
@@ -118,7 +118,7 @@ public:
 	void					LoadShadowShaders(IDirect3DDevice9* Device);
 	void					CreateShadowMapSurfaces(IDirect3DDevice9* Device, SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors);
 	void					CreateCubeMapSurfaces(IDirect3DDevice9* Device, UINT CubeMapSize);
-	void					CollectSceneLights(std::vector<std::pair<int, NiPointLight*>>& SceneLights);
+	void					CollectSceneLights();
 	bool					CategorizeSceneLight(NiPointLight* Light, int& shadowCastIndex, int& shadowCullIndex, NiPointLight** ShadowCastLights, NiPointLight** ShadowCullLights, SettingsShadowPointLightsStruct* ShadowSettings, bool CastShadow);
 
 	IDirect3DTexture9*		ShadowMapTexture[4];
@@ -201,6 +201,9 @@ public:
 	// instead of allocating fresh std::map<int, std::vector> containers every frame.
 	std::vector<NiNode*>	CubeMapRefMap[12];
 	std::vector<NiNode*>	CubeMapActorMap[12];
+	// Scene point lights gathered each frame for the cube-map passes; pooled (cleared + refilled
+	// by CollectSceneLights) instead of allocating a fresh vector per frame.
+	std::vector<std::pair<int, NiPointLight*>> SceneLights;
 	// Flattened renderable geometry for the current light, reused across all 6 cube faces.
 	std::vector<NiGeometry*> CubeMapGeoList;
 	// Camera-relative world matrices for CubeMapGeoList, computed once per light and reused
