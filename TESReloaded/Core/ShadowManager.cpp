@@ -1048,7 +1048,6 @@ void ShadowManager::RenderInteriorShadows() {
 
 	AlphaEnabled = ShadowSettings->AlphaEnabled;
 
-	std::vector<std::pair<int, NiPointLight*>> SceneLights;
 	NiPointLight* ShadowCastLights[12]  = { NULL };
 	NiPointLight* ShadowCullLights[24]  = { NULL };
 	NiPointLight* GeneralPointLights[2] = { NULL };
@@ -1061,7 +1060,7 @@ void ShadowManager::RenderInteriorShadows() {
 		*/
 			FakeExtShadowLightDirSet = false;
 			FakeExtShadowLightDirCnt = 0;
-			GetShadowSceneLights(SceneLights, ShadowCastLights, ShadowCullLights, GeneralPointLights, ShadowCastLightIndex, ShadowCullLightIndex, GeneralPointLightIndex, ShadowLightPointSettings);
+			GetShadowSceneLights(ShadowCastLights, ShadowCullLights, GeneralPointLights, ShadowCastLightIndex, ShadowCullLightIndex, GeneralPointLightIndex, ShadowLightPointSettings);
 			SetAllShadowCastLightPos(ShadowCastLights, ShadowCastLightIndex);
 			SetAllShadowCullLightPos(ShadowCullLights, ShadowCullLightIndex);
 			if (Player->GetWorldSpace()) {
@@ -1083,7 +1082,7 @@ void ShadowManager::RenderInteriorShadows() {
 		*/
 	} else {
 		if (Player->GetWorldSpace()) {
-			GetShadowSceneLights(SceneLights, ShadowCastLights, ShadowCullLights, GeneralPointLights, ShadowCastLightIndex, ShadowCullLightIndex, GeneralPointLightIndex, ShadowLightPointSettings);
+			GetShadowSceneLights(ShadowCastLights, ShadowCullLights, GeneralPointLights, ShadowCastLightIndex, ShadowCullLightIndex, GeneralPointLightIndex, ShadowLightPointSettings);
 			SetAllShadowCastLightPos(ShadowCastLights, ShadowCastLightIndex);
 			SetAllShadowCullLightPos(ShadowCullLights, ShadowCullLightIndex);
 			SetAllGeneralLightPos(GeneralPointLights, GeneralPointLightIndex);
@@ -1185,12 +1184,12 @@ void ShadowManager::ClearShadowCubeMaps(IDirect3DDevice9* Device, int From) {
 	}
 }
 
-int ShadowManager::GetShadowSceneLights(std::vector<std::pair<int, NiPointLight*>>& SceneLights, NiPointLight** ShadowCastLights, NiPointLight** ShadowCullLights, NiPointLight** GeneralPointLights, int& shadowCastLightIndex, int& shadowCullLightIndex, int& GeneralPointLightIndex, SettingsShadowPointLightsStruct* ShadowSettings) {
+int ShadowManager::GetShadowSceneLights(NiPointLight** ShadowCastLights, NiPointLight** ShadowCullLights, NiPointLight** GeneralPointLights, int& shadowCastLightIndex, int& shadowCullLightIndex, int& GeneralPointLightIndex, SettingsShadowPointLightsStruct* ShadowSettings) {
 	SettingsMainStruct::EquipmentModeStruct* EquipmentModeSettings = &TheSettingManager->SettingsMain.EquipmentMode;
 	bool TorchOnBeltEnabled = EquipmentModeSettings->Enabled && EquipmentModeSettings->TorchKey != 255;
 	int shadowCastIndex = -1, shadowCullIndex = -1, LightIndex = -1;
 
-	CollectSceneLights(SceneLights);
+	CollectSceneLights();
 
 	for (auto& [key, Light] : SceneLights) { // nearest light first
 		if (LightIndex < 1) GeneralPointLights[++LightIndex] = Light;
@@ -1608,7 +1607,7 @@ void ShadowManager::UpdateStaticMapsCounter() {
 	}
 }
 
-void ShadowManager::CollectSceneLights(std::vector<std::pair<int, NiPointLight*>>& SceneLights) {
+void ShadowManager::CollectSceneLights() {
 	SceneLights.clear();
 	ShadowSceneNode* SceneNode = *(ShadowSceneNode**)kShadowSceneNode;
 	NiTList<ShadowSceneLight>::Entry* Entry = SceneNode->lights.start;
