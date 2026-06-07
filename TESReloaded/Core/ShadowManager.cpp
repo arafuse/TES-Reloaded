@@ -116,6 +116,7 @@ ShadowManager::ShadowManager() {
 	ShadowMapInstancedVertexShader = NULL;
 	InstanceVB = NULL;
 	InstanceVBCapacity = 0;
+	InstanceGroupCount = 0;
 
 	LoadShadowShaders(Device);
 	CreateShadowMapSurfaces(Device, ShadowsExteriors);
@@ -597,7 +598,7 @@ void ShadowManager::RenderObjectInstanced(NiAVObject* Object, D3DXVECTOR4* Shado
 				if (Geo->skinInstance || !HasWater || (HasWater && Geo->GetWorldBound()->Center.z > 0.0f)) {
 					NiGeometryBufferData* GeoData = Geo->geomData->BuffData;
 					if (GeoData) {
-						if (IsInstanceable(Geo, GeoData)) InstanceGroups[GeoData].emplace_back(Geo);
+						if (IsInstanceable(Geo, GeoData)) AddInstance(GeoData, Geo);
 						else Render(Geo, ShadowData);
 					}
 					else if (Geo->skinInstance && Geo->skinInstance->SkinPartition && Geo->skinInstance->SkinPartition->Partitions) {
@@ -609,6 +610,22 @@ void ShadowManager::RenderObjectInstanced(NiAVObject* Object, D3DXVECTOR4* Shado
 		}
 	}
 
+}
+
+// Append a geometry to its mesh's instance group, reusing a pooled vector (kept across passes).
+void ShadowManager::AddInstance(NiGeometryBufferData* GeoData, NiGeometry* Geo) {
+	auto it = InstanceGroupIndex.find(GeoData);
+	int idx;
+	if (it == InstanceGroupIndex.end()) {
+		idx = InstanceGroupCount++;
+		if ((size_t)idx == InstancePool.size()) InstancePool.emplace_back();
+		InstancePool[idx].GeoData = GeoData;
+		InstancePool[idx].Geos.clear(); // reuse capacity from a previous pass
+		InstanceGroupIndex.emplace(GeoData, idx);
+	} else {
+		idx = it->second;
+	}
+	InstancePool[idx].Geos.emplace_back(Geo);
 }
 
 bool ShadowManager::IsInstanceable(NiGeometry* Geo, NiGeometryBufferData* GeoData) {
@@ -716,15 +733,16 @@ void ShadowManager::FlushInstanceGroups(D3DXVECTOR4* ShadowData) {
 
 	// Size the instance buffer once for the largest batchable group.
 	UINT MaxGroup = 0;
-	for (auto& Group : InstanceGroups)
-		if (Group.second.size() >= ShadowInstanceMinCount && Group.second.size() > MaxGroup) MaxGroup = (UINT)Group.second.size();
+	for (int i = 0; i < InstanceGroupCount; i++)
+		if (InstancePool[i].Geos.size() >= ShadowInstanceMinCount && InstancePool[i].Geos.size() > MaxGroup) MaxGroup = (UINT)InstancePool[i].Geos.size();
 	bool CanInstance = MaxGroup > 0 && EnsureInstanceVB(MaxGroup);
 
 	// Pass 1: draw batchable groups with the instanced shader (opaque, ShadowData x=y=0).
 	bool InstancedSet = false;
 	if (CanInstance) {
-		for (auto& Group : InstanceGroups) {
-			if (Group.second.size() < ShadowInstanceMinCount || !GetInstancedDeclaration(Group.first)) continue;
+		for (int i = 0; i < InstanceGroupCount; i++) {
+			InstanceGroup& Group = InstancePool[i];
+			if (Group.Geos.size() < ShadowInstanceMinCount || !GetInstancedDeclaration(Group.GeoData)) continue;
 			if (!InstancedSet) {
 				ShadowData->x = 0.0f;
 				ShadowData->y = 0.0f;
@@ -734,7 +752,7 @@ void ShadowManager::FlushInstanceGroups(D3DXVECTOR4* ShadowData) {
 				ShadowMapPixel->SetCT();
 				InstancedSet = true;
 			}
-			DrawInstancedGroup(Group.first, Group.second);
+			DrawInstancedGroup(Group.GeoData, Group.Geos);
 		}
 	}
 
@@ -743,10 +761,11 @@ void ShadowManager::FlushInstanceGroups(D3DXVECTOR4* ShadowData) {
 	CurrentPixel  = ShadowMapPixel;
 	RenderState->SetVertexShader(ShadowMapVertexShader, false);
 	RenderState->SetPixelShader(ShadowMapPixelShader, false);
-	for (auto& Group : InstanceGroups) {
-		bool Instanced = CanInstance && Group.second.size() >= ShadowInstanceMinCount && GetInstancedDeclaration(Group.first);
+	for (int i = 0; i < InstanceGroupCount; i++) {
+		InstanceGroup& Group = InstancePool[i];
+		bool Instanced = CanInstance && Group.Geos.size() >= ShadowInstanceMinCount && GetInstancedDeclaration(Group.GeoData);
 		if (Instanced) continue;
-		for (NiGeometry* Geo : Group.second) Render(Geo, ShadowData);
+		for (NiGeometry* Geo : Group.Geos) Render(Geo, ShadowData);
 	}
 }
 
@@ -778,7 +797,8 @@ void ShadowManager::RenderShadowMap(ShadowMapTypeEnum ShadowMapType, SettingsSha
 	bool HasWater = TheShaderManager->ShaderConst.HasWater;
 	bool UseInstancing = ShadowsExteriors->UseInstancing && ShadowMapInstancedVertexShader;
 	if (UseInstancing) {
-		InstanceGroups.clear();
+		InstanceGroupIndex.clear();
+		InstanceGroupCount = 0;
 		for (const ShadowRefCandidate& Candidate : ExteriorRefCandidates) {
 			if (FormsAllows(Forms, Candidate.TypeID) && InShadowFrustum(ShadowMapType, Candidate.Node))
 				RenderObjectInstanced(Candidate.Node, ShadowData, HasWater, MinRadius);

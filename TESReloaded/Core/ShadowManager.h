@@ -48,6 +48,7 @@ public:
 	TESObjectREFR*			GetRefO(TESObjectREFR* Ref);
 	void					RenderObject(NiAVObject* Node, D3DXVECTOR4* ShadowData, bool HasWater, float MinRadius);
 	void					RenderObjectInstanced(NiAVObject* Node, D3DXVECTOR4* ShadowData, bool HasWater, float MinRadius);
+	void					AddInstance(NiGeometryBufferData* GeoData, NiGeometry* Geo);
 	bool					IsInstanceable(NiGeometry* Geo, NiGeometryBufferData* GeoData);
 	IDirect3DVertexDeclaration9* GetInstancedDeclaration(NiGeometryBufferData* GeoData);
 	bool					EnsureInstanceVB(UINT InstanceCount);
@@ -131,7 +132,12 @@ public:
 	IDirect3DVertexBuffer9* InstanceVB;			// dynamic per-instance world-matrix stream
 	UINT					InstanceVBCapacity;	// capacity in instances
 	std::unordered_map<IDirect3DVertexDeclaration9*, IDirect3DVertexDeclaration9*> InstancedDeclCache;
-	std::unordered_map<NiGeometryBufferData*, std::vector<NiGeometry*>> InstanceGroups;
+	// Per-mesh instance groups, pooled so the inner vectors keep their capacity across passes:
+	// only the index map and active count are reset each pass; InstancePool grows but is reused.
+	struct InstanceGroup { NiGeometryBufferData* GeoData; std::vector<NiGeometry*> Geos; };
+	std::vector<InstanceGroup> InstancePool;
+	std::unordered_map<NiGeometryBufferData*, int> InstanceGroupIndex;
+	int						InstanceGroupCount;
 	D3DVIEWPORT9			ShadowMapViewPort[4];
 	D3DXPLANE				ShadowMapFrustum[4][6];
 	NiVector4				BillboardRight;
