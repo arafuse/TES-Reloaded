@@ -1,5 +1,7 @@
 #pragma once
 #include <list>
+#include <vector>
+#include <map>
 
 class ShadowManager { // Never disposed
 public:
@@ -41,8 +43,8 @@ public:
 	void					RenderShadowCubeMapExt(NiPointLight** Lights, int LightIndex, float radiusLimit, SettingsShadowStruct::InteriorsStruct* ShadowsExteriors, D3DXVECTOR4* ShadowData);
 	void					RenderShadowCubeMapInt(NiPointLight** Lights, int LightIndex, float radiusLimit, SettingsShadowStruct::InteriorsStruct* ShadowsInteriors, D3DXVECTOR4* ShadowData);
 	void                    RenderShadowCubeMapFakeInt(int LightIndex, SettingsShadowStruct::InteriorsStruct* ShadowsInteriors, D3DXVECTOR4* ShadowData);
-	void                    RenderShadowCubeMap(int LightIndex, std::map<int, std::vector<NiNode*>>& refMap, D3DXVECTOR4* ShadowData, bool enabled);
-	void                    RenderShadowCubeMapActor(int LightIndex, std::map<int, std::vector<NiNode*>>& refMap, D3DXVECTOR4* ShadowData, bool enabled);
+	void                    RenderShadowCubeMap(int LightIndex, std::vector<NiNode*>* refMap, D3DXVECTOR4* ShadowData, bool enabled);
+	void                    RenderShadowCubeMapActor(int LightIndex, std::vector<NiNode*>* refMap, D3DXVECTOR4* ShadowData, bool enabled);
 	void					RenderExteriorShadows();
 	void					RenderInteriorShadows();
 	void					RenderShadowMaps();
@@ -77,7 +79,8 @@ public:
 	void					SetupShadowMapMatrices(ShadowMapTypeEnum ShadowMapType, SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors, D3DXVECTOR3* At, D3DXVECTOR4* ShadowLightDir);
 	void					RenderShadowMapCell(TESObjectCELL* Cell, ShadowMapTypeEnum ShadowMapType, SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors, D3DXVECTOR4* ShadowData);
 	void					SetupCubeMapRenderState();
-	void					ClassifyRefForLight(TESObjectREFR* Ref, NiPointLight** Lights, int L, float radiusScan, std::map<int, std::vector<NiNode*>>& refMap, std::map<int, std::vector<NiNode*>>& actorMap, double* StaticValues, bool* forceRedrawMap);
+	void					ClassifyRefForLight(TESObjectREFR* Ref, NiPointLight** Lights, int L, float radiusScan, std::vector<NiNode*>* refMap, std::vector<NiNode*>* actorMap, double* StaticValues, bool* forceRedrawMap);
+	void					ClearCubeMapNodeLists();
 	void					UpdateStaticTrackers(int LightIndex, double* StaticValues, bool* forceRedrawMap);
 	SettingsShadowStruct::ExteriorsStruct* SelectExteriorShadowSettings();
 	void					ComputeExteriorLookAt(D3DXVECTOR3& At, D3DXVECTOR3& SkinAt, SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors);
@@ -151,6 +154,11 @@ public:
 	int						GeneralPointLightCount;
 	float					GameTime;
 	SettingsShadowPointLightsStruct* ShadowLightPointSettings;
+
+	// Reusable per-light node lists for cube map passes (indexed 0..11), cleared each frame
+	// instead of allocating fresh std::map<int, std::vector> containers every frame.
+	std::vector<NiNode*>	CubeMapRefMap[12];
+	std::vector<NiNode*>	CubeMapActorMap[12];
 };
 
 void CreateShadowsHook();
