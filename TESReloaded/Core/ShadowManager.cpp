@@ -789,7 +789,7 @@ void ShadowManager::RenderInteriorShadows() {
 
 	AlphaEnabled = ShadowSettings->AlphaEnabled;
 
-	std::map<int, NiPointLight*> SceneLights;
+	std::vector<std::pair<int, NiPointLight*>> SceneLights;
 	NiPointLight* ShadowCastLights[12]  = { NULL };
 	NiPointLight* ShadowCullLights[24]  = { NULL };
 	NiPointLight* GeneralPointLights[2] = { NULL };
@@ -926,14 +926,14 @@ void ShadowManager::ClearShadowCubeMaps(IDirect3DDevice9* Device, int From) {
 	}
 }
 
-int ShadowManager::GetShadowSceneLights(std::map<int, NiPointLight*>& SceneLights, NiPointLight** ShadowCastLights, NiPointLight** ShadowCullLights, NiPointLight** GeneralPointLights, int& shadowCastLightIndex, int& shadowCullLightIndex, int& GeneralPointLightIndex, SettingsShadowPointLightsStruct* ShadowSettings) {
+int ShadowManager::GetShadowSceneLights(std::vector<std::pair<int, NiPointLight*>>& SceneLights, NiPointLight** ShadowCastLights, NiPointLight** ShadowCullLights, NiPointLight** GeneralPointLights, int& shadowCastLightIndex, int& shadowCullLightIndex, int& GeneralPointLightIndex, SettingsShadowPointLightsStruct* ShadowSettings) {
 	SettingsMainStruct::EquipmentModeStruct* EquipmentModeSettings = &TheSettingManager->SettingsMain.EquipmentMode;
 	bool TorchOnBeltEnabled = EquipmentModeSettings->Enabled && EquipmentModeSettings->TorchKey != 255;
 	int shadowCastIndex = -1, shadowCullIndex = -1, LightIndex = -1;
 
 	CollectSceneLights(SceneLights);
 
-	for (auto& [key, Light] : SceneLights) {
+	for (auto& [key, Light] : SceneLights) { // nearest light first
 		if (LightIndex < 1) GeneralPointLights[++LightIndex] = Light;
 		bool CastShadow = true;
 		if (TorchOnBeltEnabled && Light->CanCarry == 2) {
@@ -1015,11 +1015,6 @@ void ShadowManager::SetShadowCubeMapRegisters(int index) {
 	TheShaderManager->ShaderConst.ShadowMap.ShadowCubeMapLightPosition.z = TheShaderManager->ShaderConst.ShadowMap.ShadowCastLightPosition[index].z;
 	TheShaderManager->ShaderConst.ShadowMap.ShadowCubeMapLightPosition.w = TheShaderManager->ShaderConst.ShadowMap.ShadowCastLightPosition[index].w;
 	TheShaderManager->ShaderConst.ShadowCube.Data.z = TheShaderManager->ShaderConst.ShadowMap.ShadowCastLightPosition[index].w;
-}
-
-void ShadowManager::AddSceneLight(NiPointLight* Light, int Key, std::map<int, NiPointLight*>& SceneLights) {
-	while (SceneLights[Key]) { --Key; }
-	SceneLights[Key] = Light;
 }
 
 void ShadowManager::ResetIntervals() {
@@ -1345,15 +1340,20 @@ void ShadowManager::UpdateStaticMapsCounter() {
 	}
 }
 
-void ShadowManager::CollectSceneLights(std::map<int, NiPointLight*>& SceneLights) {
+void ShadowManager::CollectSceneLights(std::vector<std::pair<int, NiPointLight*>>& SceneLights) {
+	SceneLights.clear();
 	ShadowSceneNode* SceneNode = *(ShadowSceneNode**)kShadowSceneNode;
 	NiTList<ShadowSceneLight>::Entry* Entry = SceneNode->lights.start;
 	while (Entry) {
 		NiPointLight* Light = Entry->data->sourceLight;
 		int distance = (int)Light->GetDistance(&Player->pos);
-		AddSceneLight(Light, distance, SceneLights);
+		SceneLights.emplace_back(distance, Light);
 		Entry = Entry->next;
 	}
+	// Order nearest-first; ties keep scene-graph order. Replaces a distance-keyed std::map
+	// with back-probing collision handling (a node allocation + O(log n) probe per light).
+	std::stable_sort(SceneLights.begin(), SceneLights.end(),
+		[](const std::pair<int, NiPointLight*>& a, const std::pair<int, NiPointLight*>& b) { return a.first < b.first; });
 }
 
 bool ShadowManager::CategorizeSceneLight(NiPointLight* Light, int& shadowCastIndex, int& shadowCullIndex, NiPointLight** ShadowCastLights, NiPointLight** ShadowCullLights, SettingsShadowPointLightsStruct* ShadowSettings, bool CastShadow) {

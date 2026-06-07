@@ -57,8 +57,7 @@ public:
 	void					ClearShadowCubeLightRegister(int From);
 	void					ClearShadowCubeLightCullRegister(int From);
 	void					ClearGeneralPointLightRegister(int From);
-	void                    AddSceneLight(NiPointLight* Light, int Key, std::map<int, NiPointLight*>& SceneLights);
-	int                     GetShadowSceneLights(std::map<int, NiPointLight*>& SceneLights, NiPointLight** ShadowCastLights, NiPointLight** ShadowCullLights, NiPointLight** GeneralPointLights, int& ShadowCastLightIndex, int& ShadowCullLightIndex, int& GeneralPointLightIndex, SettingsShadowPointLightsStruct* ShadowSettings);
+	int                     GetShadowSceneLights(std::vector<std::pair<int, NiPointLight*>>& SceneLights, NiPointLight** ShadowCastLights, NiPointLight** ShadowCullLights, NiPointLight** GeneralPointLights, int& ShadowCastLightIndex, int& ShadowCullLightIndex, int& GeneralPointLightIndex, SettingsShadowPointLightsStruct* ShadowSettings);
 	void                    SetAllShadowCastLightPos(NiPointLight** Lights, int LightIndex);
 	void                    SetShadowCastLightPos(NiPointLight** Lights, int index);
 	void                    SetAllShadowCullLightPos(NiPointLight** Lights, int LightIndex);
@@ -97,7 +96,7 @@ public:
 	void					LoadShadowShaders(IDirect3DDevice9* Device);
 	void					CreateShadowMapSurfaces(IDirect3DDevice9* Device, SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors);
 	void					CreateCubeMapSurfaces(IDirect3DDevice9* Device, UINT CubeMapSize);
-	void					CollectSceneLights(std::map<int, NiPointLight*>& SceneLights);
+	void					CollectSceneLights(std::vector<std::pair<int, NiPointLight*>>& SceneLights);
 	bool					CategorizeSceneLight(NiPointLight* Light, int& shadowCastIndex, int& shadowCullIndex, NiPointLight** ShadowCastLights, NiPointLight** ShadowCullLights, SettingsShadowPointLightsStruct* ShadowSettings, bool CastShadow);
 
 	IDirect3DTexture9*		ShadowMapTexture[4];
