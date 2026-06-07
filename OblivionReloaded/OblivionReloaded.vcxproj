@@ -103,6 +103,7 @@ copy "$(TargetDir)$(TargetName).pdb" "C:\Games\Steam\steamapps\common\Oblivion\D
       <LanguageStandard_C>Default</LanguageStandard_C>
       <TreatWChar_tAsBuiltInType>true</TreatWChar_tAsBuiltInType>
       <ConformanceMode>false</ConformanceMode>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
