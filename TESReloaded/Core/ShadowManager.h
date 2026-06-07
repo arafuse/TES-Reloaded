@@ -31,6 +31,8 @@ public:
 	void					CreateD3DMatrix(D3DMATRIX* Matrix, NiTransform* Transform);
 	void					GetShadowFrustum(ShadowMapTypeEnum ShadowMapType, D3DMATRIX* Matrix);
 	bool					InShadowFrustum(ShadowMapTypeEnum ShadowMapType, NiAVObject* Object);
+	void					GetFrustumPlanes(D3DXPLANE* Frustum, D3DXMATRIX* Matrix);
+	bool					InFrustum(D3DXPLANE* Frustum, NiGeometry* Geo);
 	TESObjectREFR*			GetRef(TESObjectREFR* Ref, SettingsShadowStruct::FormsStruct* Forms, SettingsShadowStruct::ExcludedFormsList* ExcludedForms);
 	TESObjectREFR*			GetRefO(TESObjectREFR* Ref);
 	void					RenderObject(NiAVObject* Node, D3DXVECTOR4* ShadowData, bool HasWater, float MinRadius);

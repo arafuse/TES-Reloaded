@@ -176,6 +176,52 @@ void ShadowManager::GetShadowFrustum(ShadowMapTypeEnum ShadowMapType, D3DMATRIX*
 
 }
 
+void ShadowManager::GetFrustumPlanes(D3DXPLANE* Frustum, D3DXMATRIX* Matrix) {
+
+	Frustum[PlaneNear].a   = Matrix->_13;
+	Frustum[PlaneNear].b   = Matrix->_23;
+	Frustum[PlaneNear].c   = Matrix->_33;
+	Frustum[PlaneNear].d   = Matrix->_43;
+	Frustum[PlaneFar].a    = Matrix->_14 - Matrix->_13;
+	Frustum[PlaneFar].b    = Matrix->_24 - Matrix->_23;
+	Frustum[PlaneFar].c    = Matrix->_34 - Matrix->_33;
+	Frustum[PlaneFar].d    = Matrix->_44 - Matrix->_43;
+	Frustum[PlaneLeft].a   = Matrix->_14 + Matrix->_11;
+	Frustum[PlaneLeft].b   = Matrix->_24 + Matrix->_21;
+	Frustum[PlaneLeft].c   = Matrix->_34 + Matrix->_31;
+	Frustum[PlaneLeft].d   = Matrix->_44 + Matrix->_41;
+	Frustum[PlaneRight].a  = Matrix->_14 - Matrix->_11;
+	Frustum[PlaneRight].b  = Matrix->_24 - Matrix->_21;
+	Frustum[PlaneRight].c  = Matrix->_34 - Matrix->_31;
+	Frustum[PlaneRight].d  = Matrix->_44 - Matrix->_41;
+	Frustum[PlaneTop].a    = Matrix->_14 - Matrix->_12;
+	Frustum[PlaneTop].b    = Matrix->_24 - Matrix->_22;
+	Frustum[PlaneTop].c    = Matrix->_34 - Matrix->_32;
+	Frustum[PlaneTop].d    = Matrix->_44 - Matrix->_42;
+	Frustum[PlaneBottom].a = Matrix->_14 + Matrix->_12;
+	Frustum[PlaneBottom].b = Matrix->_24 + Matrix->_22;
+	Frustum[PlaneBottom].c = Matrix->_34 + Matrix->_32;
+	Frustum[PlaneBottom].d = Matrix->_44 + Matrix->_42;
+	for (int i = 0; i < 6; ++i) {
+		D3DXPLANE Plane(Frustum[i]);
+		D3DXPlaneNormalize(&Frustum[i], &Plane);
+	}
+
+}
+
+bool ShadowManager::InFrustum(D3DXPLANE* Frustum, NiGeometry* Geo) {
+
+	NiBound* Bound = Geo->GetWorldBound();
+	if (!Bound) return true; // Cannot cull without a bound; keep it.
+
+	D3DXVECTOR3 Position = { Bound->Center.x - TheRenderManager->CameraPosition.x, Bound->Center.y - TheRenderManager->CameraPosition.y, Bound->Center.z - TheRenderManager->CameraPosition.z };
+	for (int i = 0; i < 6; ++i) {
+		if (D3DXPlaneDotCoord(&Frustum[i], &Position) <= -Bound->Radius) return false;
+	}
+	return true;
+
+}
+
 TESObjectREFR* ShadowManager::GetRef(TESObjectREFR* Ref, SettingsShadowStruct::FormsStruct* Forms, SettingsShadowStruct::ExcludedFormsList* ExcludedForms) {
 
 	TESObjectREFR* r = NULL;
@@ -606,10 +652,14 @@ void ShadowManager::RenderShadowCubeMap(int LightIndex, std::vector<NiNode*>* re
 			Device->SetRenderTarget(0, ShadowCubeMapSurface[L][Face]);
 			Device->Clear(0L, NULL, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, D3DXCOLOR(1.0f, 0.25f, 0.25f, 0.55f), 1.0f, 0L);
 			if (enabled) {
+				// Cull geometry against this face's 90-degree frustum; each object
+				// typically overlaps only 1-2 of the 6 faces.
+				D3DXPLANE Frustum[6];
+				GetFrustumPlanes(Frustum, &TheShaderManager->ShaderConst.ShadowMap.ShadowViewProj);
 				Device->BeginScene();
 				SetupCubeMapRenderState();
 				for (NiGeometry* Geo : CubeMapGeoList)
-					Render(Geo, ShadowData);
+					if (InFrustum(Frustum, Geo)) Render(Geo, ShadowData);
 				Device->EndScene();
 			}
 		}
