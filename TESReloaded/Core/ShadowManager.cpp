@@ -386,7 +386,9 @@ void ShadowManager::CollectCubeMapGeometry(NiAVObject* Object, bool HasWater, st
 		}
 		else if (VFT == VFTNiTriShape || VFT == VFTNiTriStrips) {
 			NiGeometry* Geo = (NiGeometry*)Object;
-			if (Geo->shader) {
+			// Torch geometry is skipped by Render() anyway; drop it once here instead of
+			// re-testing the name (and re-entering Render) for every one of the 6 cube faces.
+			if (Geo->shader && !(Geo->m_pcName && !memcmp(Geo->m_pcName, "Torch", 5))) {
 				if (Geo->skinInstance || !HasWater || (HasWater && Geo->GetWorldBound()->Center.z > TheShaderManager->ShaderConst.Water.waterSettings.x)) {
 					if (Geo->geomData->BuffData) {
 						Out.emplace_back(Geo);
