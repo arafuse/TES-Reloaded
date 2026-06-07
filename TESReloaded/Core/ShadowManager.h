@@ -65,6 +65,34 @@ public:
 	void					LoadShadowLightPointSettings();
 	bool					IsLightFromMagic(NiPointLight* Light);
 
+	// --- Helpers ---
+	void					SetupGeoStreams(NiGeometryBufferData* GeoData);
+	void					DrawGeoArrays(NiGeometryBufferData* GeoData, D3DPRIMITIVETYPE PrimitiveType, UINT VertCount);
+	void					GetCubeFaceAtUp(int Face, D3DXVECTOR3& At, D3DXVECTOR3& Up);
+	void					SetupSpeedTreeLeafShader(NiGeometry* Geo, D3DXVECTOR4* ShadowData);
+	void					SetupAlphaTexture(NiGeometry* Geo, BSShaderProperty* LProp, D3DXVECTOR4* ShadowData);
+	void					RenderSkinnedGeo(NiGeometry* Geo, D3DXVECTOR4* ShadowData);
+	void					RenderActorFaces(NiGeometryBufferData* GeoData, D3DPRIMITIVETYPE PrimitiveType, UINT VertCount, int lightIndex, const D3DXMATRIX& Proj);
+	void					RenderActorSkinnedGeo(NiGeometry* Geo, D3DXVECTOR4* ShadowData, int lightIndex, const D3DXMATRIX& Proj);
+	void					SetupShadowMapMatrices(ShadowMapTypeEnum ShadowMapType, SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors, D3DXVECTOR3* At, D3DXVECTOR4* ShadowLightDir);
+	void					RenderShadowMapCell(TESObjectCELL* Cell, ShadowMapTypeEnum ShadowMapType, SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors, D3DXVECTOR4* ShadowData);
+	void					SetupCubeMapRenderState();
+	void					ClassifyRefForLight(TESObjectREFR* Ref, NiPointLight** Lights, int L, float radiusScan, std::map<int, std::vector<NiNode*>>& refMap, std::map<int, std::vector<NiNode*>>& actorMap, double* StaticValues, bool* forceRedrawMap);
+	void					UpdateStaticTrackers(int LightIndex, double* StaticValues, bool* forceRedrawMap);
+	SettingsShadowStruct::ExteriorsStruct* SelectExteriorShadowSettings();
+	void					ComputeExteriorLookAt(D3DXVECTOR3& At, D3DXVECTOR3& SkinAt, SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors);
+	void					AdjustShadowLightDir(D3DXVECTOR4*& ShadowLightDir);
+	bool					UpdateShadowLightDirInterval(D3DXVECTOR4* ShadowLightDir, D3DXVECTOR4& ShadowLightDirInterval);
+	SettingsShadowStruct::InteriorsStruct* SelectInteriorShadowSettings();
+	void					HandleCellChange();
+	void					UpdateStaticMapsCounter();
+	void					InitShadowBiasConstants();
+	void					LoadShadowShaders(IDirect3DDevice9* Device);
+	void					CreateShadowMapSurfaces(IDirect3DDevice9* Device, SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors);
+	void					CreateCubeMapSurfaces(IDirect3DDevice9* Device, UINT CubeMapSize);
+	void					CollectSceneLights(std::map<int, NiPointLight*>& SceneLights);
+	bool					CategorizeSceneLight(NiPointLight* Light, int& shadowCastIndex, int& shadowCullIndex, NiPointLight** ShadowCastLights, NiPointLight** ShadowCullLights, SettingsShadowPointLightsStruct* ShadowSettings, bool CastShadow);
+
 	IDirect3DTexture9*		ShadowMapTexture[4];
 	IDirect3DSurface9*		ShadowMapSurface[4];
 	IDirect3DSurface9*		ShadowMapDepthSurface[4];
