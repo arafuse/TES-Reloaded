@@ -1261,6 +1261,7 @@ void SettingManager::LoadSettings() {
 
 	SettingsShadows.Exteriors.UsePostProcessing = GetPrivateProfileIntA("Exteriors", "UsePostProcessing", 1, Filename);
 	SettingsShadows.Exteriors.UseIntervalUpdate = GetPrivateProfileIntA("Exteriors", "UseIntervalUpdate", 1, Filename);
+	SettingsShadows.Exteriors.UseInstancing = GetPrivateProfileIntA("Exteriors", "UseInstancing", 1, Filename);
 	GetPrivateProfileStringA("Exteriors", "Darkness", "0.2", value, SettingStringBuffer, Filename);
 	SettingsShadows.Exteriors.Darkness = atof(value);
 	GetPrivateProfileStringA("Exteriors", "ShadowMapFarPlane", "8192.0", value, SettingStringBuffer, Filename);

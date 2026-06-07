@@ -315,6 +315,7 @@ struct SettingsShadowStruct {
 		float				ShadowMapFarPlane;
 		bool                UsePostProcessing;
 		bool				UseIntervalUpdate;
+		bool				UseInstancing;
 		float				forwardNormBias;
 		float				forwardFarNormBias;
 		float				forwardConstBias;

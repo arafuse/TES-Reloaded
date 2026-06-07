@@ -44,6 +44,8 @@ static const void* VFTNiTriShape = (void*)0x00A7ED5C;
 static const void* VFTNiTriStrips = (void*)0x00A7F27C;
 #endif
 #define ShadowMapObjectMinBound 10.0f
+#define ShadowInstanceStride   48 // 3 float4 columns of the world matrix per instance
+#define ShadowInstanceMinCount 4  // minimum group size worth batching via hardware instancing
 
 #if defined(NEWVEGAS) || defined(OBLIVION)
 void ShadowManager::InitShadowBiasConstants() {
@@ -69,6 +71,10 @@ void ShadowManager::LoadShadowShaders(IDirect3DDevice9* Device) {
 	if (ShadowCubeMapPixel->LoadShader("ShadowCubeMap.pso")) Device->CreatePixelShader((const DWORD*)ShadowCubeMapPixel->Function, &ShadowCubeMapPixelShader);
 	ShadowCubeMapExteriorPixel = new ShaderRecord();
 	if (ShadowCubeMapExteriorPixel->LoadShader("ShadowCubeMapExterior.pso")) Device->CreatePixelShader((const DWORD*)ShadowCubeMapExteriorPixel->Function, &ShadowCubeMapExteriorPixelShader);
+	// Optional: instanced static shadow VS. If the binary is missing (not yet compiled), the
+	// handle stays NULL and the renderer transparently falls back to the per-object path.
+	ShadowMapInstancedVertex = new ShaderRecord();
+	if (ShadowMapInstancedVertex->LoadShader("ShadowMapInstanced.vso")) Device->CreateVertexShader((const DWORD*)ShadowMapInstancedVertex->Function, &ShadowMapInstancedVertexShader);
 }
 
 void ShadowManager::CreateShadowMapSurfaces(IDirect3DDevice9* Device, SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors) {
@@ -107,6 +113,9 @@ ShadowManager::ShadowManager() {
 
 	CurrentCell = NULL;
 	ShadowCubeMapState = ShadowCubeMapStateEnum::None;
+	ShadowMapInstancedVertexShader = NULL;
+	InstanceVB = NULL;
+	InstanceVBCapacity = 0;
 
 	LoadShadowShaders(Device);
 	CreateShadowMapSurfaces(Device, ShadowsExteriors);
@@ -566,6 +575,181 @@ void ShadowManager::BuildExteriorRefCandidates(SettingsShadowStruct::ExteriorsSt
 	}
 }
 
+// Mirrors RenderObject, but routes opaque static geometry into per-mesh instance groups
+// (keyed by the shared NiGeometryBufferData) instead of drawing it immediately. Everything
+// that can't be instanced (skinned, SpeedTree, alpha, FVF-only) draws now via the normal path.
+void ShadowManager::RenderObjectInstanced(NiAVObject* Object, D3DXVECTOR4* ShadowData, bool HasWater, float MinRadius) {
+
+	float Radius = Object->GetWorldBoundRadius();
+
+	if (Object && !(Object->m_flags & NiAVObject::kFlag_AppCulled) && Radius >= MinRadius) {
+		void* VFT = *(void**)Object;
+		if (VFT == VFTNiNode || VFT == VFTBSFadeNode || VFT == VFTBSFaceGenNiNode || VFT == VFTBSTreeNode) {
+			NiNode* Node = (NiNode*)Object;
+			for (int i = 0; i < Node->m_children.end; i++) {
+				RenderObjectInstanced(Node->m_children.data[i], ShadowData, HasWater, MinRadius);
+			}
+		}
+		else if (VFT == VFTNiTriShape || VFT == VFTNiTriStrips) {
+			NiGeometry* Geo = (NiGeometry*)Object;
+			if (Geo->m_pcName && !memcmp(Geo->m_pcName, "Torch", 5)) return; // skipped by Render() anyway
+			if (Geo->shader) {
+				if (Geo->skinInstance || !HasWater || (HasWater && Geo->GetWorldBound()->Center.z > 0.0f)) {
+					NiGeometryBufferData* GeoData = Geo->geomData->BuffData;
+					if (GeoData) {
+						if (IsInstanceable(Geo, GeoData)) InstanceGroups[GeoData].emplace_back(Geo);
+						else Render(Geo, ShadowData);
+					}
+					else if (Geo->skinInstance && Geo->skinInstance->SkinPartition && Geo->skinInstance->SkinPartition->Partitions) {
+						GeoData = Geo->skinInstance->SkinPartition->Partitions[0].BuffData;
+						if (GeoData) Render(Geo, ShadowData);
+					}
+				}
+			}
+		}
+	}
+
+}
+
+bool ShadowManager::IsInstanceable(NiGeometry* Geo, NiGeometryBufferData* GeoData) {
+	if (!GeoData->VertexDeclaration) return false;                                                  // FVF-only meshes unsupported
+	if (Geo->skinInstance) return false;                                                            // skinned: per-bone constants
+	if (Geo->m_parent && Geo->m_parent->m_pcName && !memcmp(Geo->m_parent->m_pcName, "Leaves", 6)) return false; // SpeedTree leaves
+	if (AlphaEnabled) {
+		NiAlphaProperty* AProp = (NiAlphaProperty*)Geo->GetProperty(NiProperty::PropertyType::kType_Alpha);
+		if (AProp && (AProp->flags & (NiAlphaProperty::AlphaFlags::ALPHA_BLEND_MASK | NiAlphaProperty::AlphaFlags::TEST_ENABLE_MASK)))
+			return false;                                                                           // needs a per-geo texture
+	}
+	BSShaderProperty* LProp = (BSShaderProperty*)Geo->GetProperty(NiProperty::PropertyType::kType_Lighting);
+	if (!LProp || !LProp->IsLightingProperty()) return false;                                       // matches Render()'s opaque requirement
+	return true;
+}
+
+// Build (and cache, keyed by the source declaration) a vertex declaration that appends a
+// per-instance stream carrying the three world-matrix columns as TEXCOORD5/6/7.
+IDirect3DVertexDeclaration9* ShadowManager::GetInstancedDeclaration(NiGeometryBufferData* GeoData) {
+	IDirect3DVertexDeclaration9* Src = GeoData->VertexDeclaration;
+	if (!Src) return NULL;
+	auto it = InstancedDeclCache.find(Src);
+	if (it != InstancedDeclCache.end()) return it->second;
+
+	D3DVERTEXELEMENT9 Elems[MAXD3DDECLLENGTH + 4];
+	UINT Num = 0;
+	if (FAILED(Src->GetDeclaration(Elems, &Num)) || Num == 0 || Num > MAXD3DDECLLENGTH) {
+		InstancedDeclCache[Src] = NULL;
+		return NULL;
+	}
+	UINT Term = Num - 1; // index of the existing D3DDECL_END terminator
+	WORD InstStream = (WORD)GeoData->StreamCount;
+	for (int k = 0; k < 3; k++) {
+		Elems[Term + k].Stream     = InstStream;
+		Elems[Term + k].Offset     = (WORD)(k * 16);
+		Elems[Term + k].Type       = D3DDECLTYPE_FLOAT4;
+		Elems[Term + k].Method     = D3DDECLMETHOD_DEFAULT;
+		Elems[Term + k].Usage      = D3DDECLUSAGE_TEXCOORD;
+		Elems[Term + k].UsageIndex = (BYTE)(5 + k);
+	}
+	Elems[Term + 3] = D3DDECL_END();
+
+	IDirect3DVertexDeclaration9* Combined = NULL;
+	if (FAILED(TheRenderManager->device->CreateVertexDeclaration(Elems, &Combined))) Combined = NULL;
+	InstancedDeclCache[Src] = Combined;
+	return Combined;
+}
+
+bool ShadowManager::EnsureInstanceVB(UINT InstanceCount) {
+	if (InstanceCount == 0) return false;
+	if (InstanceVB && InstanceVBCapacity >= InstanceCount) return true;
+	if (InstanceVB) { InstanceVB->Release(); InstanceVB = NULL; }
+	UINT Cap = InstanceVBCapacity ? InstanceVBCapacity : 256;
+	while (Cap < InstanceCount) Cap *= 2;
+	if (FAILED(TheRenderManager->device->CreateVertexBuffer(Cap * ShadowInstanceStride, D3DUSAGE_DYNAMIC | D3DUSAGE_WRITEONLY, 0, D3DPOOL_DEFAULT, &InstanceVB, NULL))) {
+		InstanceVB = NULL;
+		InstanceVBCapacity = 0;
+		return false;
+	}
+	InstanceVBCapacity = Cap;
+	return true;
+}
+
+void ShadowManager::DrawInstancedGroup(NiGeometryBufferData* GeoData, std::vector<NiGeometry*>& Geos) {
+	IDirect3DDevice9* Device = TheRenderManager->device;
+	NiDX9RenderState* RenderState = TheRenderManager->renderState;
+	UINT Count = (UINT)Geos.size();
+
+	IDirect3DVertexDeclaration9* Decl = GetInstancedDeclaration(GeoData);
+	if (!Decl) return;
+
+	// Pack each instance's camera-relative world matrix as 3 columns into the dynamic stream.
+	float* Data = NULL;
+	if (FAILED(InstanceVB->Lock(0, Count * ShadowInstanceStride, (void**)&Data, D3DLOCK_DISCARD))) return;
+	D3DMATRIX m;
+	for (UINT i = 0; i < Count; i++) {
+		CreateD3DMatrix(&m, &Geos[i]->m_worldTransform);
+		float* d = Data + i * 12;
+		d[0] = m._11; d[1] = m._21; d[2]  = m._31; d[3]  = m._41;
+		d[4] = m._12; d[5] = m._22; d[6]  = m._32; d[7]  = m._42;
+		d[8] = m._13; d[9] = m._23; d[10] = m._33; d[11] = m._43;
+	}
+	InstanceVB->Unlock();
+
+	WORD InstStream = (WORD)GeoData->StreamCount;
+	for (UInt32 s = 0; s < GeoData->StreamCount; s++) {
+		Device->SetStreamSource(s, GeoData->VBChip[s]->VB, 0, GeoData->VertexStride[s]);
+		Device->SetStreamSourceFreq(s, D3DSTREAMSOURCE_INDEXEDDATA | Count);
+	}
+	Device->SetStreamSource(InstStream, InstanceVB, 0, ShadowInstanceStride);
+	Device->SetStreamSourceFreq(InstStream, D3DSTREAMSOURCE_INSTANCEDATA | 1);
+	Device->SetIndices(GeoData->IB);
+	RenderState->SetVertexDeclaration(Decl, false);
+
+	DrawGeoArrays(GeoData, GeoData->PrimitiveType, GeoData->VertCount);
+
+	// Restore default (non-instanced) stream frequencies for subsequent draws.
+	for (UInt32 s = 0; s < GeoData->StreamCount; s++) Device->SetStreamSourceFreq(s, 1);
+	Device->SetStreamSourceFreq(InstStream, 1);
+	Device->SetStreamSource(InstStream, NULL, 0, 0);
+}
+
+void ShadowManager::FlushInstanceGroups(D3DXVECTOR4* ShadowData) {
+	NiDX9RenderState* RenderState = TheRenderManager->renderState;
+
+	// Size the instance buffer once for the largest batchable group.
+	UINT MaxGroup = 0;
+	for (auto& Group : InstanceGroups)
+		if (Group.second.size() >= ShadowInstanceMinCount && Group.second.size() > MaxGroup) MaxGroup = (UINT)Group.second.size();
+	bool CanInstance = MaxGroup > 0 && EnsureInstanceVB(MaxGroup);
+
+	// Pass 1: draw batchable groups with the instanced shader (opaque, ShadowData x=y=0).
+	bool InstancedSet = false;
+	if (CanInstance) {
+		for (auto& Group : InstanceGroups) {
+			if (Group.second.size() < ShadowInstanceMinCount || !GetInstancedDeclaration(Group.first)) continue;
+			if (!InstancedSet) {
+				ShadowData->x = 0.0f;
+				ShadowData->y = 0.0f;
+				RenderState->SetVertexShader(ShadowMapInstancedVertexShader, false);
+				RenderState->SetPixelShader(ShadowMapPixelShader, false);
+				ShadowMapInstancedVertex->SetCT();
+				ShadowMapPixel->SetCT();
+				InstancedSet = true;
+			}
+			DrawInstancedGroup(Group.first, Group.second);
+		}
+	}
+
+	// Pass 2: everything not instanced (small groups, or buffers without a usable declaration).
+	CurrentVertex = ShadowMapVertex;
+	CurrentPixel  = ShadowMapPixel;
+	RenderState->SetVertexShader(ShadowMapVertexShader, false);
+	RenderState->SetPixelShader(ShadowMapPixelShader, false);
+	for (auto& Group : InstanceGroups) {
+		bool Instanced = CanInstance && Group.second.size() >= ShadowInstanceMinCount && GetInstancedDeclaration(Group.first);
+		if (Instanced) continue;
+		for (NiGeometry* Geo : Group.second) Render(Geo, ShadowData);
+	}
+}
+
 void ShadowManager::RenderShadowMap(ShadowMapTypeEnum ShadowMapType, SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors, D3DXVECTOR3* At, D3DXVECTOR4* ShadowLightDir, D3DXVECTOR4* ShadowData) {
 	IDirect3DDevice9* Device = TheRenderManager->device;
 	NiDX9RenderState* RenderState = TheRenderManager->renderState;
@@ -592,9 +776,19 @@ void ShadowManager::RenderShadowMap(ShadowMapTypeEnum ShadowMapType, SettingsSha
 	SettingsShadowStruct::FormsStruct* Forms = &ShadowsExteriors->Forms[ShadowMapType];
 	float MinRadius = MinRadii[ShadowMapType];
 	bool HasWater = TheShaderManager->ShaderConst.HasWater;
-	for (const ShadowRefCandidate& Candidate : ExteriorRefCandidates) {
-		if (FormsAllows(Forms, Candidate.TypeID) && InShadowFrustum(ShadowMapType, Candidate.Node))
-			RenderObject(Candidate.Node, ShadowData, HasWater, MinRadius);
+	bool UseInstancing = ShadowsExteriors->UseInstancing && ShadowMapInstancedVertexShader;
+	if (UseInstancing) {
+		InstanceGroups.clear();
+		for (const ShadowRefCandidate& Candidate : ExteriorRefCandidates) {
+			if (FormsAllows(Forms, Candidate.TypeID) && InShadowFrustum(ShadowMapType, Candidate.Node))
+				RenderObjectInstanced(Candidate.Node, ShadowData, HasWater, MinRadius);
+		}
+		FlushInstanceGroups(ShadowData);
+	} else {
+		for (const ShadowRefCandidate& Candidate : ExteriorRefCandidates) {
+			if (FormsAllows(Forms, Candidate.TypeID) && InShadowFrustum(ShadowMapType, Candidate.Node))
+				RenderObject(Candidate.Node, ShadowData, HasWater, MinRadius);
+		}
 	}
 	Device->EndScene();
 }

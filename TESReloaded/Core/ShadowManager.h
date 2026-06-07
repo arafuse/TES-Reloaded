@@ -2,6 +2,7 @@
 #include <list>
 #include <vector>
 #include <map>
+#include <unordered_map>
 
 class ShadowManager { // Never disposed
 public:
@@ -46,6 +47,12 @@ public:
 	TESObjectREFR*			GetRef(TESObjectREFR* Ref, SettingsShadowStruct::FormsStruct* Forms, SettingsShadowStruct::ExcludedFormsList* ExcludedForms);
 	TESObjectREFR*			GetRefO(TESObjectREFR* Ref);
 	void					RenderObject(NiAVObject* Node, D3DXVECTOR4* ShadowData, bool HasWater, float MinRadius);
+	void					RenderObjectInstanced(NiAVObject* Node, D3DXVECTOR4* ShadowData, bool HasWater, float MinRadius);
+	bool					IsInstanceable(NiGeometry* Geo, NiGeometryBufferData* GeoData);
+	IDirect3DVertexDeclaration9* GetInstancedDeclaration(NiGeometryBufferData* GeoData);
+	bool					EnsureInstanceVB(UINT InstanceCount);
+	void					DrawInstancedGroup(NiGeometryBufferData* GeoData, std::vector<NiGeometry*>& Geos);
+	void					FlushInstanceGroups(D3DXVECTOR4* ShadowData);
 	void					RenderObjectPoint(NiAVObject* Node, D3DXVECTOR4* ShadowData, bool HasWater);
 	void					CollectCubeMapGeometry(NiAVObject* Object, bool HasWater, std::vector<NiGeometry*>& Out);
 	void					RenderObjectPointActor(NiAVObject* Node, D3DXVECTOR4* ShadowData, bool HasWater, int lightIndex);
@@ -117,6 +124,14 @@ public:
 	ShaderRecord*			ShadowMapPixel;
 	IDirect3DVertexShader9* ShadowMapVertexShader;
 	IDirect3DPixelShader9*  ShadowMapPixelShader;
+
+	// Hardware instancing for repeated opaque statics in the exterior directional passes.
+	ShaderRecord*			ShadowMapInstancedVertex;
+	IDirect3DVertexShader9* ShadowMapInstancedVertexShader;
+	IDirect3DVertexBuffer9* InstanceVB;			// dynamic per-instance world-matrix stream
+	UINT					InstanceVBCapacity;	// capacity in instances
+	std::unordered_map<IDirect3DVertexDeclaration9*, IDirect3DVertexDeclaration9*> InstancedDeclCache;
+	std::unordered_map<NiGeometryBufferData*, std::vector<NiGeometry*>> InstanceGroups;
 	D3DVIEWPORT9			ShadowMapViewPort[4];
 	D3DXPLANE				ShadowMapFrustum[4][6];
 	NiVector4				BillboardRight;
