@@ -117,6 +117,7 @@ ShadowManager::ShadowManager() {
 	InstanceVB = NULL;
 	InstanceVBCapacity = 0;
 	InstanceGroupCount = 0;
+	ShadowGeoCount = 0;
 
 	LoadShadowShaders(Device);
 	CreateShadowMapSurfaces(Device, ShadowsExteriors);
@@ -323,35 +324,30 @@ bool ShadowManager::InShadowFrustum(ShadowMapTypeEnum ShadowMapType, NiAVObject*
 	return R;
 
 }
-void ShadowManager::RenderObject(NiAVObject* Object, D3DXVECTOR4* ShadowData, bool HasWater, float MinRadius) {
 
-	// Gate the bound-radius fetch behind the null/cull checks: skip the work (and the
-	// deref) entirely for null or app-culled objects.
-	if (Object && !(Object->m_flags & NiAVObject::kFlag_AppCulled) && Object->GetWorldBoundRadius() >= MinRadius) {
-		void* VFT = *(void**)Object;
-		if (VFT == VFTNiNode || VFT == VFTBSFadeNode || VFT == VFTBSFaceGenNiNode || VFT == VFTBSTreeNode) {
-			NiNode* Node = (NiNode*)Object;
-			for (int i = 0; i < Node->m_children.end; i++) {
-				RenderObject(Node->m_children.data[i], ShadowData, HasWater, MinRadius);
-			}
+// Ref-root cull: exact behaviour of InShadowFrustum (incl. the MapFar near-frustum
+// exclusion) but on a precomputed camera-relative center+radius. Keeps which refs
+// participate in which map identical to the per-candidate test it replaces.
+bool ShadowManager::RootInShadowFrustum(ShadowMapTypeEnum ShadowMapType, const D3DXVECTOR3& Center, float Radius) {
+	for (int i = 0; i < 6; ++i)
+		if (D3DXPlaneDotCoord(&ShadowMapFrustum[ShadowMapType][i], &Center) <= -Radius) return false;
+	if (ShadowMapType == MapFar) { // Ensures to not be fully in the near frustum
+		bool fullyInNear = true;
+		for (int i = 0; i < 6; ++i) {
+			float Distance = D3DXPlaneDotCoord(&ShadowMapFrustum[MapNear][i], &Center);
+			if (Distance <= -Radius || std::fabs(Distance) < Radius) { fullyInNear = false; break; }
 		}
-		else if (VFT == VFTNiTriShape || VFT == VFTNiTriStrips) {
-			NiGeometry* Geo = (NiGeometry*)Object;
-			if (Geo->shader) {
-				if (Geo->skinInstance || !HasWater || (HasWater && Geo->GetWorldBound()->Center.z > 0.0f)) {
-					NiGeometryBufferData* GeoData = Geo->geomData->BuffData;
-					if (GeoData) {
-						Render(Geo, ShadowData);
-					}
-					else if (Geo->skinInstance && Geo->skinInstance->SkinPartition && Geo->skinInstance->SkinPartition->Partitions) {
-						GeoData = Geo->skinInstance->SkinPartition->Partitions[0].BuffData;
-						if (GeoData) Render(Geo, ShadowData);
-					}
-				}
-			}
-		}
+		if (fullyInNear) return false;
 	}
+	return true;
+}
 
+// Leaf cull: plain 6-plane containment against the map's frustum (no near-exclusion). Only
+// removes sub-geometry fully outside the light frustum, which contributes nothing.
+bool ShadowManager::LeafInShadowFrustum(ShadowMapTypeEnum ShadowMapType, const D3DXVECTOR3& Center, float Radius) {
+	for (int i = 0; i < 6; ++i)
+		if (D3DXPlaneDotCoord(&ShadowMapFrustum[ShadowMapType][i], &Center) <= -Radius) return false;
+	return true;
 }
 
 void ShadowManager::RenderObjectPoint(NiAVObject* Object, D3DXVECTOR4* ShadowData, bool HasWater) {
@@ -552,97 +548,128 @@ void ShadowManager::RenderShadowMapCellTerrain(TESObjectCELL* Cell, ShadowMapTyp
 	}
 }
 
-// Gather every shadow-casting ref in the loaded grid once per frame. The node/flag/excluded
-// eligibility is independent of the map type, so only the cheap per-type Forms filter and the
-// frustum test need to run in each of the 4 directional passes.
-void ShadowManager::BuildExteriorRefCandidates(SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors) {
-	ExteriorRefCandidates.clear();
+// Flatten every shadow-casting ref in the loaded grid into ShadowGeoPool once per frame,
+// grouped per ref. Node/flag/excluded eligibility, world transforms, bounds, the water test,
+// and instancing eligibility are all map-type-independent, so they are resolved here exactly
+// once; each of the 4 directional passes then only does the per-type Forms filter, the frustum
+// cull, and the draw. Geo classification that *does* vary per pass (AlphaEnabled, MinRadius)
+// is kept as flags/fields and applied in the pass loop.
+void ShadowManager::BuildExteriorGeoItems(SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors) {
+	ShadowRefGroups.clear();
+	ShadowGeoCount = 0;
 	SettingsShadowStruct::ExcludedFormsList* ExcludedForms = &ShadowsExteriors->ExcludedForms;
 	bool HasExcluded = ExcludedForms->size() > 0;
+	bool HasWater = TheShaderManager->ShaderConst.HasWater;
 	for (UInt32 x = 0; x < *SettingGridsToLoad; x++) {
 		for (UInt32 y = 0; y < *SettingGridsToLoad; y++) {
 			TESObjectCELL* Cell = Tes->gridCellArray->GetCell(x, y);
 			if (!Cell) continue;
 			TList<TESObjectREFR>::Entry* Entry = &Cell->objectList.First;
-			while (Entry) {
+			for (; Entry; Entry = Entry->next) {
 				TESObjectREFR* Ref = Entry->item;
-				if (Ref && Ref->GetNode() && !(Ref->flags & TESForm::FormFlags::kFormFlags_NotCastShadows)) {
-					TESForm* Form = Ref->baseForm;
-					UInt8 TypeID = Form->formType;
-					if (IsShadowCastableType(TypeID) &&
-						!(HasExcluded && std::binary_search(ExcludedForms->begin(), ExcludedForms->end(), Form->refID)))
-						ExteriorRefCandidates.push_back({ Ref->GetNode(), TypeID });
-				}
-				Entry = Entry->next;
+				NiNode* Node;
+				if (!Ref || !(Node = Ref->GetNode()) || (Ref->flags & TESForm::FormFlags::kFormFlags_NotCastShadows)) continue;
+				TESForm* Form = Ref->baseForm;
+				UInt8 TypeID = Form->formType;
+				if (!IsShadowCastableType(TypeID)) continue;
+				if (HasExcluded && std::binary_search(ExcludedForms->begin(), ExcludedForms->end(), Form->refID)) continue;
+				NiBound* RootBound = Node->GetWorldBound();
+				if (!RootBound) continue; // InShadowFrustum would cull this ref in every pass
+
+				int FirstItem = ShadowGeoCount;
+				CollectExteriorGeo(Node, HasWater);
+				int ItemCount = ShadowGeoCount - FirstItem;
+				if (ItemCount == 0) continue; // nothing drawable under this ref
+
+				ShadowRefGroup Group;
+				Group.TypeID = TypeID;
+				Group.RootCenter = { RootBound->Center.x - TheRenderManager->CameraPosition.x, RootBound->Center.y - TheRenderManager->CameraPosition.y, RootBound->Center.z - TheRenderManager->CameraPosition.z };
+				Group.RootRadius = RootBound->Radius;
+				Group.FirstItem = FirstItem;
+				Group.ItemCount = ItemCount;
+				ShadowRefGroups.push_back(Group);
 			}
 		}
 	}
 }
 
-// Mirrors RenderObject, but routes opaque static geometry into per-mesh instance groups
-// (keyed by the shared NiGeometryBufferData) instead of drawing it immediately. Everything
-// that can't be instanced (skinned, SpeedTree, alpha, FVF-only) draws now via the normal path.
-void ShadowManager::RenderObjectInstanced(NiAVObject* Object, D3DXVECTOR4* ShadowData, bool HasWater, float MinRadius) {
+// Recursive collector: walks one ref's sub-tree and appends drawable geometry to ShadowGeoPool.
+// Mirrors the old RenderObjectInstanced traversal/filters, but precomputes and stores per-geo
+// state instead of drawing. Anything Render()/RenderSkinnedGeo() would have drawn is collected;
+// anything they would have skipped (torch, no shader, submerged, no lighting property on opaque
+// statics, no usable buffer) is dropped here.
+void ShadowManager::CollectExteriorGeo(NiAVObject* Object, bool HasWater) {
+	if (!Object || (Object->m_flags & NiAVObject::kFlag_AppCulled)) return;
+	void* VFT = *(void**)Object;
+	if (VFT == VFTNiNode || VFT == VFTBSFadeNode || VFT == VFTBSFaceGenNiNode || VFT == VFTBSTreeNode) {
+		NiNode* Node = (NiNode*)Object;
+		for (int i = 0; i < Node->m_children.end; i++)
+			CollectExteriorGeo(Node->m_children.data[i], HasWater);
+		return;
+	}
+	if (VFT != VFTNiTriShape && VFT != VFTNiTriStrips) return;
 
-	// Gate the bound-radius fetch behind the null/cull checks (see RenderObject).
-	if (Object && !(Object->m_flags & NiAVObject::kFlag_AppCulled) && Object->GetWorldBoundRadius() >= MinRadius) {
-		void* VFT = *(void**)Object;
-		if (VFT == VFTNiNode || VFT == VFTBSFadeNode || VFT == VFTBSFaceGenNiNode || VFT == VFTBSTreeNode) {
-			NiNode* Node = (NiNode*)Object;
-			for (int i = 0; i < Node->m_children.end; i++) {
-				RenderObjectInstanced(Node->m_children.data[i], ShadowData, HasWater, MinRadius);
-			}
-		}
-		else if (VFT == VFTNiTriShape || VFT == VFTNiTriStrips) {
-			NiGeometry* Geo = (NiGeometry*)Object;
-			if (Geo->m_pcName && !memcmp(Geo->m_pcName, "Torch", 5)) return; // skipped by Render() anyway
-			if (Geo->shader) {
-				if (Geo->skinInstance || !HasWater || (HasWater && Geo->GetWorldBound()->Center.z > 0.0f)) {
-					NiGeometryBufferData* GeoData = Geo->geomData->BuffData;
-					if (GeoData) {
-						if (IsInstanceable(Geo, GeoData)) AddInstance(GeoData, Geo);
-						else Render(Geo, ShadowData);
-					}
-					else if (Geo->skinInstance && Geo->skinInstance->SkinPartition && Geo->skinInstance->SkinPartition->Partitions) {
-						GeoData = Geo->skinInstance->SkinPartition->Partitions[0].BuffData;
-						if (GeoData) Render(Geo, ShadowData);
-					}
-				}
-			}
-		}
+	NiGeometry* Geo = (NiGeometry*)Object;
+	if (Geo->m_pcName && !memcmp(Geo->m_pcName, "Torch", 5)) return; // skipped by Render() anyway
+	if (!Geo->shader) return;
+
+	NiBound* Bound = Geo->GetWorldBound();
+	if (!Bound) return; // no bound: can't cull/place; the ref-root test already requires one
+	// Water test (frame-constant): drop submerged opaque geo when water is present.
+	if (!(Geo->skinInstance || !HasWater || Bound->Center.z > 0.0f)) return;
+
+	// Resolve the buffer Render() will use: model buffer (static path), else first skin
+	// partition (RenderSkinnedGeo path, signalled by storing GeoData = NULL on the item).
+	NiGeometryBufferData* ModelBuff = Geo->geomData->BuffData;
+	bool DrawViaSkin = false;
+	if (!ModelBuff) {
+		if (!(Geo->skinInstance && Geo->skinInstance->SkinPartition && Geo->skinInstance->SkinPartition->Partitions
+			&& Geo->skinInstance->SkinPartition->Partitions[0].BuffData)) return; // not drawable
+		DrawViaSkin = true;
 	}
 
+	bool BaseInstanceable = false;
+	bool HasAlphaMask = false;
+	if (!DrawViaSkin) {
+		bool IsLeaf = Geo->m_parent && Geo->m_parent->m_pcName && !memcmp(Geo->m_parent->m_pcName, "Leaves", 6);
+		if (!IsLeaf) {
+			// Opaque static path: Render() early-outs without a lighting property, so drop it here.
+			BSShaderProperty* LProp = (BSShaderProperty*)Geo->GetProperty(NiProperty::PropertyType::kType_Lighting);
+			if (!LProp || !LProp->IsLightingProperty()) return;
+			NiAlphaProperty* AProp = (NiAlphaProperty*)Geo->GetProperty(NiProperty::PropertyType::kType_Alpha);
+			HasAlphaMask = AProp && (AProp->flags & (NiAlphaProperty::AlphaFlags::ALPHA_BLEND_MASK | NiAlphaProperty::AlphaFlags::TEST_ENABLE_MASK));
+			BaseInstanceable = ModelBuff->VertexDeclaration && !Geo->skinInstance; // FVF-only / skinned excluded
+		}
+		// SpeedTree leaves draw via SetupSpeedTreeLeafShader and are never instanced.
+	}
+
+	if (ShadowGeoCount == (int)ShadowGeoPool.size()) ShadowGeoPool.emplace_back();
+	ShadowGeoItem& Item = ShadowGeoPool[ShadowGeoCount++];
+	Item.Geo = Geo;
+	Item.GeoData = ModelBuff; // NULL => Render() takes the skinned path and ignores World
+	Item.Center = { Bound->Center.x - TheRenderManager->CameraPosition.x, Bound->Center.y - TheRenderManager->CameraPosition.y, Bound->Center.z - TheRenderManager->CameraPosition.z };
+	Item.Radius = Bound->Radius;
+	Item.BaseInstanceable = BaseInstanceable;
+	Item.HasAlphaMask = HasAlphaMask;
+	if (!DrawViaSkin) CreateD3DMatrix(&Item.World, &Geo->m_worldTransform);
 }
 
-// Append a geometry to its mesh's instance group, reusing a pooled vector (kept across passes).
-void ShadowManager::AddInstance(NiGeometryBufferData* GeoData, NiGeometry* Geo) {
+// Append a pool item to its mesh's instance group (keyed by the shared NiGeometryBufferData),
+// reusing the pooled index vector across passes.
+void ShadowManager::AddInstance(NiGeometryBufferData* GeoData, int ItemIndex) {
 	auto it = InstanceGroupIndex.find(GeoData);
 	int idx;
 	if (it == InstanceGroupIndex.end()) {
 		idx = InstanceGroupCount++;
 		if ((size_t)idx == InstancePool.size()) InstancePool.emplace_back();
 		InstancePool[idx].GeoData = GeoData;
-		InstancePool[idx].Geos.clear(); // reuse capacity from a previous pass
+		InstancePool[idx].ItemIdx.clear(); // reuse capacity from a previous pass
 		InstancePool[idx].Decl = GetInstancedDeclaration(GeoData); // resolve once per group
 		InstanceGroupIndex.emplace(GeoData, idx);
 	} else {
 		idx = it->second;
 	}
-	InstancePool[idx].Geos.emplace_back(Geo);
-}
-
-bool ShadowManager::IsInstanceable(NiGeometry* Geo, NiGeometryBufferData* GeoData) {
-	if (!GeoData->VertexDeclaration) return false;                                                  // FVF-only meshes unsupported
-	if (Geo->skinInstance) return false;                                                            // skinned: per-bone constants
-	if (Geo->m_parent && Geo->m_parent->m_pcName && !memcmp(Geo->m_parent->m_pcName, "Leaves", 6)) return false; // SpeedTree leaves
-	if (AlphaEnabled) {
-		NiAlphaProperty* AProp = (NiAlphaProperty*)Geo->GetProperty(NiProperty::PropertyType::kType_Alpha);
-		if (AProp && (AProp->flags & (NiAlphaProperty::AlphaFlags::ALPHA_BLEND_MASK | NiAlphaProperty::AlphaFlags::TEST_ENABLE_MASK)))
-			return false;                                                                           // needs a per-geo texture
-	}
-	BSShaderProperty* LProp = (BSShaderProperty*)Geo->GetProperty(NiProperty::PropertyType::kType_Lighting);
-	if (!LProp || !LProp->IsLightingProperty()) return false;                                       // matches Render()'s opaque requirement
-	return true;
+	InstancePool[idx].ItemIdx.emplace_back(ItemIndex);
 }
 
 // Build (and cache, keyed by the source declaration) a vertex declaration that appends a
@@ -692,19 +719,18 @@ bool ShadowManager::EnsureInstanceVB(UINT InstanceCount) {
 	return true;
 }
 
-void ShadowManager::DrawInstancedGroup(NiGeometryBufferData* GeoData, std::vector<NiGeometry*>& Geos, IDirect3DVertexDeclaration9* Decl) {
+void ShadowManager::DrawInstancedGroup(NiGeometryBufferData* GeoData, std::vector<int>& ItemIdx, IDirect3DVertexDeclaration9* Decl) {
 	IDirect3DDevice9* Device = TheRenderManager->device;
 	NiDX9RenderState* RenderState = TheRenderManager->renderState;
-	UINT Count = (UINT)Geos.size();
+	UINT Count = (UINT)ItemIdx.size();
 
 	if (!Decl) return;
 
-	// Pack each instance's camera-relative world matrix as 3 columns into the dynamic stream.
+	// Pack each instance's precomputed camera-relative world matrix as 3 columns into the stream.
 	float* Data = NULL;
 	if (FAILED(InstanceVB->Lock(0, Count * ShadowInstanceStride, (void**)&Data, D3DLOCK_DISCARD))) return;
-	D3DMATRIX m;
 	for (UINT i = 0; i < Count; i++) {
-		CreateD3DMatrix(&m, &Geos[i]->m_worldTransform);
+		const D3DMATRIX& m = ShadowGeoPool[ItemIdx[i]].World;
 		float* d = Data + i * 12;
 		d[0] = m._11; d[1] = m._21; d[2]  = m._31; d[3]  = m._41;
 		d[4] = m._12; d[5] = m._22; d[6]  = m._32; d[7]  = m._42;
@@ -736,7 +762,7 @@ void ShadowManager::FlushInstanceGroups(D3DXVECTOR4* ShadowData) {
 	// Size the instance buffer once for the largest batchable group.
 	UINT MaxGroup = 0;
 	for (int i = 0; i < InstanceGroupCount; i++)
-		if (InstancePool[i].Geos.size() >= ShadowInstanceMinCount && InstancePool[i].Geos.size() > MaxGroup) MaxGroup = (UINT)InstancePool[i].Geos.size();
+		if (InstancePool[i].ItemIdx.size() >= ShadowInstanceMinCount && InstancePool[i].ItemIdx.size() > MaxGroup) MaxGroup = (UINT)InstancePool[i].ItemIdx.size();
 	bool CanInstance = MaxGroup > 0 && EnsureInstanceVB(MaxGroup);
 
 	// Pass 1: draw batchable groups with the instanced shader (opaque, ShadowData x=y=0).
@@ -744,7 +770,7 @@ void ShadowManager::FlushInstanceGroups(D3DXVECTOR4* ShadowData) {
 	if (CanInstance) {
 		for (int i = 0; i < InstanceGroupCount; i++) {
 			InstanceGroup& Group = InstancePool[i];
-			if (Group.Geos.size() < ShadowInstanceMinCount || !Group.Decl) continue;
+			if (Group.ItemIdx.size() < ShadowInstanceMinCount || !Group.Decl) continue;
 			if (!InstancedSet) {
 				ShadowData->x = 0.0f;
 				ShadowData->y = 0.0f;
@@ -754,7 +780,7 @@ void ShadowManager::FlushInstanceGroups(D3DXVECTOR4* ShadowData) {
 				ShadowMapPixel->SetCT();
 				InstancedSet = true;
 			}
-			DrawInstancedGroup(Group.GeoData, Group.Geos, Group.Decl);
+			DrawInstancedGroup(Group.GeoData, Group.ItemIdx, Group.Decl);
 		}
 	}
 
@@ -765,9 +791,9 @@ void ShadowManager::FlushInstanceGroups(D3DXVECTOR4* ShadowData) {
 	RenderState->SetPixelShader(ShadowMapPixelShader, false);
 	for (int i = 0; i < InstanceGroupCount; i++) {
 		InstanceGroup& Group = InstancePool[i];
-		bool Instanced = CanInstance && Group.Geos.size() >= ShadowInstanceMinCount && Group.Decl;
+		bool Instanced = CanInstance && Group.ItemIdx.size() >= ShadowInstanceMinCount && Group.Decl;
 		if (Instanced) continue;
-		for (NiGeometry* Geo : Group.Geos) Render(Geo, ShadowData);
+		for (int idx : Group.ItemIdx) Render(ShadowGeoPool[idx].Geo, ShadowData, &ShadowGeoPool[idx].World);
 	}
 }
 
@@ -796,22 +822,27 @@ void ShadowManager::RenderShadowMap(ShadowMapTypeEnum ShadowMapType, SettingsSha
 				RenderShadowMapCellTerrain(Cell, ShadowMapType, ShadowData);
 	SettingsShadowStruct::FormsStruct* Forms = &ShadowsExteriors->Forms[ShadowMapType];
 	float MinRadius = MinRadii[ShadowMapType];
-	bool HasWater = TheShaderManager->ShaderConst.HasWater;
 	bool UseInstancing = ShadowsExteriors->UseInstancing && ShadowMapInstancedVertexShader;
-	if (UseInstancing) {
-		InstanceGroupIndex.clear();
-		InstanceGroupCount = 0;
-		for (const ShadowRefCandidate& Candidate : ExteriorRefCandidates) {
-			if (FormsAllows(Forms, Candidate.TypeID) && InShadowFrustum(ShadowMapType, Candidate.Node))
-				RenderObjectInstanced(Candidate.Node, ShadowData, HasWater, MinRadius);
-		}
-		FlushInstanceGroups(ShadowData);
-	} else {
-		for (const ShadowRefCandidate& Candidate : ExteriorRefCandidates) {
-			if (FormsAllows(Forms, Candidate.TypeID) && InShadowFrustum(ShadowMapType, Candidate.Node))
-				RenderObject(Candidate.Node, ShadowData, HasWater, MinRadius);
+	if (UseInstancing) { InstanceGroupIndex.clear(); InstanceGroupCount = 0; }
+
+	// Iterate the once-per-frame flat list: per-type filter + cheap ref-root early-out, then a
+	// leaf-level cull + draw, reusing precomputed matrices. Instanceable opaque statics are
+	// batched into instance groups (flushed below); everything else draws immediately.
+	for (const ShadowRefGroup& Group : ShadowRefGroups) {
+		if (!FormsAllows(Forms, Group.TypeID)) continue;
+		if (!RootInShadowFrustum(ShadowMapType, Group.RootCenter, Group.RootRadius)) continue;
+		int End = Group.FirstItem + Group.ItemCount;
+		for (int i = Group.FirstItem; i < End; i++) {
+			ShadowGeoItem& Item = ShadowGeoPool[i];
+			if (Item.Radius < MinRadius) continue;
+			if (!LeafInShadowFrustum(ShadowMapType, Item.Center, Item.Radius)) continue;
+			if (UseInstancing && Item.BaseInstanceable && !(AlphaEnabled && Item.HasAlphaMask))
+				AddInstance(Item.GeoData, i);
+			else
+				Render(Item.Geo, ShadowData, Item.GeoData ? &Item.World : NULL);
 		}
 	}
+	if (UseInstancing) FlushInstanceGroups(ShadowData);
 	Device->EndScene();
 }
 
@@ -981,7 +1012,7 @@ void ShadowManager::RenderExteriorShadows() {
 	ComputeExteriorLookAt(At, SkinAt, ShadowsExteriors);
 	AdjustShadowLightDir(ShadowLightDir);
 
-	BuildExteriorRefCandidates(ShadowsExteriors);
+	BuildExteriorGeoItems(ShadowsExteriors);
 
 	if (TheSettingManager->SettingsShadows.Exteriors.UseIntervalUpdate && TheShaderManager->isFullyInitialized) {
 		D3DXVECTOR4 ShadowLightDirInterval;
