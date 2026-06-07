@@ -332,9 +332,15 @@ bool ShadowManager::RootInShadowFrustum(ShadowMapTypeEnum ShadowMapType, const D
 	for (int i = 0; i < 6; ++i)
 		if (D3DXPlaneDotCoord(&ShadowMapFrustum[ShadowMapType][i], &Center) <= -Radius) return false;
 	if (ShadowMapType == MapFar) { // Ensures to not be fully in the near frustum
+		// "Fully inside near" is a short-circuit AND over the 6 near planes. Near and far share
+		// the same view (only the ortho extents differ), so the two depth planes are identical to
+		// far's — already satisfied here and effectively never decisive. Test the 4 (much tighter)
+		// side planes first so the early-out fires on the first plane for the common case of an
+		// object laterally outside the small near cascade. Result is identical; only order changes.
+		static const int NearPlaneOrder[6] = { PlaneLeft, PlaneRight, PlaneTop, PlaneBottom, PlaneNear, PlaneFar };
 		bool fullyInNear = true;
-		for (int i = 0; i < 6; ++i) {
-			float Distance = D3DXPlaneDotCoord(&ShadowMapFrustum[MapNear][i], &Center);
+		for (int k = 0; k < 6; ++k) {
+			float Distance = D3DXPlaneDotCoord(&ShadowMapFrustum[MapNear][NearPlaneOrder[k]], &Center);
 			if (Distance <= -Radius || std::fabs(Distance) < Radius) { fullyInNear = false; break; }
 		}
 		if (fullyInNear) return false;
@@ -825,11 +831,16 @@ void ShadowManager::RenderShadowMap(ShadowMapTypeEnum ShadowMapType, SettingsSha
 	bool UseInstancing = ShadowsExteriors->UseInstancing && ShadowMapInstancedVertexShader;
 	if (UseInstancing) { InstanceGroupIndex.clear(); InstanceGroupCount = 0; }
 
+	// Resolve the per-type Forms filter once per pass (form type fits in a UInt8) so the group
+	// loop is a flat lookup instead of re-running the FormsAllows switch for every ref.
+	bool FormsAllowed[256];
+	for (int t = 0; t < 256; t++) FormsAllowed[t] = FormsAllows(Forms, (UInt8)t);
+
 	// Iterate the once-per-frame flat list: per-type filter + cheap ref-root early-out, then a
 	// leaf-level cull + draw, reusing precomputed matrices. Instanceable opaque statics are
 	// batched into instance groups (flushed below); everything else draws immediately.
 	for (const ShadowRefGroup& Group : ShadowRefGroups) {
-		if (!FormsAllows(Forms, Group.TypeID)) continue;
+		if (!FormsAllowed[Group.TypeID]) continue;
 		if (!RootInShadowFrustum(ShadowMapType, Group.RootCenter, Group.RootRadius)) continue;
 		int End = Group.FirstItem + Group.ItemCount;
 		for (int i = Group.FirstItem; i < End; i++) {
