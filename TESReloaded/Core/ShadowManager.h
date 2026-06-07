@@ -80,7 +80,8 @@ public:
 	void					RenderActorFaces(NiGeometryBufferData* GeoData, D3DPRIMITIVETYPE PrimitiveType, UINT VertCount, int lightIndex, const D3DXMATRIX& Proj);
 	void					RenderActorSkinnedGeo(NiGeometry* Geo, D3DXVECTOR4* ShadowData, int lightIndex, const D3DXMATRIX& Proj);
 	void					SetupShadowMapMatrices(ShadowMapTypeEnum ShadowMapType, SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors, D3DXVECTOR3* At, D3DXVECTOR4* ShadowLightDir);
-	void					RenderShadowMapCell(TESObjectCELL* Cell, ShadowMapTypeEnum ShadowMapType, SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors, D3DXVECTOR4* ShadowData);
+	void					RenderShadowMapCellTerrain(TESObjectCELL* Cell, ShadowMapTypeEnum ShadowMapType, D3DXVECTOR4* ShadowData);
+	void					BuildExteriorRefCandidates(SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors);
 	void					SetupCubeMapRenderState();
 	void					ClassifyRefForLight(TESObjectREFR* Ref, NiPointLight** Lights, int L, float radiusScan, std::vector<NiNode*>* refMap, std::vector<NiNode*>* actorMap, double* StaticValues, bool* forceRedrawMap);
 	void					ClearCubeMapNodeLists();
@@ -164,6 +165,10 @@ public:
 	std::vector<NiNode*>	CubeMapActorMap[12];
 	// Flattened renderable geometry for the current light, reused across all 6 cube faces.
 	std::vector<NiGeometry*> CubeMapGeoList;
+	// Exterior shadow-casting refs gathered once per frame, reused across the 4 directional
+	// map passes (Near/Far/Ortho/Skin) instead of re-walking the cell grid for each.
+	struct ShadowRefCandidate { NiNode* Node; UInt8 TypeID; };
+	std::vector<ShadowRefCandidate> ExteriorRefCandidates;
 };
 
 void CreateShadowsHook();

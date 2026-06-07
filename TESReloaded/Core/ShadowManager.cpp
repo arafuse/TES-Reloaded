@@ -222,29 +222,51 @@ bool ShadowManager::InFrustum(D3DXPLANE* Frustum, NiGeometry* Geo) {
 
 }
 
-TESObjectREFR* ShadowManager::GetRef(TESObjectREFR* Ref, SettingsShadowStruct::FormsStruct* Forms, SettingsShadowStruct::ExcludedFormsList* ExcludedForms) {
+// True if the form type can ever cast shadows (independent of the per-map-type Forms filter).
+static bool IsShadowCastableType(UInt8 TypeID) {
+	switch (TypeID) {
+	case TESForm::FormType::kFormType_Activator:
+	case TESForm::FormType::kFormType_Apparatus:
+	case TESForm::FormType::kFormType_Book:
+	case TESForm::FormType::kFormType_Container:
+	case TESForm::FormType::kFormType_Door:
+	case TESForm::FormType::kFormType_Misc:
+	case TESForm::FormType::kFormType_Stat:
+	case TESForm::FormType::kFormType_Tree:
+	case TESForm::FormType::kFormType_Furniture:
+		return true;
+	default:
+		return TypeID >= TESForm::FormType::kFormType_NPC && TypeID <= TESForm::FormType::kFormType_LeveledCreature;
+	}
+}
 
-	TESObjectREFR* r = NULL;
+// Whether the given Forms filter enables shadows for this form type.
+static bool FormsAllows(SettingsShadowStruct::FormsStruct* Forms, UInt8 TypeID) {
+	switch (TypeID) {
+	case TESForm::FormType::kFormType_Activator: return Forms->Activators;
+	case TESForm::FormType::kFormType_Apparatus: return Forms->Apparatus;
+	case TESForm::FormType::kFormType_Book:      return Forms->Books;
+	case TESForm::FormType::kFormType_Container: return Forms->Containers;
+	case TESForm::FormType::kFormType_Door:      return Forms->Doors;
+	case TESForm::FormType::kFormType_Misc:      return Forms->Misc;
+	case TESForm::FormType::kFormType_Stat:      return Forms->Statics;
+	case TESForm::FormType::kFormType_Tree:      return Forms->Trees;
+	case TESForm::FormType::kFormType_Furniture: return Forms->Furniture;
+	default:
+		return TypeID >= TESForm::FormType::kFormType_NPC && TypeID <= TESForm::FormType::kFormType_LeveledCreature && Forms->Actors;
+	}
+}
+
+TESObjectREFR* ShadowManager::GetRef(TESObjectREFR* Ref, SettingsShadowStruct::FormsStruct* Forms, SettingsShadowStruct::ExcludedFormsList* ExcludedForms) {
 
 	if (Ref && Ref->GetNode()) {
 		TESForm* Form = Ref->baseForm;
-		if (!(Ref->flags & TESForm::FormFlags::kFormFlags_NotCastShadows)) {
-			UInt8 TypeID = Form->formType;
-			if ((TypeID == TESForm::FormType::kFormType_Activator && Forms->Activators) ||
-				(TypeID == TESForm::FormType::kFormType_Apparatus && Forms->Apparatus) ||
-				(TypeID == TESForm::FormType::kFormType_Book && Forms->Books) ||
-				(TypeID == TESForm::FormType::kFormType_Container && Forms->Containers) ||
-				(TypeID == TESForm::FormType::kFormType_Door && Forms->Doors) ||
-				(TypeID == TESForm::FormType::kFormType_Misc && Forms->Misc) ||
-				(TypeID == TESForm::FormType::kFormType_Stat && Forms->Statics) ||
-				(TypeID == TESForm::FormType::kFormType_Tree && Forms->Trees) ||
-				(TypeID == TESForm::FormType::kFormType_Furniture && Forms->Furniture) ||
-				(TypeID >= TESForm::FormType::kFormType_NPC && TypeID <= TESForm::FormType::kFormType_LeveledCreature && Forms->Actors))
-				r = Ref;
-			if (r && ExcludedForms->size() > 0 && std::binary_search(ExcludedForms->begin(), ExcludedForms->end(), Form->refID)) r = NULL;
+		if (!(Ref->flags & TESForm::FormFlags::kFormFlags_NotCastShadows) && FormsAllows(Forms, Form->formType)) {
+			if (!(ExcludedForms->size() > 0 && std::binary_search(ExcludedForms->begin(), ExcludedForms->end(), Form->refID)))
+				return Ref;
 		}
 	}
-	return r;
+	return NULL;
 
 }
 
@@ -505,21 +527,40 @@ void ShadowManager::SetupShadowMapMatrices(ShadowMapTypeEnum ShadowMapType, Sett
 	GetShadowFrustum(ShadowMapType, &TheShaderManager->ShaderConst.ShadowMap.ShadowViewProj);
 }
 
-void ShadowManager::RenderShadowMapCell(TESObjectCELL* Cell, ShadowMapTypeEnum ShadowMapType, SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors, D3DXVECTOR4* ShadowData) {
-	static const float MinRadii[4] = { 9.0f, 100.0f, 100.0f, 0.0f }; // Near, Far, Ortho, Skin
+static const float MinRadii[4] = { 9.0f, 100.0f, 100.0f, 0.0f }; // Near, Far, Ortho, Skin
+
+void ShadowManager::RenderShadowMapCellTerrain(TESObjectCELL* Cell, ShadowMapTypeEnum ShadowMapType, D3DXVECTOR4* ShadowData) {
 	NiNode* CellNode = Cell->niNode;
 	for (int i = 2; i < 6; i++) {
 		NiNode* TerrainNode = (NiNode*)CellNode->m_children.data[i];
 		if (TerrainNode->m_children.end) RenderTerrain(TerrainNode->m_children.data[0], ShadowMapType, ShadowData);
 	}
-	TList<TESObjectREFR>::Entry* Entry = &Cell->objectList.First;
-	while (Entry) {
-		if (TESObjectREFR* Ref = GetRef(Entry->item, &ShadowsExteriors->Forms[ShadowMapType], &ShadowsExteriors->ExcludedForms)) {
-			NiNode* RefNode = Ref->GetNode();
-			if (InShadowFrustum(ShadowMapType, RefNode))
-				RenderObject(RefNode, ShadowData, TheShaderManager->ShaderConst.HasWater, MinRadii[ShadowMapType]);
+}
+
+// Gather every shadow-casting ref in the loaded grid once per frame. The node/flag/excluded
+// eligibility is independent of the map type, so only the cheap per-type Forms filter and the
+// frustum test need to run in each of the 4 directional passes.
+void ShadowManager::BuildExteriorRefCandidates(SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors) {
+	ExteriorRefCandidates.clear();
+	SettingsShadowStruct::ExcludedFormsList* ExcludedForms = &ShadowsExteriors->ExcludedForms;
+	bool HasExcluded = ExcludedForms->size() > 0;
+	for (UInt32 x = 0; x < *SettingGridsToLoad; x++) {
+		for (UInt32 y = 0; y < *SettingGridsToLoad; y++) {
+			TESObjectCELL* Cell = Tes->gridCellArray->GetCell(x, y);
+			if (!Cell) continue;
+			TList<TESObjectREFR>::Entry* Entry = &Cell->objectList.First;
+			while (Entry) {
+				TESObjectREFR* Ref = Entry->item;
+				if (Ref && Ref->GetNode() && !(Ref->flags & TESForm::FormFlags::kFormFlags_NotCastShadows)) {
+					TESForm* Form = Ref->baseForm;
+					UInt8 TypeID = Form->formType;
+					if (IsShadowCastableType(TypeID) &&
+						!(HasExcluded && std::binary_search(ExcludedForms->begin(), ExcludedForms->end(), Form->refID)))
+						ExteriorRefCandidates.push_back({ Ref->GetNode(), TypeID });
+				}
+				Entry = Entry->next;
+			}
 		}
-		Entry = Entry->next;
 	}
 }
 
@@ -545,7 +586,14 @@ void ShadowManager::RenderShadowMap(ShadowMapTypeEnum ShadowMapType, SettingsSha
 	for (UInt32 x = 0; x < *SettingGridsToLoad; x++)
 		for (UInt32 y = 0; y < *SettingGridsToLoad; y++)
 			if (TESObjectCELL* Cell = Tes->gridCellArray->GetCell(x, y))
-				RenderShadowMapCell(Cell, ShadowMapType, ShadowsExteriors, ShadowData);
+				RenderShadowMapCellTerrain(Cell, ShadowMapType, ShadowData);
+	SettingsShadowStruct::FormsStruct* Forms = &ShadowsExteriors->Forms[ShadowMapType];
+	float MinRadius = MinRadii[ShadowMapType];
+	bool HasWater = TheShaderManager->ShaderConst.HasWater;
+	for (const ShadowRefCandidate& Candidate : ExteriorRefCandidates) {
+		if (FormsAllows(Forms, Candidate.TypeID) && InShadowFrustum(ShadowMapType, Candidate.Node))
+			RenderObject(Candidate.Node, ShadowData, HasWater, MinRadius);
+	}
 	Device->EndScene();
 }
 
@@ -704,6 +752,8 @@ void ShadowManager::RenderExteriorShadows() {
 	D3DXVECTOR3 At, SkinAt;
 	ComputeExteriorLookAt(At, SkinAt, ShadowsExteriors);
 	AdjustShadowLightDir(ShadowLightDir);
+
+	BuildExteriorRefCandidates(ShadowsExteriors);
 
 	if (TheSettingManager->SettingsShadows.Exteriors.UseIntervalUpdate && TheShaderManager->isFullyInitialized) {
 		D3DXVECTOR4 ShadowLightDirInterval;
