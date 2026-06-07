@@ -44,6 +44,8 @@ static const void* VFTNiTriShape = (void*)0x00A7ED5C;
 static const void* VFTNiTriStrips = (void*)0x00A7F27C;
 #endif
 #define ShadowMapObjectMinBound 10.0f
+#define ShadowInstanceStride   48 // 3 float4 columns of the world matrix per instance
+#define ShadowInstanceMinCount 4  // minimum group size worth batching via hardware instancing
 
 #if defined(NEWVEGAS) || defined(OBLIVION)
 void ShadowManager::InitShadowBiasConstants() {
@@ -69,6 +71,10 @@ void ShadowManager::LoadShadowShaders(IDirect3DDevice9* Device) {
 	if (ShadowCubeMapPixel->LoadShader("ShadowCubeMap.pso")) Device->CreatePixelShader((const DWORD*)ShadowCubeMapPixel->Function, &ShadowCubeMapPixelShader);
 	ShadowCubeMapExteriorPixel = new ShaderRecord();
 	if (ShadowCubeMapExteriorPixel->LoadShader("ShadowCubeMapExterior.pso")) Device->CreatePixelShader((const DWORD*)ShadowCubeMapExteriorPixel->Function, &ShadowCubeMapExteriorPixelShader);
+	// Optional: instanced static shadow VS. If the binary is missing (not yet compiled), the
+	// handle stays NULL and the renderer transparently falls back to the per-object path.
+	ShadowMapInstancedVertex = new ShaderRecord();
+	if (ShadowMapInstancedVertex->LoadShader("ShadowMapInstanced.vso")) Device->CreateVertexShader((const DWORD*)ShadowMapInstancedVertex->Function, &ShadowMapInstancedVertexShader);
 }
 
 void ShadowManager::CreateShadowMapSurfaces(IDirect3DDevice9* Device, SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors) {
@@ -107,6 +113,11 @@ ShadowManager::ShadowManager() {
 
 	CurrentCell = NULL;
 	ShadowCubeMapState = ShadowCubeMapStateEnum::None;
+	ShadowMapInstancedVertexShader = NULL;
+	InstanceVB = NULL;
+	InstanceVBCapacity = 0;
+	InstanceGroupCount = 0;
+	ShadowGeoCount = 0;
 
 	LoadShadowShaders(Device);
 	CreateShadowMapSurfaces(Device, ShadowsExteriors);
@@ -176,29 +187,97 @@ void ShadowManager::GetShadowFrustum(ShadowMapTypeEnum ShadowMapType, D3DMATRIX*
 
 }
 
-TESObjectREFR* ShadowManager::GetRef(TESObjectREFR* Ref, SettingsShadowStruct::FormsStruct* Forms, SettingsShadowStruct::ExcludedFormsList* ExcludedForms) {
+void ShadowManager::GetFrustumPlanes(D3DXPLANE* Frustum, D3DXMATRIX* Matrix) {
 
-	TESObjectREFR* r = NULL;
+	Frustum[PlaneNear].a   = Matrix->_13;
+	Frustum[PlaneNear].b   = Matrix->_23;
+	Frustum[PlaneNear].c   = Matrix->_33;
+	Frustum[PlaneNear].d   = Matrix->_43;
+	Frustum[PlaneFar].a    = Matrix->_14 - Matrix->_13;
+	Frustum[PlaneFar].b    = Matrix->_24 - Matrix->_23;
+	Frustum[PlaneFar].c    = Matrix->_34 - Matrix->_33;
+	Frustum[PlaneFar].d    = Matrix->_44 - Matrix->_43;
+	Frustum[PlaneLeft].a   = Matrix->_14 + Matrix->_11;
+	Frustum[PlaneLeft].b   = Matrix->_24 + Matrix->_21;
+	Frustum[PlaneLeft].c   = Matrix->_34 + Matrix->_31;
+	Frustum[PlaneLeft].d   = Matrix->_44 + Matrix->_41;
+	Frustum[PlaneRight].a  = Matrix->_14 - Matrix->_11;
+	Frustum[PlaneRight].b  = Matrix->_24 - Matrix->_21;
+	Frustum[PlaneRight].c  = Matrix->_34 - Matrix->_31;
+	Frustum[PlaneRight].d  = Matrix->_44 - Matrix->_41;
+	Frustum[PlaneTop].a    = Matrix->_14 - Matrix->_12;
+	Frustum[PlaneTop].b    = Matrix->_24 - Matrix->_22;
+	Frustum[PlaneTop].c    = Matrix->_34 - Matrix->_32;
+	Frustum[PlaneTop].d    = Matrix->_44 - Matrix->_42;
+	Frustum[PlaneBottom].a = Matrix->_14 + Matrix->_12;
+	Frustum[PlaneBottom].b = Matrix->_24 + Matrix->_22;
+	Frustum[PlaneBottom].c = Matrix->_34 + Matrix->_32;
+	Frustum[PlaneBottom].d = Matrix->_44 + Matrix->_42;
+	for (int i = 0; i < 6; ++i) {
+		D3DXPLANE Plane(Frustum[i]);
+		D3DXPlaneNormalize(&Frustum[i], &Plane);
+	}
+
+}
+
+bool ShadowManager::InFrustum(D3DXPLANE* Frustum, NiGeometry* Geo) {
+
+	NiBound* Bound = Geo->GetWorldBound();
+	if (!Bound) return true; // Cannot cull without a bound; keep it.
+
+	D3DXVECTOR3 Position = { Bound->Center.x - TheRenderManager->CameraPosition.x, Bound->Center.y - TheRenderManager->CameraPosition.y, Bound->Center.z - TheRenderManager->CameraPosition.z };
+	for (int i = 0; i < 6; ++i) {
+		if (D3DXPlaneDotCoord(&Frustum[i], &Position) <= -Bound->Radius) return false;
+	}
+	return true;
+
+}
+
+// True if the form type can ever cast shadows (independent of the per-map-type Forms filter).
+static bool IsShadowCastableType(UInt8 TypeID) {
+	switch (TypeID) {
+	case TESForm::FormType::kFormType_Activator:
+	case TESForm::FormType::kFormType_Apparatus:
+	case TESForm::FormType::kFormType_Book:
+	case TESForm::FormType::kFormType_Container:
+	case TESForm::FormType::kFormType_Door:
+	case TESForm::FormType::kFormType_Misc:
+	case TESForm::FormType::kFormType_Stat:
+	case TESForm::FormType::kFormType_Tree:
+	case TESForm::FormType::kFormType_Furniture:
+		return true;
+	default:
+		return TypeID >= TESForm::FormType::kFormType_NPC && TypeID <= TESForm::FormType::kFormType_LeveledCreature;
+	}
+}
+
+// Whether the given Forms filter enables shadows for this form type.
+static bool FormsAllows(SettingsShadowStruct::FormsStruct* Forms, UInt8 TypeID) {
+	switch (TypeID) {
+	case TESForm::FormType::kFormType_Activator: return Forms->Activators;
+	case TESForm::FormType::kFormType_Apparatus: return Forms->Apparatus;
+	case TESForm::FormType::kFormType_Book:      return Forms->Books;
+	case TESForm::FormType::kFormType_Container: return Forms->Containers;
+	case TESForm::FormType::kFormType_Door:      return Forms->Doors;
+	case TESForm::FormType::kFormType_Misc:      return Forms->Misc;
+	case TESForm::FormType::kFormType_Stat:      return Forms->Statics;
+	case TESForm::FormType::kFormType_Tree:      return Forms->Trees;
+	case TESForm::FormType::kFormType_Furniture: return Forms->Furniture;
+	default:
+		return TypeID >= TESForm::FormType::kFormType_NPC && TypeID <= TESForm::FormType::kFormType_LeveledCreature && Forms->Actors;
+	}
+}
+
+TESObjectREFR* ShadowManager::GetRef(TESObjectREFR* Ref, SettingsShadowStruct::FormsStruct* Forms, SettingsShadowStruct::ExcludedFormsList* ExcludedForms) {
 
 	if (Ref && Ref->GetNode()) {
 		TESForm* Form = Ref->baseForm;
-		if (!(Ref->flags & TESForm::FormFlags::kFormFlags_NotCastShadows)) {
-			UInt8 TypeID = Form->formType;
-			if ((TypeID == TESForm::FormType::kFormType_Activator && Forms->Activators) ||
-				(TypeID == TESForm::FormType::kFormType_Apparatus && Forms->Apparatus) ||
-				(TypeID == TESForm::FormType::kFormType_Book && Forms->Books) ||
-				(TypeID == TESForm::FormType::kFormType_Container && Forms->Containers) ||
-				(TypeID == TESForm::FormType::kFormType_Door && Forms->Doors) ||
-				(TypeID == TESForm::FormType::kFormType_Misc && Forms->Misc) ||
-				(TypeID == TESForm::FormType::kFormType_Stat && Forms->Statics) ||
-				(TypeID == TESForm::FormType::kFormType_Tree && Forms->Trees) ||
-				(TypeID == TESForm::FormType::kFormType_Furniture && Forms->Furniture) ||
-				(TypeID >= TESForm::FormType::kFormType_NPC && TypeID <= TESForm::FormType::kFormType_LeveledCreature && Forms->Actors))
-				r = Ref;
-			if (r && ExcludedForms->size() > 0 && std::binary_search(ExcludedForms->begin(), ExcludedForms->end(), Form->refID)) r = NULL;
+		if (!(Ref->flags & TESForm::FormFlags::kFormFlags_NotCastShadows) && FormsAllows(Forms, Form->formType)) {
+			if (!(ExcludedForms->size() > 0 && std::binary_search(ExcludedForms->begin(), ExcludedForms->end(), Form->refID)))
+				return Ref;
 		}
 	}
-	return r;
+	return NULL;
 
 }
 
@@ -245,36 +324,36 @@ bool ShadowManager::InShadowFrustum(ShadowMapTypeEnum ShadowMapType, NiAVObject*
 	return R;
 
 }
-void ShadowManager::RenderObject(NiAVObject* Object, D3DXVECTOR4* ShadowData, bool HasWater, float MinRadius) {
 
-	float Radius = Object->GetWorldBoundRadius();
-
-
-	if (Object && !(Object->m_flags & NiAVObject::kFlag_AppCulled) && Radius >= MinRadius) {
-		void* VFT = *(void**)Object;
-		if (VFT == VFTNiNode || VFT == VFTBSFadeNode || VFT == VFTBSFaceGenNiNode || VFT == VFTBSTreeNode) {
-			NiNode* Node = (NiNode*)Object;
-			for (int i = 0; i < Node->m_children.end; i++) {
-				RenderObject(Node->m_children.data[i], ShadowData, HasWater, MinRadius);
-			}
+// Ref-root cull: exact behaviour of InShadowFrustum (incl. the MapFar near-frustum
+// exclusion) but on a precomputed camera-relative center+radius. Keeps which refs
+// participate in which map identical to the per-candidate test it replaces.
+bool ShadowManager::RootInShadowFrustum(ShadowMapTypeEnum ShadowMapType, const D3DXVECTOR3& Center, float Radius) {
+	for (int i = 0; i < 6; ++i)
+		if (D3DXPlaneDotCoord(&ShadowMapFrustum[ShadowMapType][i], &Center) <= -Radius) return false;
+	if (ShadowMapType == MapFar) { // Ensures to not be fully in the near frustum
+		// "Fully inside near" is a short-circuit AND over the 6 near planes. Near and far share
+		// the same view (only the ortho extents differ), so the two depth planes are identical to
+		// far's — already satisfied here and effectively never decisive. Test the 4 (much tighter)
+		// side planes first so the early-out fires on the first plane for the common case of an
+		// object laterally outside the small near cascade. Result is identical; only order changes.
+		static const int NearPlaneOrder[6] = { PlaneLeft, PlaneRight, PlaneTop, PlaneBottom, PlaneNear, PlaneFar };
+		bool fullyInNear = true;
+		for (int k = 0; k < 6; ++k) {
+			float Distance = D3DXPlaneDotCoord(&ShadowMapFrustum[MapNear][NearPlaneOrder[k]], &Center);
+			if (Distance <= -Radius || std::fabs(Distance) < Radius) { fullyInNear = false; break; }
 		}
-		else if (VFT == VFTNiTriShape || VFT == VFTNiTriStrips) {
-			NiGeometry* Geo = (NiGeometry*)Object;
-			if (Geo->shader) {
-				if (Geo->skinInstance || !HasWater || (HasWater && Geo->GetWorldBound()->Center.z > 0.0f)) {
-					NiGeometryBufferData* GeoData = Geo->geomData->BuffData;
-					if (GeoData) {
-						Render(Geo, ShadowData);
-					}
-					else if (Geo->skinInstance && Geo->skinInstance->SkinPartition && Geo->skinInstance->SkinPartition->Partitions) {
-						GeoData = Geo->skinInstance->SkinPartition->Partitions[0].BuffData;
-						if (GeoData) Render(Geo, ShadowData);
-					}
-				}
-			}
-		}
+		if (fullyInNear) return false;
 	}
+	return true;
+}
 
+// Leaf cull: plain 6-plane containment against the map's frustum (no near-exclusion). Only
+// removes sub-geometry fully outside the light frustum, which contributes nothing.
+bool ShadowManager::LeafInShadowFrustum(ShadowMapTypeEnum ShadowMapType, const D3DXVECTOR3& Center, float Radius) {
+	for (int i = 0; i < 6; ++i)
+		if (D3DXPlaneDotCoord(&ShadowMapFrustum[ShadowMapType][i], &Center) <= -Radius) return false;
+	return true;
 }
 
 void ShadowManager::RenderObjectPoint(NiAVObject* Object, D3DXVECTOR4* ShadowData, bool HasWater) {
@@ -298,6 +377,35 @@ void ShadowManager::RenderObjectPoint(NiAVObject* Object, D3DXVECTOR4* ShadowDat
 					else if (Geo->skinInstance && Geo->skinInstance->SkinPartition && Geo->skinInstance->SkinPartition->Partitions) {
 						GeoData = Geo->skinInstance->SkinPartition->Partitions[0].BuffData;
 						if (GeoData) Render(Geo, ShadowData);
+					}
+				}
+			}
+		}
+	}
+
+}
+
+void ShadowManager::CollectCubeMapGeometry(NiAVObject* Object, bool HasWater, std::vector<NiGeometry*>& Out) {
+
+	if (Object && !(Object->m_flags & NiAVObject::kFlag_AppCulled)) {
+		void* VFT = *(void**)Object;
+		if (VFT == VFTNiNode || VFT == VFTBSFadeNode || VFT == VFTBSFaceGenNiNode || VFT == VFTBSTreeNode) {
+			NiNode* Node = (NiNode*)Object;
+			for (int i = 0; i < Node->m_children.end; i++) {
+				CollectCubeMapGeometry(Node->m_children.data[i], HasWater, Out);
+			}
+		}
+		else if (VFT == VFTNiTriShape || VFT == VFTNiTriStrips) {
+			NiGeometry* Geo = (NiGeometry*)Object;
+			// Torch geometry is skipped by Render() anyway; drop it once here instead of
+			// re-testing the name (and re-entering Render) for every one of the 6 cube faces.
+			if (Geo->shader && !(Geo->m_pcName && !memcmp(Geo->m_pcName, "Torch", 5))) {
+				if (Geo->skinInstance || !HasWater || (HasWater && Geo->GetWorldBound()->Center.z > TheShaderManager->ShaderConst.Water.waterSettings.x)) {
+					if (Geo->geomData->BuffData) {
+						Out.emplace_back(Geo);
+					}
+					else if (Geo->skinInstance && Geo->skinInstance->SkinPartition && Geo->skinInstance->SkinPartition->Partitions) {
+						if (Geo->skinInstance->SkinPartition->Partitions[0].BuffData) Out.emplace_back(Geo);
 					}
 				}
 			}
@@ -354,7 +462,7 @@ void ShadowManager::RenderTerrain(NiAVObject* Object, ShadowMapTypeEnum ShadowMa
 
 }
 
-void ShadowManager::Render(NiGeometry* Geo, D3DXVECTOR4* ShadowData) {
+void ShadowManager::Render(NiGeometry* Geo, D3DXVECTOR4* ShadowData, const D3DMATRIX* PrecomputedWorld) {
 
 	NiGeometryData* ModelData = Geo->geomData;
 	NiGeometryBufferData* GeoData = ModelData->BuffData;
@@ -366,7 +474,11 @@ void ShadowManager::Render(NiGeometry* Geo, D3DXVECTOR4* ShadowData) {
 	ShadowData->x = 0.0f;
 	ShadowData->y = 0.0f;
 	if (GeoData) {
-		CreateD3DMatrix(&TheShaderManager->ShaderConst.ShadowMap.ShadowWorld, &Geo->m_worldTransform);
+		// Reuse the matrix computed once per light for cube faces; otherwise build it now.
+		if (PrecomputedWorld)
+			TheShaderManager->ShaderConst.ShadowMap.ShadowWorld = *PrecomputedWorld;
+		else
+			CreateD3DMatrix(&TheShaderManager->ShaderConst.ShadowMap.ShadowWorld, &Geo->m_worldTransform);
 		if (Geo->m_parent->m_pcName && !memcmp(Geo->m_parent->m_pcName, "Leaves", 6)) {
 			SetupSpeedTreeLeafShader(Geo, ShadowData);
 		} else {
@@ -432,21 +544,262 @@ void ShadowManager::SetupShadowMapMatrices(ShadowMapTypeEnum ShadowMapType, Sett
 	GetShadowFrustum(ShadowMapType, &TheShaderManager->ShaderConst.ShadowMap.ShadowViewProj);
 }
 
-void ShadowManager::RenderShadowMapCell(TESObjectCELL* Cell, ShadowMapTypeEnum ShadowMapType, SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors, D3DXVECTOR4* ShadowData) {
-	static const float MinRadii[4] = { 9.0f, 100.0f, 100.0f, 0.0f }; // Near, Far, Ortho, Skin
+static const float MinRadii[4] = { 9.0f, 100.0f, 100.0f, 0.0f }; // Near, Far, Ortho, Skin
+
+void ShadowManager::RenderShadowMapCellTerrain(TESObjectCELL* Cell, ShadowMapTypeEnum ShadowMapType, D3DXVECTOR4* ShadowData) {
 	NiNode* CellNode = Cell->niNode;
 	for (int i = 2; i < 6; i++) {
 		NiNode* TerrainNode = (NiNode*)CellNode->m_children.data[i];
 		if (TerrainNode->m_children.end) RenderTerrain(TerrainNode->m_children.data[0], ShadowMapType, ShadowData);
 	}
-	TList<TESObjectREFR>::Entry* Entry = &Cell->objectList.First;
-	while (Entry) {
-		if (TESObjectREFR* Ref = GetRef(Entry->item, &ShadowsExteriors->Forms[ShadowMapType], &ShadowsExteriors->ExcludedForms)) {
-			NiNode* RefNode = Ref->GetNode();
-			if (InShadowFrustum(ShadowMapType, RefNode))
-				RenderObject(RefNode, ShadowData, TheShaderManager->ShaderConst.HasWater, MinRadii[ShadowMapType]);
+}
+
+// Flatten every shadow-casting ref in the loaded grid into ShadowGeoPool once per frame,
+// grouped per ref. Node/flag/excluded eligibility, world transforms, bounds, the water test,
+// and instancing eligibility are all map-type-independent, so they are resolved here exactly
+// once; each of the 4 directional passes then only does the per-type Forms filter, the frustum
+// cull, and the draw. Geo classification that *does* vary per pass (AlphaEnabled, MinRadius)
+// is kept as flags/fields and applied in the pass loop.
+void ShadowManager::BuildExteriorGeoItems(SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors) {
+	ShadowRefGroups.clear();
+	ShadowGeoCount = 0;
+	SettingsShadowStruct::ExcludedFormsList* ExcludedForms = &ShadowsExteriors->ExcludedForms;
+	bool HasExcluded = ExcludedForms->size() > 0;
+	bool HasWater = TheShaderManager->ShaderConst.HasWater;
+	for (UInt32 x = 0; x < *SettingGridsToLoad; x++) {
+		for (UInt32 y = 0; y < *SettingGridsToLoad; y++) {
+			TESObjectCELL* Cell = Tes->gridCellArray->GetCell(x, y);
+			if (!Cell) continue;
+			TList<TESObjectREFR>::Entry* Entry = &Cell->objectList.First;
+			for (; Entry; Entry = Entry->next) {
+				TESObjectREFR* Ref = Entry->item;
+				NiNode* Node;
+				if (!Ref || !(Node = Ref->GetNode()) || (Ref->flags & TESForm::FormFlags::kFormFlags_NotCastShadows)) continue;
+				TESForm* Form = Ref->baseForm;
+				UInt8 TypeID = Form->formType;
+				if (!IsShadowCastableType(TypeID)) continue;
+				if (HasExcluded && std::binary_search(ExcludedForms->begin(), ExcludedForms->end(), Form->refID)) continue;
+				NiBound* RootBound = Node->GetWorldBound();
+				if (!RootBound) continue; // InShadowFrustum would cull this ref in every pass
+
+				int FirstItem = ShadowGeoCount;
+				CollectExteriorGeo(Node, HasWater);
+				int ItemCount = ShadowGeoCount - FirstItem;
+				if (ItemCount == 0) continue; // nothing drawable under this ref
+
+				ShadowRefGroup Group;
+				Group.TypeID = TypeID;
+				Group.RootCenter = { RootBound->Center.x - TheRenderManager->CameraPosition.x, RootBound->Center.y - TheRenderManager->CameraPosition.y, RootBound->Center.z - TheRenderManager->CameraPosition.z };
+				Group.RootRadius = RootBound->Radius;
+				Group.FirstItem = FirstItem;
+				Group.ItemCount = ItemCount;
+				ShadowRefGroups.push_back(Group);
+			}
 		}
-		Entry = Entry->next;
+	}
+}
+
+// Recursive collector: walks one ref's sub-tree and appends drawable geometry to ShadowGeoPool.
+// Mirrors the old RenderObjectInstanced traversal/filters, but precomputes and stores per-geo
+// state instead of drawing. Anything Render()/RenderSkinnedGeo() would have drawn is collected;
+// anything they would have skipped (torch, no shader, submerged, no lighting property on opaque
+// statics, no usable buffer) is dropped here.
+void ShadowManager::CollectExteriorGeo(NiAVObject* Object, bool HasWater) {
+	if (!Object || (Object->m_flags & NiAVObject::kFlag_AppCulled)) return;
+	void* VFT = *(void**)Object;
+	if (VFT == VFTNiNode || VFT == VFTBSFadeNode || VFT == VFTBSFaceGenNiNode || VFT == VFTBSTreeNode) {
+		NiNode* Node = (NiNode*)Object;
+		for (int i = 0; i < Node->m_children.end; i++)
+			CollectExteriorGeo(Node->m_children.data[i], HasWater);
+		return;
+	}
+	if (VFT != VFTNiTriShape && VFT != VFTNiTriStrips) return;
+
+	NiGeometry* Geo = (NiGeometry*)Object;
+	if (Geo->m_pcName && !memcmp(Geo->m_pcName, "Torch", 5)) return; // skipped by Render() anyway
+	if (!Geo->shader) return;
+
+	NiBound* Bound = Geo->GetWorldBound();
+	if (!Bound) return; // no bound: can't cull/place; the ref-root test already requires one
+	// Water test (frame-constant): drop submerged opaque geo when water is present.
+	if (!(Geo->skinInstance || !HasWater || Bound->Center.z > 0.0f)) return;
+
+	// Resolve the buffer Render() will use: model buffer (static path), else first skin
+	// partition (RenderSkinnedGeo path, signalled by storing GeoData = NULL on the item).
+	NiGeometryBufferData* ModelBuff = Geo->geomData->BuffData;
+	bool DrawViaSkin = false;
+	if (!ModelBuff) {
+		if (!(Geo->skinInstance && Geo->skinInstance->SkinPartition && Geo->skinInstance->SkinPartition->Partitions
+			&& Geo->skinInstance->SkinPartition->Partitions[0].BuffData)) return; // not drawable
+		DrawViaSkin = true;
+	}
+
+	bool BaseInstanceable = false;
+	bool HasAlphaMask = false;
+	if (!DrawViaSkin) {
+		bool IsLeaf = Geo->m_parent && Geo->m_parent->m_pcName && !memcmp(Geo->m_parent->m_pcName, "Leaves", 6);
+		if (!IsLeaf) {
+			// Opaque static path: Render() early-outs without a lighting property, so drop it here.
+			BSShaderProperty* LProp = (BSShaderProperty*)Geo->GetProperty(NiProperty::PropertyType::kType_Lighting);
+			if (!LProp || !LProp->IsLightingProperty()) return;
+			NiAlphaProperty* AProp = (NiAlphaProperty*)Geo->GetProperty(NiProperty::PropertyType::kType_Alpha);
+			HasAlphaMask = AProp && (AProp->flags & (NiAlphaProperty::AlphaFlags::ALPHA_BLEND_MASK | NiAlphaProperty::AlphaFlags::TEST_ENABLE_MASK));
+			BaseInstanceable = ModelBuff->VertexDeclaration && !Geo->skinInstance; // FVF-only / skinned excluded
+		}
+		// SpeedTree leaves draw via SetupSpeedTreeLeafShader and are never instanced.
+	}
+
+	if (ShadowGeoCount == (int)ShadowGeoPool.size()) ShadowGeoPool.emplace_back();
+	ShadowGeoItem& Item = ShadowGeoPool[ShadowGeoCount++];
+	Item.Geo = Geo;
+	Item.GeoData = ModelBuff; // NULL => Render() takes the skinned path and ignores World
+	Item.Center = { Bound->Center.x - TheRenderManager->CameraPosition.x, Bound->Center.y - TheRenderManager->CameraPosition.y, Bound->Center.z - TheRenderManager->CameraPosition.z };
+	Item.Radius = Bound->Radius;
+	Item.BaseInstanceable = BaseInstanceable;
+	Item.HasAlphaMask = HasAlphaMask;
+	if (!DrawViaSkin) CreateD3DMatrix(&Item.World, &Geo->m_worldTransform);
+}
+
+// Append a pool item to its mesh's instance group (keyed by the shared NiGeometryBufferData),
+// reusing the pooled index vector across passes.
+void ShadowManager::AddInstance(NiGeometryBufferData* GeoData, int ItemIndex) {
+	auto it = InstanceGroupIndex.find(GeoData);
+	int idx;
+	if (it == InstanceGroupIndex.end()) {
+		idx = InstanceGroupCount++;
+		if ((size_t)idx == InstancePool.size()) InstancePool.emplace_back();
+		InstancePool[idx].GeoData = GeoData;
+		InstancePool[idx].ItemIdx.clear(); // reuse capacity from a previous pass
+		InstancePool[idx].Decl = GetInstancedDeclaration(GeoData); // resolve once per group
+		InstanceGroupIndex.emplace(GeoData, idx);
+	} else {
+		idx = it->second;
+	}
+	InstancePool[idx].ItemIdx.emplace_back(ItemIndex);
+}
+
+// Build (and cache, keyed by the source declaration) a vertex declaration that appends a
+// per-instance stream carrying the three world-matrix columns as TEXCOORD5/6/7.
+IDirect3DVertexDeclaration9* ShadowManager::GetInstancedDeclaration(NiGeometryBufferData* GeoData) {
+	IDirect3DVertexDeclaration9* Src = GeoData->VertexDeclaration;
+	if (!Src) return NULL;
+	auto it = InstancedDeclCache.find(Src);
+	if (it != InstancedDeclCache.end()) return it->second;
+
+	D3DVERTEXELEMENT9 Elems[MAXD3DDECLLENGTH + 4];
+	UINT Num = 0;
+	if (FAILED(Src->GetDeclaration(Elems, &Num)) || Num == 0 || Num > MAXD3DDECLLENGTH) {
+		InstancedDeclCache[Src] = NULL;
+		return NULL;
+	}
+	UINT Term = Num - 1; // index of the existing D3DDECL_END terminator
+	WORD InstStream = (WORD)GeoData->StreamCount;
+	for (int k = 0; k < 3; k++) {
+		Elems[Term + k].Stream     = InstStream;
+		Elems[Term + k].Offset     = (WORD)(k * 16);
+		Elems[Term + k].Type       = D3DDECLTYPE_FLOAT4;
+		Elems[Term + k].Method     = D3DDECLMETHOD_DEFAULT;
+		Elems[Term + k].Usage      = D3DDECLUSAGE_TEXCOORD;
+		Elems[Term + k].UsageIndex = (BYTE)(5 + k);
+	}
+	Elems[Term + 3] = D3DDECL_END();
+
+	IDirect3DVertexDeclaration9* Combined = NULL;
+	if (FAILED(TheRenderManager->device->CreateVertexDeclaration(Elems, &Combined))) Combined = NULL;
+	InstancedDeclCache[Src] = Combined;
+	return Combined;
+}
+
+bool ShadowManager::EnsureInstanceVB(UINT InstanceCount) {
+	if (InstanceCount == 0) return false;
+	if (InstanceVB && InstanceVBCapacity >= InstanceCount) return true;
+	if (InstanceVB) { InstanceVB->Release(); InstanceVB = NULL; }
+	UINT Cap = InstanceVBCapacity ? InstanceVBCapacity : 256;
+	while (Cap < InstanceCount) Cap *= 2;
+	if (FAILED(TheRenderManager->device->CreateVertexBuffer(Cap * ShadowInstanceStride, D3DUSAGE_DYNAMIC | D3DUSAGE_WRITEONLY, 0, D3DPOOL_DEFAULT, &InstanceVB, NULL))) {
+		InstanceVB = NULL;
+		InstanceVBCapacity = 0;
+		return false;
+	}
+	InstanceVBCapacity = Cap;
+	return true;
+}
+
+void ShadowManager::DrawInstancedGroup(NiGeometryBufferData* GeoData, std::vector<int>& ItemIdx, IDirect3DVertexDeclaration9* Decl) {
+	IDirect3DDevice9* Device = TheRenderManager->device;
+	NiDX9RenderState* RenderState = TheRenderManager->renderState;
+	UINT Count = (UINT)ItemIdx.size();
+
+	if (!Decl) return;
+
+	// Pack each instance's precomputed camera-relative world matrix as 3 columns into the stream.
+	float* Data = NULL;
+	if (FAILED(InstanceVB->Lock(0, Count * ShadowInstanceStride, (void**)&Data, D3DLOCK_DISCARD))) return;
+	for (UINT i = 0; i < Count; i++) {
+		const D3DMATRIX& m = ShadowGeoPool[ItemIdx[i]].World;
+		float* d = Data + i * 12;
+		d[0] = m._11; d[1] = m._21; d[2]  = m._31; d[3]  = m._41;
+		d[4] = m._12; d[5] = m._22; d[6]  = m._32; d[7]  = m._42;
+		d[8] = m._13; d[9] = m._23; d[10] = m._33; d[11] = m._43;
+	}
+	InstanceVB->Unlock();
+
+	WORD InstStream = (WORD)GeoData->StreamCount;
+	for (UInt32 s = 0; s < GeoData->StreamCount; s++) {
+		Device->SetStreamSource(s, GeoData->VBChip[s]->VB, 0, GeoData->VertexStride[s]);
+		Device->SetStreamSourceFreq(s, D3DSTREAMSOURCE_INDEXEDDATA | Count);
+	}
+	Device->SetStreamSource(InstStream, InstanceVB, 0, ShadowInstanceStride);
+	Device->SetStreamSourceFreq(InstStream, D3DSTREAMSOURCE_INSTANCEDATA | 1);
+	Device->SetIndices(GeoData->IB);
+	RenderState->SetVertexDeclaration(Decl, false);
+
+	DrawGeoArrays(GeoData, GeoData->PrimitiveType, GeoData->VertCount);
+
+	// Restore default (non-instanced) stream frequencies for subsequent draws.
+	for (UInt32 s = 0; s < GeoData->StreamCount; s++) Device->SetStreamSourceFreq(s, 1);
+	Device->SetStreamSourceFreq(InstStream, 1);
+	Device->SetStreamSource(InstStream, NULL, 0, 0);
+}
+
+void ShadowManager::FlushInstanceGroups(D3DXVECTOR4* ShadowData) {
+	NiDX9RenderState* RenderState = TheRenderManager->renderState;
+
+	// Size the instance buffer once for the largest batchable group.
+	UINT MaxGroup = 0;
+	for (int i = 0; i < InstanceGroupCount; i++)
+		if (InstancePool[i].ItemIdx.size() >= ShadowInstanceMinCount && InstancePool[i].ItemIdx.size() > MaxGroup) MaxGroup = (UINT)InstancePool[i].ItemIdx.size();
+	bool CanInstance = MaxGroup > 0 && EnsureInstanceVB(MaxGroup);
+
+	// Pass 1: draw batchable groups with the instanced shader (opaque, ShadowData x=y=0).
+	bool InstancedSet = false;
+	if (CanInstance) {
+		for (int i = 0; i < InstanceGroupCount; i++) {
+			InstanceGroup& Group = InstancePool[i];
+			if (Group.ItemIdx.size() < ShadowInstanceMinCount || !Group.Decl) continue;
+			if (!InstancedSet) {
+				ShadowData->x = 0.0f;
+				ShadowData->y = 0.0f;
+				RenderState->SetVertexShader(ShadowMapInstancedVertexShader, false);
+				RenderState->SetPixelShader(ShadowMapPixelShader, false);
+				ShadowMapInstancedVertex->SetCT();
+				ShadowMapPixel->SetCT();
+				InstancedSet = true;
+			}
+			DrawInstancedGroup(Group.GeoData, Group.ItemIdx, Group.Decl);
+		}
+	}
+
+	// Pass 2: everything not instanced (small groups, or buffers without a usable declaration).
+	CurrentVertex = ShadowMapVertex;
+	CurrentPixel  = ShadowMapPixel;
+	RenderState->SetVertexShader(ShadowMapVertexShader, false);
+	RenderState->SetPixelShader(ShadowMapPixelShader, false);
+	for (int i = 0; i < InstanceGroupCount; i++) {
+		InstanceGroup& Group = InstancePool[i];
+		bool Instanced = CanInstance && Group.ItemIdx.size() >= ShadowInstanceMinCount && Group.Decl;
+		if (Instanced) continue;
+		for (int idx : Group.ItemIdx) Render(ShadowGeoPool[idx].Geo, ShadowData, &ShadowGeoPool[idx].World);
 	}
 }
 
@@ -472,48 +825,80 @@ void ShadowManager::RenderShadowMap(ShadowMapTypeEnum ShadowMapType, SettingsSha
 	for (UInt32 x = 0; x < *SettingGridsToLoad; x++)
 		for (UInt32 y = 0; y < *SettingGridsToLoad; y++)
 			if (TESObjectCELL* Cell = Tes->gridCellArray->GetCell(x, y))
-				RenderShadowMapCell(Cell, ShadowMapType, ShadowsExteriors, ShadowData);
+				RenderShadowMapCellTerrain(Cell, ShadowMapType, ShadowData);
+	SettingsShadowStruct::FormsStruct* Forms = &ShadowsExteriors->Forms[ShadowMapType];
+	float MinRadius = MinRadii[ShadowMapType];
+	bool UseInstancing = ShadowsExteriors->UseInstancing && ShadowMapInstancedVertexShader;
+	if (UseInstancing) { InstanceGroupIndex.clear(); InstanceGroupCount = 0; }
+
+	// Resolve the per-type Forms filter once per pass (form type fits in a UInt8) so the group
+	// loop is a flat lookup instead of re-running the FormsAllows switch for every ref.
+	bool FormsAllowed[256];
+	for (int t = 0; t < 256; t++) FormsAllowed[t] = FormsAllows(Forms, (UInt8)t);
+
+	// Iterate the once-per-frame flat list: per-type filter + cheap ref-root early-out, then a
+	// leaf-level cull + draw, reusing precomputed matrices. Instanceable opaque statics are
+	// batched into instance groups (flushed below); everything else draws immediately.
+	for (const ShadowRefGroup& Group : ShadowRefGroups) {
+		if (!FormsAllowed[Group.TypeID]) continue;
+		if (!RootInShadowFrustum(ShadowMapType, Group.RootCenter, Group.RootRadius)) continue;
+		int End = Group.FirstItem + Group.ItemCount;
+		for (int i = Group.FirstItem; i < End; i++) {
+			ShadowGeoItem& Item = ShadowGeoPool[i];
+			if (Item.Radius < MinRadius) continue;
+			if (!LeafInShadowFrustum(ShadowMapType, Item.Center, Item.Radius)) continue;
+			if (UseInstancing && Item.BaseInstanceable && !(AlphaEnabled && Item.HasAlphaMask))
+				AddInstance(Item.GeoData, i);
+			else
+				Render(Item.Geo, ShadowData, Item.GeoData ? &Item.World : NULL);
+		}
+	}
+	if (UseInstancing) FlushInstanceGroups(ShadowData);
 	Device->EndScene();
 }
 
 void ShadowManager::RenderShadowCubeMapExt(NiPointLight** Lights, int LightIndex, float radiusScan, SettingsShadowStruct::InteriorsStruct* ShadowSettings, D3DXVECTOR4* ShadowData) {
-	std::map<int, std::vector<NiNode*>> refMap, actorMap;
 	double StaticValues[12] = { 0 };
 	bool forceRedrawMap[12] = { false };
 
+	ClearCubeMapNodeLists();
 	for (UInt32 x = 0; x < *SettingGridsToLoad - 1; x++) {
 		for (UInt32 y = 0; y < *SettingGridsToLoad; y++) {
 			if (TESObjectCELL* Cell = Tes->gridCellArray->GetCell(x, y)) {
 				TList<TESObjectREFR>::Entry* Entry = &Cell->objectList.First;
 				while (Entry) {
-					if (TESObjectREFR* Ref = GetRef(Entry->item, &ShadowSettings->Forms, &ShadowSettings->ExcludedForms))
+					if (TESObjectREFR* Ref = GetRef(Entry->item, &ShadowSettings->Forms, &ShadowSettings->ExcludedForms)) {
+						RefLightInfo Info = BuildRefLightInfo(Ref);
 						for (int L = 0; L <= LightIndex; L++)
-							ClassifyRefForLight(Ref, Lights, L, radiusScan, refMap, actorMap, StaticValues, forceRedrawMap);
+							ClassifyRefForLight(Info, Lights, L, radiusScan, CubeMapRefMap, CubeMapActorMap, StaticValues, forceRedrawMap);
+					}
 					Entry = Entry->next;
 				}
 			}
 		}
 	}
 	UpdateStaticTrackers(LightIndex, StaticValues, forceRedrawMap);
-	RenderShadowCubeMap(LightIndex, refMap, ShadowData, ShadowSettings->Enabled);
-	RenderShadowCubeMapActor(LightIndex, actorMap, ShadowData, ShadowSettings->Enabled);
+	RenderShadowCubeMap(LightIndex, CubeMapRefMap, ShadowData, ShadowSettings->Enabled);
+	RenderShadowCubeMapActor(LightIndex, CubeMapActorMap, ShadowData, ShadowSettings->Enabled);
 }
 
 void ShadowManager::RenderShadowCubeMapInt(NiPointLight** Lights, int LightIndex, float radiusScan, SettingsShadowStruct::InteriorsStruct* ShadowSettings, D3DXVECTOR4* ShadowData) {
-	std::map<int, std::vector<NiNode*>> refMap, actorMap;
 	double StaticValues[12] = { 0 };
 	bool forceRedrawMap[12] = { false };
 	TList<TESObjectREFR>::Entry* Entry = &Player->parentCell->objectList.First;
 
+	ClearCubeMapNodeLists();
 	while (Entry) {
-		if (TESObjectREFR* Ref = GetRef(Entry->item, &ShadowSettings->Forms, &ShadowSettings->ExcludedForms))
+		if (TESObjectREFR* Ref = GetRef(Entry->item, &ShadowSettings->Forms, &ShadowSettings->ExcludedForms)) {
+			RefLightInfo Info = BuildRefLightInfo(Ref);
 			for (int L = 0; L <= LightIndex; L++)
-				ClassifyRefForLight(Ref, Lights, L, radiusScan, refMap, actorMap, StaticValues, forceRedrawMap);
+				ClassifyRefForLight(Info, Lights, L, radiusScan, CubeMapRefMap, CubeMapActorMap, StaticValues, forceRedrawMap);
+		}
 		Entry = Entry->next;
 	}
 	UpdateStaticTrackers(LightIndex, StaticValues, forceRedrawMap);
-	RenderShadowCubeMap(LightIndex, refMap, ShadowData, ShadowSettings->Enabled);
-	RenderShadowCubeMapActor(LightIndex, actorMap, ShadowData, ShadowSettings->Enabled);
+	RenderShadowCubeMap(LightIndex, CubeMapRefMap, ShadowData, ShadowSettings->Enabled);
+	RenderShadowCubeMapActor(LightIndex, CubeMapActorMap, ShadowData, ShadowSettings->Enabled);
 }
 
 void ShadowManager::RenderShadowCubeMapFakeInt(int LightIndex, SettingsShadowStruct::InteriorsStruct* ShadowSettings, D3DXVECTOR4* ShadowData) {
@@ -536,26 +921,40 @@ void ShadowManager::RenderShadowCubeMapFakeInt(int LightIndex, SettingsShadowStr
 	TheShaderManager->ShaderConst.ShadowMap.ShadowCastLightPosition[LightIndex].z = Eye.z;
 	TheShaderManager->ShaderConst.ShadowMap.ShadowCastLightPosition[LightIndex].w = 15000;
 
-	std::map<int, std::vector<NiNode*>> refMap;
+	ClearCubeMapNodeLists();
 	TList<TESObjectREFR>::Entry* Entry = &Player->parentCell->objectList.First;
 	while (Entry) {
 		if (TESObjectREFR* Ref = GetRef(Entry->item, &ShadowSettings->Forms, &ShadowSettings->ExcludedForms)) {
-			refMap[LightIndex].emplace_back(Ref->GetNode());
+			CubeMapRefMap[LightIndex].emplace_back(Ref->GetNode());
 		}
 		Entry = Entry->next;
 	}
-	RenderShadowCubeMap(LightIndex, refMap, ShadowData, ShadowSettings->Enabled);
+	RenderShadowCubeMap(LightIndex, CubeMapRefMap, ShadowData, ShadowSettings->Enabled);
 }
 
 
-void ShadowManager::RenderShadowCubeMap(int LightIndex, std::map<int, std::vector<NiNode*>>& refMap, D3DXVECTOR4* ShadowData, bool enabled) {
+void ShadowManager::RenderShadowCubeMap(int LightIndex, std::vector<NiNode*>* refMap, D3DXVECTOR4* ShadowData, bool enabled) {
 	IDirect3DDevice9* Device = TheRenderManager->device;
 	D3DXMATRIX View, Proj;
 	D3DXVECTOR3 Eye, At, Up;
 
+	bool HasWater = TheShaderManager->ShaderConst.HasWater;
 	for (int L = 0; L <= LightIndex; L++) {
 		SetShadowCubeMapRegisters(L);
 		if (ShadowCubeMapStaticTracker[L] && EnableStaticMaps) continue;
+
+		// Walk the scene graph once per light to gather renderable geometry, then reuse
+		// the flat list across all 6 cube faces instead of re-traversing per face.
+		CubeMapGeoList.clear();
+		if (enabled)
+			for (NiNode* RefNode : refMap[L])
+				CollectCubeMapGeometry(RefNode, HasWater, CubeMapGeoList);
+
+		// World transforms are constant across the 6 faces, so build each geo's camera-relative
+		// matrix once here and reuse it per face instead of rebuilding it inside Render() 6x.
+		CubeMapGeoWorld.resize(CubeMapGeoList.size());
+		for (size_t g = 0; g < CubeMapGeoList.size(); g++)
+			CreateD3DMatrix(&CubeMapGeoWorld[g], &CubeMapGeoList[g]->m_worldTransform);
 
 		float FarPlane = TheShaderManager->ShaderConst.ShadowMap.ShadowCastLightPosition[L].w;
 		D3DXMatrixPerspectiveFovRH(&Proj, D3DXToRadian(90.0f), 1.0f, 1.0f, FarPlane);
@@ -571,17 +970,21 @@ void ShadowManager::RenderShadowCubeMap(int LightIndex, std::map<int, std::vecto
 			Device->SetRenderTarget(0, ShadowCubeMapSurface[L][Face]);
 			Device->Clear(0L, NULL, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, D3DXCOLOR(1.0f, 0.25f, 0.25f, 0.55f), 1.0f, 0L);
 			if (enabled) {
+				// Cull geometry against this face's 90-degree frustum; each object
+				// typically overlaps only 1-2 of the 6 faces.
+				D3DXPLANE Frustum[6];
+				GetFrustumPlanes(Frustum, &TheShaderManager->ShaderConst.ShadowMap.ShadowViewProj);
 				Device->BeginScene();
 				SetupCubeMapRenderState();
-				for (NiNode* RefNode : refMap[L])
-					RenderObjectPoint(RefNode, ShadowData, TheShaderManager->ShaderConst.HasWater);
+				for (size_t g = 0; g < CubeMapGeoList.size(); g++)
+					if (InFrustum(Frustum, CubeMapGeoList[g])) Render(CubeMapGeoList[g], ShadowData, &CubeMapGeoWorld[g]);
 				Device->EndScene();
 			}
 		}
 	}
 }
 
-void ShadowManager::RenderShadowCubeMapActor(int LightIndex, std::map<int, std::vector<NiNode*>>& refMap, D3DXVECTOR4* ShadowData, bool enabled) {
+void ShadowManager::RenderShadowCubeMapActor(int LightIndex, std::vector<NiNode*>* refMap, D3DXVECTOR4* ShadowData, bool enabled) {
 	IDirect3DDevice9* Device = TheRenderManager->device;
 
 	// araf Cap this due exterior shadows hack
@@ -620,6 +1023,8 @@ void ShadowManager::RenderExteriorShadows() {
 	ComputeExteriorLookAt(At, SkinAt, ShadowsExteriors);
 	AdjustShadowLightDir(ShadowLightDir);
 
+	BuildExteriorGeoItems(ShadowsExteriors);
+
 	if (TheSettingManager->SettingsShadows.Exteriors.UseIntervalUpdate && TheShaderManager->isFullyInitialized) {
 		D3DXVECTOR4 ShadowLightDirInterval;
 		if (!UpdateShadowLightDirInterval(ShadowLightDir, ShadowLightDirInterval)) return;
@@ -654,7 +1059,6 @@ void ShadowManager::RenderInteriorShadows() {
 
 	AlphaEnabled = ShadowSettings->AlphaEnabled;
 
-	std::map<int, NiPointLight*> SceneLights;
 	NiPointLight* ShadowCastLights[12]  = { NULL };
 	NiPointLight* ShadowCullLights[24]  = { NULL };
 	NiPointLight* GeneralPointLights[2] = { NULL };
@@ -667,7 +1071,7 @@ void ShadowManager::RenderInteriorShadows() {
 		*/
 			FakeExtShadowLightDirSet = false;
 			FakeExtShadowLightDirCnt = 0;
-			GetShadowSceneLights(SceneLights, ShadowCastLights, ShadowCullLights, GeneralPointLights, ShadowCastLightIndex, ShadowCullLightIndex, GeneralPointLightIndex, ShadowLightPointSettings);
+			GetShadowSceneLights(ShadowCastLights, ShadowCullLights, GeneralPointLights, ShadowCastLightIndex, ShadowCullLightIndex, GeneralPointLightIndex, ShadowLightPointSettings);
 			SetAllShadowCastLightPos(ShadowCastLights, ShadowCastLightIndex);
 			SetAllShadowCullLightPos(ShadowCullLights, ShadowCullLightIndex);
 			if (Player->GetWorldSpace()) {
@@ -689,7 +1093,7 @@ void ShadowManager::RenderInteriorShadows() {
 		*/
 	} else {
 		if (Player->GetWorldSpace()) {
-			GetShadowSceneLights(SceneLights, ShadowCastLights, ShadowCullLights, GeneralPointLights, ShadowCastLightIndex, ShadowCullLightIndex, GeneralPointLightIndex, ShadowLightPointSettings);
+			GetShadowSceneLights(ShadowCastLights, ShadowCullLights, GeneralPointLights, ShadowCastLightIndex, ShadowCullLightIndex, GeneralPointLightIndex, ShadowLightPointSettings);
 			SetAllShadowCastLightPos(ShadowCastLights, ShadowCastLightIndex);
 			SetAllShadowCullLightPos(ShadowCullLights, ShadowCullLightIndex);
 			SetAllGeneralLightPos(GeneralPointLights, GeneralPointLightIndex);
@@ -791,14 +1195,14 @@ void ShadowManager::ClearShadowCubeMaps(IDirect3DDevice9* Device, int From) {
 	}
 }
 
-int ShadowManager::GetShadowSceneLights(std::map<int, NiPointLight*>& SceneLights, NiPointLight** ShadowCastLights, NiPointLight** ShadowCullLights, NiPointLight** GeneralPointLights, int& shadowCastLightIndex, int& shadowCullLightIndex, int& GeneralPointLightIndex, SettingsShadowPointLightsStruct* ShadowSettings) {
+int ShadowManager::GetShadowSceneLights(NiPointLight** ShadowCastLights, NiPointLight** ShadowCullLights, NiPointLight** GeneralPointLights, int& shadowCastLightIndex, int& shadowCullLightIndex, int& GeneralPointLightIndex, SettingsShadowPointLightsStruct* ShadowSettings) {
 	SettingsMainStruct::EquipmentModeStruct* EquipmentModeSettings = &TheSettingManager->SettingsMain.EquipmentMode;
 	bool TorchOnBeltEnabled = EquipmentModeSettings->Enabled && EquipmentModeSettings->TorchKey != 255;
 	int shadowCastIndex = -1, shadowCullIndex = -1, LightIndex = -1;
 
-	CollectSceneLights(SceneLights);
+	CollectSceneLights();
 
-	for (auto& [key, Light] : SceneLights) {
+	for (auto& [key, Light] : SceneLights) { // nearest light first
 		if (LightIndex < 1) GeneralPointLights[++LightIndex] = Light;
 		bool CastShadow = true;
 		if (TorchOnBeltEnabled && Light->CanCarry == 2) {
@@ -880,11 +1284,6 @@ void ShadowManager::SetShadowCubeMapRegisters(int index) {
 	TheShaderManager->ShaderConst.ShadowMap.ShadowCubeMapLightPosition.z = TheShaderManager->ShaderConst.ShadowMap.ShadowCastLightPosition[index].z;
 	TheShaderManager->ShaderConst.ShadowMap.ShadowCubeMapLightPosition.w = TheShaderManager->ShaderConst.ShadowMap.ShadowCastLightPosition[index].w;
 	TheShaderManager->ShaderConst.ShadowCube.Data.z = TheShaderManager->ShaderConst.ShadowMap.ShadowCastLightPosition[index].w;
-}
-
-void ShadowManager::AddSceneLight(NiPointLight* Light, int Key, std::map<int, NiPointLight*>& SceneLights) {
-	while (SceneLights[Key]) { --Key; }
-	SceneLights[Key] = Light;
 }
 
 void ShadowManager::ResetIntervals() {
@@ -1068,25 +1467,41 @@ void ShadowManager::SetupCubeMapRenderState() {
 		RenderState->SetPixelShader(ShadowCubeMapPixelShader, false);
 }
 
-void ShadowManager::ClassifyRefForLight(TESObjectREFR* Ref, NiPointLight** Lights, int L, float radiusScan, std::map<int, std::vector<NiNode*>>& refMap, std::map<int, std::vector<NiNode*>>& actorMap, double* StaticValues, bool* forceRedrawMap) {
+void ShadowManager::ClearCubeMapNodeLists() {
+	for (int i = 0; i < 12; i++) {
+		CubeMapRefMap[i].clear();
+		CubeMapActorMap[i].clear();
+	}
+}
+
+ShadowManager::RefLightInfo ShadowManager::BuildRefLightInfo(TESObjectREFR* Ref) {
+	RefLightInfo Info;
+	Info.Node = Ref->GetNode();
+	UInt8 TypeID = Ref->baseForm->formType;
+	Info.IsActorType = (TypeID >= TESForm::FormType::kFormType_NPC && TypeID <= TESForm::FormType::kFormType_LeveledCreature);
+	Info.BoundRadius = Info.Node->GetWorldBoundRadius();
+	NiBound* B = Ref->niNode->GetWorldBound();
+	Info.CenterSum = (double)B->Center.x + (double)B->Center.y + (double)B->Center.z;
+	Info.IsPlayer = (Ref->refID == Player->refID);
+	return Info;
+}
+
+void ShadowManager::ClassifyRefForLight(const RefLightInfo& Info, NiPointLight** Lights, int L, float radiusScan, std::vector<NiNode*>* refMap, std::vector<NiNode*>* actorMap, double* StaticValues, bool* forceRedrawMap) {
 	NiPoint3* LightPos = &Lights[L]->m_worldTransform.pos;
 	float FarPlane = TheShaderManager->ShaderConst.ShadowMap.ShadowCastLightPosition[L].w;
-	UInt8 TypeID = Ref->baseForm->formType;
-	bool isActorType = (TypeID >= TESForm::FormType::kFormType_NPC && TypeID <= TESForm::FormType::kFormType_LeveledCreature);
-	float radius = (Lights[L]->CanCarry || isActorType) ? FarPlane * 1.2f : FarPlane * radiusScan;
+	float radius = (Lights[L]->CanCarry || Info.IsActorType) ? FarPlane * 1.2f : FarPlane * radiusScan;
 
-	if (Ref->GetNode()->GetDistance(LightPos) - Ref->GetNode()->GetWorldBoundRadius() <= radius) {
+	if (Info.Node->GetDistance(LightPos) - Info.BoundRadius <= radius) {
 		if (Lights[L]->CanCarry) forceRedrawMap[L] = true;
-		if (isActorType) {
+		if (Info.IsActorType) {
 			// araf Exclude torches on the player, bugs in IFPV
 			// TODO: Exclude player's own torch
-			if (Ref->refID != Player->refID || !Lights[L]->CanCarry)
-				actorMap[L].emplace_back(Ref->GetNode());
+			if (!Info.IsPlayer || !Lights[L]->CanCarry)
+				actorMap[L].emplace_back(Info.Node);
 		} else {
-			refMap[L].emplace_back(Ref->GetNode());
+			refMap[L].emplace_back(Info.Node);
 		}
-		NiBound* B = Ref->niNode->GetWorldBound();
-		StaticValues[L] += (double)B->Center.x + (double)B->Center.y + (double)B->Center.z;
+		StaticValues[L] += Info.CenterSum;
 	}
 }
 
@@ -1203,15 +1618,20 @@ void ShadowManager::UpdateStaticMapsCounter() {
 	}
 }
 
-void ShadowManager::CollectSceneLights(std::map<int, NiPointLight*>& SceneLights) {
+void ShadowManager::CollectSceneLights() {
+	SceneLights.clear();
 	ShadowSceneNode* SceneNode = *(ShadowSceneNode**)kShadowSceneNode;
 	NiTList<ShadowSceneLight>::Entry* Entry = SceneNode->lights.start;
 	while (Entry) {
 		NiPointLight* Light = Entry->data->sourceLight;
 		int distance = (int)Light->GetDistance(&Player->pos);
-		AddSceneLight(Light, distance, SceneLights);
+		SceneLights.emplace_back(distance, Light);
 		Entry = Entry->next;
 	}
+	// Order nearest-first; ties keep scene-graph order. Replaces a distance-keyed std::map
+	// with back-probing collision handling (a node allocation + O(log n) probe per light).
+	std::stable_sort(SceneLights.begin(), SceneLights.end(),
+		[](const std::pair<int, NiPointLight*>& a, const std::pair<int, NiPointLight*>& b) { return a.first < b.first; });
 }
 
 bool ShadowManager::CategorizeSceneLight(NiPointLight* Light, int& shadowCastIndex, int& shadowCullIndex, NiPointLight** ShadowCastLights, NiPointLight** ShadowCullLights, SettingsShadowPointLightsStruct* ShadowSettings, bool CastShadow) {
