@@ -306,6 +306,33 @@ void ShadowManager::RenderObjectPoint(NiAVObject* Object, D3DXVECTOR4* ShadowDat
 
 }
 
+void ShadowManager::CollectCubeMapGeometry(NiAVObject* Object, bool HasWater, std::vector<NiGeometry*>& Out) {
+
+	if (Object && !(Object->m_flags & NiAVObject::kFlag_AppCulled)) {
+		void* VFT = *(void**)Object;
+		if (VFT == VFTNiNode || VFT == VFTBSFadeNode || VFT == VFTBSFaceGenNiNode || VFT == VFTBSTreeNode) {
+			NiNode* Node = (NiNode*)Object;
+			for (int i = 0; i < Node->m_children.end; i++) {
+				CollectCubeMapGeometry(Node->m_children.data[i], HasWater, Out);
+			}
+		}
+		else if (VFT == VFTNiTriShape || VFT == VFTNiTriStrips) {
+			NiGeometry* Geo = (NiGeometry*)Object;
+			if (Geo->shader) {
+				if (Geo->skinInstance || !HasWater || (HasWater && Geo->GetWorldBound()->Center.z > TheShaderManager->ShaderConst.Water.waterSettings.x)) {
+					if (Geo->geomData->BuffData) {
+						Out.emplace_back(Geo);
+					}
+					else if (Geo->skinInstance && Geo->skinInstance->SkinPartition && Geo->skinInstance->SkinPartition->Partitions) {
+						if (Geo->skinInstance->SkinPartition->Partitions[0].BuffData) Out.emplace_back(Geo);
+					}
+				}
+			}
+		}
+	}
+
+}
+
 void ShadowManager::RenderObjectPointActor(NiAVObject* Object, D3DXVECTOR4* ShadowData, bool HasWater, int lightIndex) {
 
 	if (Object && !(Object->m_flags & NiAVObject::kFlag_AppCulled)) {
@@ -553,9 +580,17 @@ void ShadowManager::RenderShadowCubeMap(int LightIndex, std::vector<NiNode*>* re
 	D3DXMATRIX View, Proj;
 	D3DXVECTOR3 Eye, At, Up;
 
+	bool HasWater = TheShaderManager->ShaderConst.HasWater;
 	for (int L = 0; L <= LightIndex; L++) {
 		SetShadowCubeMapRegisters(L);
 		if (ShadowCubeMapStaticTracker[L] && EnableStaticMaps) continue;
+
+		// Walk the scene graph once per light to gather renderable geometry, then reuse
+		// the flat list across all 6 cube faces instead of re-traversing per face.
+		CubeMapGeoList.clear();
+		if (enabled)
+			for (NiNode* RefNode : refMap[L])
+				CollectCubeMapGeometry(RefNode, HasWater, CubeMapGeoList);
 
 		float FarPlane = TheShaderManager->ShaderConst.ShadowMap.ShadowCastLightPosition[L].w;
 		D3DXMatrixPerspectiveFovRH(&Proj, D3DXToRadian(90.0f), 1.0f, 1.0f, FarPlane);
@@ -573,8 +608,8 @@ void ShadowManager::RenderShadowCubeMap(int LightIndex, std::vector<NiNode*>* re
 			if (enabled) {
 				Device->BeginScene();
 				SetupCubeMapRenderState();
-				for (NiNode* RefNode : refMap[L])
-					RenderObjectPoint(RefNode, ShadowData, TheShaderManager->ShaderConst.HasWater);
+				for (NiGeometry* Geo : CubeMapGeoList)
+					Render(Geo, ShadowData);
 				Device->EndScene();
 			}
 		}

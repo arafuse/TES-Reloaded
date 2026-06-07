@@ -35,6 +35,7 @@ public:
 	TESObjectREFR*			GetRefO(TESObjectREFR* Ref);
 	void					RenderObject(NiAVObject* Node, D3DXVECTOR4* ShadowData, bool HasWater, float MinRadius);
 	void					RenderObjectPoint(NiAVObject* Node, D3DXVECTOR4* ShadowData, bool HasWater);
+	void					CollectCubeMapGeometry(NiAVObject* Object, bool HasWater, std::vector<NiGeometry*>& Out);
 	void					RenderObjectPointActor(NiAVObject* Node, D3DXVECTOR4* ShadowData, bool HasWater, int lightIndex);
 	void					RenderTerrain(NiAVObject* Object, ShadowMapTypeEnum ShadowMapType, D3DXVECTOR4* ShadowData);
 	void					Render(NiGeometry* Geo, D3DXVECTOR4* ShadowData);
@@ -159,6 +160,8 @@ public:
 	// instead of allocating fresh std::map<int, std::vector> containers every frame.
 	std::vector<NiNode*>	CubeMapRefMap[12];
 	std::vector<NiNode*>	CubeMapActorMap[12];
+	// Flattened renderable geometry for the current light, reused across all 6 cube faces.
+	std::vector<NiGeometry*> CubeMapGeoList;
 };
 
 void CreateShadowsHook();
