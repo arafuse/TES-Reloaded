@@ -477,10 +477,10 @@ void ShadowManager::RenderShadowMap(ShadowMapTypeEnum ShadowMapType, SettingsSha
 }
 
 void ShadowManager::RenderShadowCubeMapExt(NiPointLight** Lights, int LightIndex, float radiusScan, SettingsShadowStruct::InteriorsStruct* ShadowSettings, D3DXVECTOR4* ShadowData) {
-	std::map<int, std::vector<NiNode*>> refMap, actorMap;
 	double StaticValues[12] = { 0 };
 	bool forceRedrawMap[12] = { false };
 
+	ClearCubeMapNodeLists();
 	for (UInt32 x = 0; x < *SettingGridsToLoad - 1; x++) {
 		for (UInt32 y = 0; y < *SettingGridsToLoad; y++) {
 			if (TESObjectCELL* Cell = Tes->gridCellArray->GetCell(x, y)) {
@@ -488,32 +488,32 @@ void ShadowManager::RenderShadowCubeMapExt(NiPointLight** Lights, int LightIndex
 				while (Entry) {
 					if (TESObjectREFR* Ref = GetRef(Entry->item, &ShadowSettings->Forms, &ShadowSettings->ExcludedForms))
 						for (int L = 0; L <= LightIndex; L++)
-							ClassifyRefForLight(Ref, Lights, L, radiusScan, refMap, actorMap, StaticValues, forceRedrawMap);
+							ClassifyRefForLight(Ref, Lights, L, radiusScan, CubeMapRefMap, CubeMapActorMap, StaticValues, forceRedrawMap);
 					Entry = Entry->next;
 				}
 			}
 		}
 	}
 	UpdateStaticTrackers(LightIndex, StaticValues, forceRedrawMap);
-	RenderShadowCubeMap(LightIndex, refMap, ShadowData, ShadowSettings->Enabled);
-	RenderShadowCubeMapActor(LightIndex, actorMap, ShadowData, ShadowSettings->Enabled);
+	RenderShadowCubeMap(LightIndex, CubeMapRefMap, ShadowData, ShadowSettings->Enabled);
+	RenderShadowCubeMapActor(LightIndex, CubeMapActorMap, ShadowData, ShadowSettings->Enabled);
 }
 
 void ShadowManager::RenderShadowCubeMapInt(NiPointLight** Lights, int LightIndex, float radiusScan, SettingsShadowStruct::InteriorsStruct* ShadowSettings, D3DXVECTOR4* ShadowData) {
-	std::map<int, std::vector<NiNode*>> refMap, actorMap;
 	double StaticValues[12] = { 0 };
 	bool forceRedrawMap[12] = { false };
 	TList<TESObjectREFR>::Entry* Entry = &Player->parentCell->objectList.First;
 
+	ClearCubeMapNodeLists();
 	while (Entry) {
 		if (TESObjectREFR* Ref = GetRef(Entry->item, &ShadowSettings->Forms, &ShadowSettings->ExcludedForms))
 			for (int L = 0; L <= LightIndex; L++)
-				ClassifyRefForLight(Ref, Lights, L, radiusScan, refMap, actorMap, StaticValues, forceRedrawMap);
+				ClassifyRefForLight(Ref, Lights, L, radiusScan, CubeMapRefMap, CubeMapActorMap, StaticValues, forceRedrawMap);
 		Entry = Entry->next;
 	}
 	UpdateStaticTrackers(LightIndex, StaticValues, forceRedrawMap);
-	RenderShadowCubeMap(LightIndex, refMap, ShadowData, ShadowSettings->Enabled);
-	RenderShadowCubeMapActor(LightIndex, actorMap, ShadowData, ShadowSettings->Enabled);
+	RenderShadowCubeMap(LightIndex, CubeMapRefMap, ShadowData, ShadowSettings->Enabled);
+	RenderShadowCubeMapActor(LightIndex, CubeMapActorMap, ShadowData, ShadowSettings->Enabled);
 }
 
 void ShadowManager::RenderShadowCubeMapFakeInt(int LightIndex, SettingsShadowStruct::InteriorsStruct* ShadowSettings, D3DXVECTOR4* ShadowData) {
@@ -536,19 +536,19 @@ void ShadowManager::RenderShadowCubeMapFakeInt(int LightIndex, SettingsShadowStr
 	TheShaderManager->ShaderConst.ShadowMap.ShadowCastLightPosition[LightIndex].z = Eye.z;
 	TheShaderManager->ShaderConst.ShadowMap.ShadowCastLightPosition[LightIndex].w = 15000;
 
-	std::map<int, std::vector<NiNode*>> refMap;
+	ClearCubeMapNodeLists();
 	TList<TESObjectREFR>::Entry* Entry = &Player->parentCell->objectList.First;
 	while (Entry) {
 		if (TESObjectREFR* Ref = GetRef(Entry->item, &ShadowSettings->Forms, &ShadowSettings->ExcludedForms)) {
-			refMap[LightIndex].emplace_back(Ref->GetNode());
+			CubeMapRefMap[LightIndex].emplace_back(Ref->GetNode());
 		}
 		Entry = Entry->next;
 	}
-	RenderShadowCubeMap(LightIndex, refMap, ShadowData, ShadowSettings->Enabled);
+	RenderShadowCubeMap(LightIndex, CubeMapRefMap, ShadowData, ShadowSettings->Enabled);
 }
 
 
-void ShadowManager::RenderShadowCubeMap(int LightIndex, std::map<int, std::vector<NiNode*>>& refMap, D3DXVECTOR4* ShadowData, bool enabled) {
+void ShadowManager::RenderShadowCubeMap(int LightIndex, std::vector<NiNode*>* refMap, D3DXVECTOR4* ShadowData, bool enabled) {
 	IDirect3DDevice9* Device = TheRenderManager->device;
 	D3DXMATRIX View, Proj;
 	D3DXVECTOR3 Eye, At, Up;
@@ -581,7 +581,7 @@ void ShadowManager::RenderShadowCubeMap(int LightIndex, std::map<int, std::vecto
 	}
 }
 
-void ShadowManager::RenderShadowCubeMapActor(int LightIndex, std::map<int, std::vector<NiNode*>>& refMap, D3DXVECTOR4* ShadowData, bool enabled) {
+void ShadowManager::RenderShadowCubeMapActor(int LightIndex, std::vector<NiNode*>* refMap, D3DXVECTOR4* ShadowData, bool enabled) {
 	IDirect3DDevice9* Device = TheRenderManager->device;
 
 	// araf Cap this due exterior shadows hack
@@ -1068,7 +1068,14 @@ void ShadowManager::SetupCubeMapRenderState() {
 		RenderState->SetPixelShader(ShadowCubeMapPixelShader, false);
 }
 
-void ShadowManager::ClassifyRefForLight(TESObjectREFR* Ref, NiPointLight** Lights, int L, float radiusScan, std::map<int, std::vector<NiNode*>>& refMap, std::map<int, std::vector<NiNode*>>& actorMap, double* StaticValues, bool* forceRedrawMap) {
+void ShadowManager::ClearCubeMapNodeLists() {
+	for (int i = 0; i < 12; i++) {
+		CubeMapRefMap[i].clear();
+		CubeMapActorMap[i].clear();
+	}
+}
+
+void ShadowManager::ClassifyRefForLight(TESObjectREFR* Ref, NiPointLight** Lights, int L, float radiusScan, std::vector<NiNode*>* refMap, std::vector<NiNode*>* actorMap, double* StaticValues, bool* forceRedrawMap) {
 	NiPoint3* LightPos = &Lights[L]->m_worldTransform.pos;
 	float FarPlane = TheShaderManager->ShaderConst.ShadowMap.ShadowCastLightPosition[L].w;
 	UInt8 TypeID = Ref->baseForm->formType;
