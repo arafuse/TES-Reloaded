@@ -269,6 +269,7 @@ struct SettingsMainStruct {
 		bool	CompileEffects;
 		UInt8	TraceShaders;
 		UInt8	LogShaders;
+		UInt8	ProfileShadows;
 	};
 
 	MainStruct					Main;
