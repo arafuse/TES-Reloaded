@@ -96,8 +96,9 @@ public:
 	void					SetupSpeedTreeLeafShader(NiGeometry* Geo, D3DXVECTOR4* ShadowData);
 	void					SetupAlphaTexture(NiGeometry* Geo, BSShaderProperty* LProp, D3DXVECTOR4* ShadowData);
 	void					RenderSkinnedGeo(NiGeometry* Geo, D3DXVECTOR4* ShadowData);
-	void					RenderActorFaces(NiGeometryBufferData* GeoData, D3DPRIMITIVETYPE PrimitiveType, UINT VertCount, int lightIndex, const D3DXMATRIX& Proj);
-	void					RenderActorSkinnedGeo(NiGeometry* Geo, D3DXVECTOR4* ShadowData, int lightIndex, const D3DXMATRIX& Proj);
+	void					RenderActorFaces(NiGeometryBufferData* GeoData, D3DPRIMITIVETYPE PrimitiveType, UINT VertCount, int lightIndex);
+	void					RenderActorSkinnedGeo(NiGeometry* Geo, D3DXVECTOR4* ShadowData, int lightIndex);
+	void					ComputeCubeFaceFrusta(int lightIndex);
 	void					SetupShadowMapMatrices(ShadowMapTypeEnum ShadowMapType, SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors, D3DXVECTOR3* At, D3DXVECTOR4* ShadowLightDir);
 	void					RenderShadowMapCellTerrain(TESObjectCELL* Cell, ShadowMapTypeEnum ShadowMapType, D3DXVECTOR4* ShadowData);
 	void					BuildExteriorGeoItems(SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors);
@@ -170,6 +171,13 @@ public:
 	//MISC
 	D3DVIEWPORT9			ShadowCubeMapViewPort;
 	NiPointLight*			ShadowCubeMapLights[12];
+	// Per-face cube view-projection + frustum, precomputed once per light in the actor path so
+	// each actor geo can be culled to the 1-2 faces it actually overlaps instead of being drawn
+	// to all 6 unconditionally. CubeActorFaceVisible is the per-geo result reused across the
+	// geo's skin partitions (all partitions share the geo's world bound).
+	D3DXMATRIX				CubeFaceViewProj[6];
+	D3DXPLANE				CubeFaceFrustum[6][6];
+	bool					CubeActorFaceVisible[6];
 	int                     ShadowCubeLightCount;
 	int						ShadowCubeCullLightCount;
 	double					ShadowCubeMapStaticValue[12];

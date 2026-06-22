@@ -48,6 +48,111 @@ static const void* VFTNiTriStrips = (void*)0x00A7F27C;
 #define ShadowInstanceMinCount 4  // minimum group size worth batching via hardware instancing
 
 #if defined(NEWVEGAS) || defined(OBLIVION)
+
+// --- Lightweight per-phase CPU profiler (Develop.ProfileShadows) --------------
+// Wall-clock (QueryPerformanceCounter) timing of the shadow phases, accumulated
+// across frames and averaged to the log every ReportFrames frames. Phases that
+// issue D3D9 draws measure CPU *submission* cost (driver call overhead), NOT GPU
+// execution — which is exactly the signal we want for deciding which scene-graph
+// traversal / cull / matrix work is worth moving off the render thread. The RAII
+// scope does no QPC calls when disabled, so it is free in normal builds.
+namespace {
+	enum ShadowPhase {
+		Phase_BuildGeoItems,   // BuildExteriorGeoItems: grid walk + flatten + matrices (pure CPU)
+		Phase_PassNear,        // RenderShadowMap(MapNear):  cull + draw submission
+		Phase_PassFar,         // RenderShadowMap(MapFar)
+		Phase_PassOrtho,       // RenderShadowMap(MapOrtho)
+		Phase_PassSkin,        // RenderShadowMap(MapSkin)
+		Phase_ExtTotal,        // whole RenderExteriorShadows
+		Phase_IntClassify,     // cube-map ref gathering + per-light classification (pure CPU)
+		Phase_IntCubeRender,   // cube-map face draw submission
+		Phase_IntTotal,        // whole RenderInteriorShadows
+		Phase_FrameTotal,      // exterior + interior for one frame
+		Phase_COUNT
+	};
+	const char* const ShadowPhaseNames[Phase_COUNT] = {
+		"BuildGeoItems", "Pass:Near", "Pass:Far", "Pass:Ortho", "Pass:Skin",
+		"ExtTotal", "Int:Classify", "Int:CubeRender", "IntTotal", "FrameTotal"
+	};
+	// Per-frame counters: how the submission cost breaks down (draws, batches, cache hits).
+	enum ShadowCounter {
+		Cnt_DrawCalls,        // DrawIndexedPrimitive calls issued (all shadow paths)
+		Cnt_DrawCallsCube,    // ...of which issued by the cube/point-light path (statics + actors)
+		Cnt_DrawCallsCubeActor, // ...of which the actor sub-path (RenderActorFaces, all 6 faces uncull'd)
+		Cnt_RenderCallsCube,  // Render() invocations in the cube path (= STATIC meshes drawn, summed over 6 faces)
+		Cnt_CubeActorGeo,     // RenderActor invocations (= actor sub-geometries drawn, ×6 faces each)
+		Cnt_InstancedDraws,   // directional instanced-batch draws (each batches many objects)
+		Cnt_CubeLightsDrawn,  // cube lights redrawn this frame (6 faces each)
+		Cnt_CubeLightsCached, // cube lights skipped via the static-map tracker
+		// Directional (Near/Far/Ortho/Skin) instancing diagnostics, summed over the 4 passes:
+		Cnt_DirTerrainDraws,    // DrawIndexedPrimitive issued by terrain (never instanced)
+		Cnt_DirItemsInstanced,  // ref items routed to AddInstance (instanceable, not alpha-excluded)
+		Cnt_DirItemsImmNonInst, // ref items drawn immediately because NOT instanceable (skinned/leaf/no decl)
+		Cnt_DirItemsImmAlpha,   // ref items drawn immediately because alpha-masked in an alpha pass
+		Cnt_DirGroups,          // distinct instance groups formed (= unique repeated meshes)
+		Cnt_DirInstancedItems,  // items actually covered by an instanced batch (group >= min, has decl)
+		Cnt_DirFallbackItems,   // instanceable items drawn per-object anyway (group < min, or no decl)
+		Cnt_COUNT
+	};
+	const char* const ShadowCounterNames[Cnt_COUNT] = {
+		"DrawCalls", "DrawCalls:Cube", "DrawCalls:CubeActor", "RenderCalls:Cube", "CubeActorGeo",
+		"InstancedDraws", "CubeLightsDrawn", "CubeLightsCached",
+		"Dir:TerrainDraws", "Dir:ItemsInstanced", "Dir:ItemsImmNonInst", "Dir:ItemsImmAlpha",
+		"Dir:Groups", "Dir:InstancedItems", "Dir:FallbackItems"
+	};
+	// When true, draw/Render counters attribute to the cube/point-light path (set around its submission).
+	bool gCubeBucket = false;
+	bool gCubeActorBucket = false; // narrower: the actor sub-path within the cube path
+	bool gTerrainBucket = false;   // directional terrain submission (for Cnt_DirTerrainDraws)
+
+	struct PhaseAccum { double Ms; UInt32 Calls; };
+	PhaseAccum gPhase[Phase_COUNT] = {};
+	UInt32     gCounter[Cnt_COUNT] = {};
+	LONGLONG   gQpcFreq = 0;
+	int        gFrames = 0;
+	const int  ReportFrames = 600;
+	bool       ProfilingEnabled = false;
+
+	inline LONGLONG QpcNow() { LARGE_INTEGER t; QueryPerformanceCounter(&t); return t.QuadPart; }
+	inline void ProfileCount(ShadowCounter c, UInt32 n = 1) { if (ProfilingEnabled) gCounter[c] += n; }
+
+	struct ScopeTimer {
+		ShadowPhase Phase;
+		LONGLONG    Start;
+		ScopeTimer(ShadowPhase p) : Phase(p), Start(ProfilingEnabled ? QpcNow() : 0) {}
+		~ScopeTimer() {
+			if (!ProfilingEnabled) return;
+			gPhase[Phase].Ms += (double)(QpcNow() - Start) * 1000.0 / (double)gQpcFreq;
+			gPhase[Phase].Calls++;
+		}
+	};
+
+	void ShadowProfileFrameBegin() {
+		ProfilingEnabled = TheSettingManager->SettingsMain.Develop.ProfileShadows != 0;
+		if (ProfilingEnabled && gQpcFreq == 0) {
+			LARGE_INTEGER f; QueryPerformanceFrequency(&f); gQpcFreq = f.QuadPart;
+		}
+	}
+
+	void ShadowProfileFrameEnd() {
+		if (!ProfilingEnabled || ++gFrames < ReportFrames) return;
+		Logger::Log("[ShadowProfile] avg over %d frames  (ms/frame | ms/call | calls/frame)", gFrames);
+		for (int i = 0; i < Phase_COUNT; i++) {
+			double msFrame  = gPhase[i].Ms / gFrames;
+			double msCall   = gPhase[i].Calls ? gPhase[i].Ms / gPhase[i].Calls : 0.0;
+			double callRate = (double)gPhase[i].Calls / gFrames;
+			Logger::Log("[ShadowProfile]   %-14s %8.4f | %8.4f | %6.2f", ShadowPhaseNames[i], msFrame, msCall, callRate);
+			gPhase[i].Ms = 0.0; gPhase[i].Calls = 0;
+		}
+		Logger::Log("[ShadowProfile] counts (per frame):");
+		for (int i = 0; i < Cnt_COUNT; i++) {
+			Logger::Log("[ShadowProfile]   %-16s %9.2f", ShadowCounterNames[i], (double)gCounter[i] / gFrames);
+			gCounter[i] = 0;
+		}
+		gFrames = 0;
+	}
+}
+
 void ShadowManager::InitShadowBiasConstants() {
 	auto& Ext = TheSettingManager->SettingsShadows.Exteriors;
 	TheShaderManager->ShaderConst.ShadowMap.ShadowBiasForward.x  = Ext.forwardNormBias;
@@ -218,6 +323,15 @@ void ShadowManager::GetFrustumPlanes(D3DXPLANE* Frustum, D3DXMATRIX* Matrix) {
 		D3DXPlaneNormalize(&Frustum[i], &Plane);
 	}
 
+}
+
+// 6-plane containment for a precomputed camera-relative bound (center + radius) against an
+// arbitrary normalized frustum. Same test as InFrustum but takes the bound directly, so the
+// per-light face frustums can be reused across an actor's skin partitions.
+static bool BoundInFrustum6(const D3DXPLANE* Frustum, const D3DXVECTOR3& Center, float Radius) {
+	for (int i = 0; i < 6; ++i)
+		if (D3DXPlaneDotCoord(&Frustum[i], &Center) <= -Radius) return false;
+	return true;
 }
 
 bool ShadowManager::InFrustum(D3DXPLANE* Frustum, NiGeometry* Geo) {
@@ -470,6 +584,7 @@ void ShadowManager::Render(NiGeometry* Geo, D3DXVECTOR4* ShadowData, const D3DMA
 	NiD3DShaderDeclaration* ShaderDeclaration = Geo->shader->ShaderDeclaration;
 
 	if (Geo->m_pcName && !memcmp(Geo->m_pcName, "Torch", 5)) return;
+	if (gCubeBucket) ProfileCount(Cnt_RenderCallsCube);
 
 	ShadowData->x = 0.0f;
 	ShadowData->y = 0.0f;
@@ -498,8 +613,6 @@ void ShadowManager::Render(NiGeometry* Geo, D3DXVECTOR4* ShadowData, const D3DMA
 }
 
 void ShadowManager::RenderActor(NiGeometry* Geo, D3DXVECTOR4* ShadowData, int lightIndex) {
-	IDirect3DDevice9* Device = TheRenderManager->device;
-	NiDX9RenderState* RenderState = TheRenderManager->renderState;
 	NiGeometryData* ModelData = Geo->geomData;
 	NiGeometryBufferData* GeoData = ModelData->BuffData;
 	NiSkinInstance* SkinInstance = Geo->skinInstance;
@@ -507,9 +620,24 @@ void ShadowManager::RenderActor(NiGeometry* Geo, D3DXVECTOR4* ShadowData, int li
 
 	if (Geo->m_pcName && !memcmp(Geo->m_pcName, "Torch", 5)) return;
 
-	float FarPlane = TheShaderManager->ShaderConst.ShadowMap.ShadowCastLightPosition[lightIndex].w;
-	D3DXMATRIX Proj;
-	D3DXMatrixPerspectiveFovRH(&Proj, D3DXToRadian(90.0f), 1.0f, 1.0f, FarPlane);
+	// Per-face cull: mark which of the 6 cube faces this geo's world bound overlaps (against the
+	// face frustums precomputed once per light in ComputeCubeFaceFrusta). RenderActorFaces then
+	// draws only those faces; previously every geo was drawn to all 6 faces unconditionally. A
+	// geo that overlaps no face contributes nothing, so skip it entirely.
+	int VisibleFaces = 0;
+	NiBound* Bound = Geo->GetWorldBound();
+	if (Bound) {
+		D3DXVECTOR3 Center = { Bound->Center.x - TheRenderManager->CameraPosition.x, Bound->Center.y - TheRenderManager->CameraPosition.y, Bound->Center.z - TheRenderManager->CameraPosition.z };
+		for (int Face = 0; Face < 6; Face++) {
+			CubeActorFaceVisible[Face] = BoundInFrustum6(CubeFaceFrustum[Face], Center, Bound->Radius);
+			if (CubeActorFaceVisible[Face]) VisibleFaces++;
+		}
+	} else {
+		for (int Face = 0; Face < 6; Face++) CubeActorFaceVisible[Face] = true; // no bound: keep all faces (matches InFrustum)
+		VisibleFaces = 6;
+	}
+	if (VisibleFaces == 0) return;
+	ProfileCount(Cnt_CubeActorGeo);
 
 	ShadowData->x = 0.0f;
 	ShadowData->y = 0.0f;
@@ -520,9 +648,9 @@ void ShadowManager::RenderActor(NiGeometry* Geo, D3DXVECTOR4* ShadowData, int li
 		if (AlphaEnabled) SetupAlphaTexture(Geo, LProp, ShadowData);
 		TheRenderManager->PackGeometryBuffer(GeoData, ModelData, SkinInstance, ShaderDeclaration);
 		SetupGeoStreams(GeoData);
-		RenderActorFaces(GeoData, GeoData->PrimitiveType, GeoData->VertCount, lightIndex, Proj);
+		RenderActorFaces(GeoData, GeoData->PrimitiveType, GeoData->VertCount, lightIndex);
 	} else {
-		RenderActorSkinnedGeo(Geo, ShadowData, lightIndex, Proj);
+		RenderActorSkinnedGeo(Geo, ShadowData, lightIndex);
 	}
 }
 
@@ -755,6 +883,7 @@ void ShadowManager::DrawInstancedGroup(NiGeometryBufferData* GeoData, std::vecto
 	RenderState->SetVertexDeclaration(Decl, false);
 
 	DrawGeoArrays(GeoData, GeoData->PrimitiveType, GeoData->VertCount);
+	ProfileCount(Cnt_InstancedDraws);
 
 	// Restore default (non-instanced) stream frequencies for subsequent draws.
 	for (UInt32 s = 0; s < GeoData->StreamCount; s++) Device->SetStreamSourceFreq(s, 1);
@@ -764,6 +893,7 @@ void ShadowManager::DrawInstancedGroup(NiGeometryBufferData* GeoData, std::vecto
 
 void ShadowManager::FlushInstanceGroups(D3DXVECTOR4* ShadowData) {
 	NiDX9RenderState* RenderState = TheRenderManager->renderState;
+	ProfileCount(Cnt_DirGroups, (UInt32)InstanceGroupCount); // unique repeated meshes this pass
 
 	// Size the instance buffer once for the largest batchable group.
 	UINT MaxGroup = 0;
@@ -787,6 +917,7 @@ void ShadowManager::FlushInstanceGroups(D3DXVECTOR4* ShadowData) {
 				InstancedSet = true;
 			}
 			DrawInstancedGroup(Group.GeoData, Group.ItemIdx, Group.Decl);
+			ProfileCount(Cnt_DirInstancedItems, (UInt32)Group.ItemIdx.size());
 		}
 	}
 
@@ -799,6 +930,7 @@ void ShadowManager::FlushInstanceGroups(D3DXVECTOR4* ShadowData) {
 		InstanceGroup& Group = InstancePool[i];
 		bool Instanced = CanInstance && Group.ItemIdx.size() >= ShadowInstanceMinCount && Group.Decl;
 		if (Instanced) continue;
+		ProfileCount(Cnt_DirFallbackItems, (UInt32)Group.ItemIdx.size());
 		for (int idx : Group.ItemIdx) Render(ShadowGeoPool[idx].Geo, ShadowData, &ShadowGeoPool[idx].World);
 	}
 }
@@ -806,6 +938,7 @@ void ShadowManager::FlushInstanceGroups(D3DXVECTOR4* ShadowData) {
 void ShadowManager::RenderShadowMap(ShadowMapTypeEnum ShadowMapType, SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors, D3DXVECTOR3* At, D3DXVECTOR4* ShadowLightDir, D3DXVECTOR4* ShadowData) {
 	IDirect3DDevice9* Device = TheRenderManager->device;
 	NiDX9RenderState* RenderState = TheRenderManager->renderState;
+	ScopeTimer profile((ShadowPhase)(Phase_PassNear + ShadowMapType)); // enum order matches Near/Far/Ortho/Skin
 
 	AlphaEnabled = ShadowsExteriors->AlphaEnabled[ShadowMapType];
 	SetupShadowMapMatrices(ShadowMapType, ShadowsExteriors, At, ShadowLightDir);
@@ -822,10 +955,12 @@ void ShadowManager::RenderShadowMap(ShadowMapTypeEnum ShadowMapType, SettingsSha
 	RenderState->SetVertexShader(ShadowMapVertexShader, false);
 	RenderState->SetPixelShader(ShadowMapPixelShader, false);
 	Device->BeginScene();
+	gTerrainBucket = true;
 	for (UInt32 x = 0; x < *SettingGridsToLoad; x++)
 		for (UInt32 y = 0; y < *SettingGridsToLoad; y++)
 			if (TESObjectCELL* Cell = Tes->gridCellArray->GetCell(x, y))
 				RenderShadowMapCellTerrain(Cell, ShadowMapType, ShadowData);
+	gTerrainBucket = false;
 	SettingsShadowStruct::FormsStruct* Forms = &ShadowsExteriors->Forms[ShadowMapType];
 	float MinRadius = MinRadii[ShadowMapType];
 	bool UseInstancing = ShadowsExteriors->UseInstancing && ShadowMapInstancedVertexShader;
@@ -847,10 +982,15 @@ void ShadowManager::RenderShadowMap(ShadowMapTypeEnum ShadowMapType, SettingsSha
 			ShadowGeoItem& Item = ShadowGeoPool[i];
 			if (Item.Radius < MinRadius) continue;
 			if (!LeafInShadowFrustum(ShadowMapType, Item.Center, Item.Radius)) continue;
-			if (UseInstancing && Item.BaseInstanceable && !(AlphaEnabled && Item.HasAlphaMask))
+			if (UseInstancing && Item.BaseInstanceable && !(AlphaEnabled && Item.HasAlphaMask)) {
 				AddInstance(Item.GeoData, i);
-			else
+				ProfileCount(Cnt_DirItemsInstanced);
+			} else {
 				Render(Item.Geo, ShadowData, Item.GeoData ? &Item.World : NULL);
+				// Why immediate: not instanceable at all, vs. instanceable-but-alpha-masked this pass.
+				if (!Item.BaseInstanceable) ProfileCount(Cnt_DirItemsImmNonInst);
+				else ProfileCount(Cnt_DirItemsImmAlpha);
+			}
 		}
 	}
 	if (UseInstancing) FlushInstanceGroups(ShadowData);
@@ -861,25 +1001,35 @@ void ShadowManager::RenderShadowCubeMapExt(NiPointLight** Lights, int LightIndex
 	double StaticValues[12] = { 0 };
 	bool forceRedrawMap[12] = { false };
 
-	ClearCubeMapNodeLists();
-	for (UInt32 x = 0; x < *SettingGridsToLoad - 1; x++) {
-		for (UInt32 y = 0; y < *SettingGridsToLoad; y++) {
-			if (TESObjectCELL* Cell = Tes->gridCellArray->GetCell(x, y)) {
-				TList<TESObjectREFR>::Entry* Entry = &Cell->objectList.First;
-				while (Entry) {
-					if (TESObjectREFR* Ref = GetRef(Entry->item, &ShadowSettings->Forms, &ShadowSettings->ExcludedForms)) {
-						RefLightInfo Info = BuildRefLightInfo(Ref);
-						for (int L = 0; L <= LightIndex; L++)
-							ClassifyRefForLight(Info, Lights, L, radiusScan, CubeMapRefMap, CubeMapActorMap, StaticValues, forceRedrawMap);
+	{
+		ScopeTimer profile(Phase_IntClassify);
+		ClearCubeMapNodeLists();
+		for (UInt32 x = 0; x < *SettingGridsToLoad - 1; x++) {
+			for (UInt32 y = 0; y < *SettingGridsToLoad; y++) {
+				if (TESObjectCELL* Cell = Tes->gridCellArray->GetCell(x, y)) {
+					TList<TESObjectREFR>::Entry* Entry = &Cell->objectList.First;
+					while (Entry) {
+						if (TESObjectREFR* Ref = GetRef(Entry->item, &ShadowSettings->Forms, &ShadowSettings->ExcludedForms)) {
+							RefLightInfo Info = BuildRefLightInfo(Ref);
+							for (int L = 0; L <= LightIndex; L++)
+								ClassifyRefForLight(Info, Lights, L, radiusScan, CubeMapRefMap, CubeMapActorMap, StaticValues, forceRedrawMap);
+						}
+						Entry = Entry->next;
 					}
-					Entry = Entry->next;
 				}
 			}
 		}
+		UpdateStaticTrackers(LightIndex, StaticValues, forceRedrawMap);
 	}
-	UpdateStaticTrackers(LightIndex, StaticValues, forceRedrawMap);
-	RenderShadowCubeMap(LightIndex, CubeMapRefMap, ShadowData, ShadowSettings->Enabled);
-	RenderShadowCubeMapActor(LightIndex, CubeMapActorMap, ShadowData, ShadowSettings->Enabled);
+	{
+		ScopeTimer profile(Phase_IntCubeRender);
+		gCubeBucket = true;
+		RenderShadowCubeMap(LightIndex, CubeMapRefMap, ShadowData, ShadowSettings->Enabled);
+		gCubeActorBucket = true;
+		RenderShadowCubeMapActor(LightIndex, CubeMapActorMap, ShadowData, ShadowSettings->Enabled);
+		gCubeActorBucket = false;
+		gCubeBucket = false;
+	}
 }
 
 void ShadowManager::RenderShadowCubeMapInt(NiPointLight** Lights, int LightIndex, float radiusScan, SettingsShadowStruct::InteriorsStruct* ShadowSettings, D3DXVECTOR4* ShadowData) {
@@ -887,18 +1037,28 @@ void ShadowManager::RenderShadowCubeMapInt(NiPointLight** Lights, int LightIndex
 	bool forceRedrawMap[12] = { false };
 	TList<TESObjectREFR>::Entry* Entry = &Player->parentCell->objectList.First;
 
-	ClearCubeMapNodeLists();
-	while (Entry) {
-		if (TESObjectREFR* Ref = GetRef(Entry->item, &ShadowSettings->Forms, &ShadowSettings->ExcludedForms)) {
-			RefLightInfo Info = BuildRefLightInfo(Ref);
-			for (int L = 0; L <= LightIndex; L++)
-				ClassifyRefForLight(Info, Lights, L, radiusScan, CubeMapRefMap, CubeMapActorMap, StaticValues, forceRedrawMap);
+	{
+		ScopeTimer profile(Phase_IntClassify);
+		ClearCubeMapNodeLists();
+		while (Entry) {
+			if (TESObjectREFR* Ref = GetRef(Entry->item, &ShadowSettings->Forms, &ShadowSettings->ExcludedForms)) {
+				RefLightInfo Info = BuildRefLightInfo(Ref);
+				for (int L = 0; L <= LightIndex; L++)
+					ClassifyRefForLight(Info, Lights, L, radiusScan, CubeMapRefMap, CubeMapActorMap, StaticValues, forceRedrawMap);
+			}
+			Entry = Entry->next;
 		}
-		Entry = Entry->next;
+		UpdateStaticTrackers(LightIndex, StaticValues, forceRedrawMap);
 	}
-	UpdateStaticTrackers(LightIndex, StaticValues, forceRedrawMap);
-	RenderShadowCubeMap(LightIndex, CubeMapRefMap, ShadowData, ShadowSettings->Enabled);
-	RenderShadowCubeMapActor(LightIndex, CubeMapActorMap, ShadowData, ShadowSettings->Enabled);
+	{
+		ScopeTimer profile(Phase_IntCubeRender);
+		gCubeBucket = true;
+		RenderShadowCubeMap(LightIndex, CubeMapRefMap, ShadowData, ShadowSettings->Enabled);
+		gCubeActorBucket = true;
+		RenderShadowCubeMapActor(LightIndex, CubeMapActorMap, ShadowData, ShadowSettings->Enabled);
+		gCubeActorBucket = false;
+		gCubeBucket = false;
+	}
 }
 
 void ShadowManager::RenderShadowCubeMapFakeInt(int LightIndex, SettingsShadowStruct::InteriorsStruct* ShadowSettings, D3DXVECTOR4* ShadowData) {
@@ -941,7 +1101,8 @@ void ShadowManager::RenderShadowCubeMap(int LightIndex, std::vector<NiNode*>* re
 	bool HasWater = TheShaderManager->ShaderConst.HasWater;
 	for (int L = 0; L <= LightIndex; L++) {
 		SetShadowCubeMapRegisters(L);
-		if (ShadowCubeMapStaticTracker[L] && EnableStaticMaps) continue;
+		if (ShadowCubeMapStaticTracker[L] && EnableStaticMaps) { ProfileCount(Cnt_CubeLightsCached); continue; }
+		ProfileCount(Cnt_CubeLightsDrawn);
 
 		// Walk the scene graph once per light to gather renderable geometry, then reuse
 		// the flat list across all 6 cube faces instead of re-traversing per face.
@@ -993,6 +1154,7 @@ void ShadowManager::RenderShadowCubeMapActor(int LightIndex, std::vector<NiNode*
 		if (ShadowCubeMapStaticTracker[L] && EnableStaticMaps) continue;
 
 		if (enabled) {
+			ComputeCubeFaceFrusta(L); // 6 face view-projections + frustums, reused to cull every actor geo
 			Device->BeginScene();
 			SetupCubeMapRenderState();
 			for (NiNode* RefNode : refMap[L])
@@ -1005,6 +1167,7 @@ void ShadowManager::RenderShadowCubeMapActor(int LightIndex, std::vector<NiNode*
 //TODO: rename
 void ShadowManager::RenderExteriorShadows() {
 	if (!Player->GetWorldSpace()) return;
+	ScopeTimer profile(Phase_ExtTotal);
 
 	SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors = SelectExteriorShadowSettings();
 
@@ -1023,7 +1186,7 @@ void ShadowManager::RenderExteriorShadows() {
 	ComputeExteriorLookAt(At, SkinAt, ShadowsExteriors);
 	AdjustShadowLightDir(ShadowLightDir);
 
-	BuildExteriorGeoItems(ShadowsExteriors);
+	{ ScopeTimer profileBuild(Phase_BuildGeoItems); BuildExteriorGeoItems(ShadowsExteriors); }
 
 	if (TheSettingManager->SettingsShadows.Exteriors.UseIntervalUpdate && TheShaderManager->isFullyInitialized) {
 		D3DXVECTOR4 ShadowLightDirInterval;
@@ -1048,6 +1211,7 @@ void ShadowManager::RenderExteriorShadows() {
 
 //TODO: rename, doesn't apply solely to interiors
 void ShadowManager::RenderInteriorShadows() {
+	ScopeTimer profile(Phase_IntTotal);
 	IDirect3DDevice9* Device = TheRenderManager->device;
 	D3DXVECTOR4* ShadowData = &TheShaderManager->ShaderConst.ShadowCube.Data;
 
@@ -1130,11 +1294,16 @@ void ShadowManager::RenderShadowMaps() {
 	}
 #endif
 
+	ShadowProfileFrameBegin();
 	Device->GetDepthStencilSurface(&DepthSurface);
 	TheRenderManager->SetupSceneCamera();
-	RenderExteriorShadows();
-	RenderInteriorShadows();
+	{
+		ScopeTimer profile(Phase_FrameTotal);
+		RenderExteriorShadows();
+		RenderInteriorShadows();
+	}
 	Device->SetDepthStencilSurface(DepthSurface);
+	ShadowProfileFrameEnd();
 }
 
 void ShadowManager::ClearShadowMap(IDirect3DDevice9* Device) {
@@ -1326,6 +1495,10 @@ void ShadowManager::DrawGeoArrays(NiGeometryBufferData* GeoData, D3DPRIMITIVETYP
 		int PrimitiveCount = GeoData->ArrayLengths ? (int)GeoData->ArrayLengths[i] - 2 : GeoData->TriCount;
 		Device->DrawIndexedPrimitive(PrimitiveType, GeoData->BaseVertexIndex, 0, VertCount, StartIndex, PrimitiveCount);
 		StartIndex += PrimitiveCount + 2;
+		ProfileCount(Cnt_DrawCalls);
+		if (gCubeBucket) ProfileCount(Cnt_DrawCallsCube);
+		if (gCubeActorBucket) ProfileCount(Cnt_DrawCallsCubeActor);
+		if (gTerrainBucket) ProfileCount(Cnt_DirTerrainDraws);
 	}
 }
 
@@ -1407,18 +1580,33 @@ void ShadowManager::RenderSkinnedGeo(NiGeometry* Geo, D3DXVECTOR4* ShadowData) {
 	}
 }
 
-void ShadowManager::RenderActorFaces(NiGeometryBufferData* GeoData, D3DPRIMITIVETYPE PrimitiveType, UINT VertCount, int lightIndex, const D3DXMATRIX& Proj) {
-	IDirect3DDevice9* Device = TheRenderManager->device;
-	D3DXMATRIX View;
-	D3DXVECTOR3 Eye, At, Up;
+// Build the 6 cube-face view-projections and their frustums for a light, once per light. The
+// light position and far plane are constant across all of the light's actor geos, so this is
+// hoisted out of the per-geo/per-partition draw path (where View*Proj used to be rebuilt every
+// face of every partition). Matrices are byte-identical to the old per-face construction.
+void ShadowManager::ComputeCubeFaceFrusta(int lightIndex) {
+	float FarPlane = TheShaderManager->ShaderConst.ShadowMap.ShadowCastLightPosition[lightIndex].w;
+	D3DXMATRIX Proj;
+	D3DXMatrixPerspectiveFovRH(&Proj, D3DXToRadian(90.0f), 1.0f, 1.0f, FarPlane);
+	D3DXVECTOR3 LightPos(
+		TheShaderManager->ShaderConst.ShadowMap.ShadowCastLightPosition[lightIndex].x,
+		TheShaderManager->ShaderConst.ShadowMap.ShadowCastLightPosition[lightIndex].y,
+		TheShaderManager->ShaderConst.ShadowMap.ShadowCastLightPosition[lightIndex].z);
 	for (int Face = 0; Face < 6; Face++) {
-		At.x = TheShaderManager->ShaderConst.ShadowMap.ShadowCastLightPosition[lightIndex].x;
-		At.y = TheShaderManager->ShaderConst.ShadowMap.ShadowCastLightPosition[lightIndex].y;
-		At.z = TheShaderManager->ShaderConst.ShadowMap.ShadowCastLightPosition[lightIndex].z;
-		Eye = At;
+		D3DXVECTOR3 Eye = LightPos, At = LightPos, Up;
 		GetCubeFaceAtUp(Face, At, Up);
+		D3DXMATRIX View;
 		D3DXMatrixLookAtRH(&View, &Eye, &At, &Up);
-		TheShaderManager->ShaderConst.ShadowMap.ShadowViewProj = View * Proj;
+		CubeFaceViewProj[Face] = View * Proj;
+		GetFrustumPlanes(CubeFaceFrustum[Face], &CubeFaceViewProj[Face]);
+	}
+}
+
+void ShadowManager::RenderActorFaces(NiGeometryBufferData* GeoData, D3DPRIMITIVETYPE PrimitiveType, UINT VertCount, int lightIndex) {
+	IDirect3DDevice9* Device = TheRenderManager->device;
+	for (int Face = 0; Face < 6; Face++) {
+		if (!CubeActorFaceVisible[Face]) continue; // geo's bound doesn't reach this face
+		TheShaderManager->ShaderConst.ShadowMap.ShadowViewProj = CubeFaceViewProj[Face];
 		Device->SetDepthStencilSurface(ShadowCubeMapDepthSurface[lightIndex][Face]);
 		Device->SetRenderTarget(0, ShadowCubeMapSurface[lightIndex][Face]);
 		CurrentVertex->SetCT();
@@ -1427,7 +1615,7 @@ void ShadowManager::RenderActorFaces(NiGeometryBufferData* GeoData, D3DPRIMITIVE
 	}
 }
 
-void ShadowManager::RenderActorSkinnedGeo(NiGeometry* Geo, D3DXVECTOR4* ShadowData, int lightIndex, const D3DXMATRIX& Proj) {
+void ShadowManager::RenderActorSkinnedGeo(NiGeometry* Geo, D3DXVECTOR4* ShadowData, int lightIndex) {
 	IDirect3DDevice9* Device = TheRenderManager->device;
 	NiGeometryData* ModelData = Geo->geomData;
 	NiSkinInstance* SkinInstance = Geo->skinInstance;
@@ -1448,7 +1636,7 @@ void ShadowManager::RenderActorSkinnedGeo(NiGeometry* Geo, D3DXVECTOR4* ShadowDa
 		NiGeometryBufferData* GeoData = Partition->BuffData;
 		TheRenderManager->PackSkinnedGeometryBuffer(GeoData, ModelData, SkinInstance, Partition, ShaderDeclaration);
 		SetupGeoStreams(GeoData);
-		RenderActorFaces(GeoData, PrimitiveType, Partition->Vertices, lightIndex, Proj);
+		RenderActorFaces(GeoData, PrimitiveType, Partition->Vertices, lightIndex);
 	}
 }
 
