@@ -54,6 +54,208 @@
 #define BloodShaders ""
 #endif
 
+// --- Lightweight post-processing profiler (Develop.ProfileEffects) -------------
+// Mirrors the ShadowManager ProfileShadows pattern. The effect chain is GPU
+// fill-rate / bandwidth bound (full-screen passes + StretchRect blits on FP16
+// targets), so a CPU wall-clock timer alone can't tell whether the frame is
+// GPU- or CPU-bound. We therefore measure BOTH: a QPC wall-clock around the
+// chain (CPU submission cost) and a D3D9 timestamp query (actual GPU time),
+// plus structural counts (active effects, full-screen passes, blits). The GPU
+// timer is double-buffered and read one frame late so it never stalls the CPU.
+namespace {
+	struct EffPhaseAccum { double Ms; UInt32 Calls; };
+
+	bool     gEffProfilingEnabled = false;
+	LONGLONG gEffQpcFreq = 0;
+	int      gEffFrames = 0;
+	const int gEffReportFrames = 600;
+
+	// CPU wall-clock of the chain, plus per-frame structural counters (accumulated
+	// over gEffReportFrames then averaged).
+	double   gEffCpuMs = 0.0;
+	UInt32   gEffCount = 0;   // EffectRecord::Render invocations (active effects)
+	UInt32   gPassCount = 0;  // full-screen passes (DrawPrimitive quads)
+	UInt32   gBlitCount = 0;  // full-screen StretchRect blits within the chain
+	// Per-frame snapshots reset at chain begin (so spikes are visible via max too).
+	UInt32   gEffCountFrame = 0, gPassCountFrame = 0, gBlitCountFrame = 0;
+	UInt32   gEffMax = 0, gPassMax = 0, gBlitMax = 0;
+	LONGLONG gEffCpuStart = 0;
+
+	// --- GPU timing (D3D9 timestamp queries), double-buffered ---
+	// Within one disjoint block we issue a SEQUENCE of timestamps ("marks"): one at
+	// chain start, one just before each effect (labelled with the effect name), and
+	// one at chain end. The interval between mark i and mark i+1 is the GPU time of
+	// whatever ran in it, attributed to Label[i] — so a single run ranks every effect.
+	static const int EFF_MAXMARKS = 40;
+	struct GpuTimerSlot {
+		IDirect3DQuery9* Disjoint = NULL;
+		IDirect3DQuery9* Freq     = NULL;
+		IDirect3DQuery9* Ts[EFF_MAXMARKS] = { NULL };
+		const char*      Label[EFF_MAXMARKS] = { NULL };
+		int              MarkCount = 0;
+		bool             Pending  = false;
+	};
+	GpuTimerSlot gGpuSlot[2];
+	int      gGpuActiveSlot = -1;     // slot issued this frame (-1 = none free, timing skipped)
+	bool     gGpuAvailable = false;   // queries created OK and driver supports them
+	bool     gGpuTried = false;       // attempted creation already
+	double   gEffGpuMs = 0.0;
+	UInt32   gEffGpuSamples = 0;       // frames that yielded a valid (non-disjoint) reading
+	// Why a polled slot didn't produce a sample (diagnostics for the "no samples" case):
+	UInt32   gGpuRejNotReady = 0;      // GetData returned S_FALSE (GPU hadn't finished)
+	UInt32   gGpuRejDisjoint = 0;      // disjoint flag set / freq==0 / bad timestamps
+
+	// Per-effect GPU time accumulated over the report window, keyed by label-pointer
+	// identity (labels are string literals, so their addresses are stable).
+	struct EffBucket { const char* Name; double Ms; };
+	EffBucket gEffBuckets[EFF_MAXMARKS];
+	int       gEffBucketCount = 0;
+	void EffBucketAdd(const char* name, double ms) {
+		for (int i = 0; i < gEffBucketCount; i++)
+			if (gEffBuckets[i].Name == name) { gEffBuckets[i].Ms += ms; return; }
+		if (gEffBucketCount < EFF_MAXMARKS) gEffBuckets[gEffBucketCount++] = { name, ms };
+	}
+
+	inline LONGLONG EffQpcNow() { LARGE_INTEGER t; QueryPerformanceCounter(&t); return t.QuadPart; }
+	inline void EffCountEffect() { if (gEffProfilingEnabled) gEffCountFrame++; }
+	inline void EffCountPass()   { if (gEffProfilingEnabled) gPassCountFrame++; }
+	inline void EffCountBlit()   { if (gEffProfilingEnabled) gBlitCountFrame++; }
+
+	// Place a timestamp mark on the active slot, labelling the interval that follows.
+	void EffMarkRaw(GpuTimerSlot& s, const char* label) {
+		if (s.MarkCount >= EFF_MAXMARKS) return;
+		s.Ts[s.MarkCount]->Issue(D3DISSUE_END);
+		s.Label[s.MarkCount] = label;
+		s.MarkCount++;
+	}
+	// Public hook used from RenderEffects, right before each effect renders.
+	inline void EffMark(const char* label) {
+		if (!gEffProfilingEnabled || !gGpuAvailable || gGpuActiveSlot < 0) return;
+		EffMarkRaw(gGpuSlot[gGpuActiveSlot], label);
+	}
+
+	void EffGpuEnsureQueries(IDirect3DDevice9* Device) {
+		if (gGpuTried) return;
+		gGpuTried = true;
+		bool ok = true;
+		for (int i = 0; i < 2 && ok; i++) {
+			GpuTimerSlot& s = gGpuSlot[i];
+			ok = ok && Device->CreateQuery(D3DQUERYTYPE_TIMESTAMPDISJOINT, &s.Disjoint) == D3D_OK;
+			ok = ok && Device->CreateQuery(D3DQUERYTYPE_TIMESTAMPFREQ,     &s.Freq)     == D3D_OK;
+			for (int m = 0; m < EFF_MAXMARKS && ok; m++)
+				ok = ok && Device->CreateQuery(D3DQUERYTYPE_TIMESTAMP, &s.Ts[m]) == D3D_OK;
+		}
+		gGpuAvailable = ok;
+		Logger::Log(ok ? "[EffectProfile] GPU timestamp queries created OK."
+		              : "[EffectProfile] GPU timestamp queries unavailable (CreateQuery failed); reporting CPU only.");
+	}
+
+	// Poll a pending slot. We flush on the first GetData so a 1-frame-old query
+	// reliably completes; GetData still returns S_FALSE (non-blocking) if the GPU
+	// isn't done, so this never stalls the CPU. A slot that isn't ready stays
+	// Pending and is retried next frame — it is NEVER re-issued while pending
+	// (doing so corrupts the query so it never signals again).
+	void EffGpuTryCollect(GpuTimerSlot& s) {
+		if (!s.Pending) return;
+		BOOL   disjoint = FALSE;
+		UINT64 freq = 0;
+		if (s.Disjoint->GetData(&disjoint, sizeof(disjoint), D3DGETDATA_FLUSH) != S_OK) { gGpuRejNotReady++; return; }
+		if (s.Freq->GetData(&freq, sizeof(freq), 0)             != S_OK) { gGpuRejNotReady++; return; }
+		// Read every mark's timestamp; if any isn't ready yet, retry next frame.
+		UINT64 ts[EFF_MAXMARKS];
+		for (int m = 0; m < s.MarkCount; m++)
+			if (s.Ts[m]->GetData(&ts[m], sizeof(ts[m]), 0) != S_OK) { gGpuRejNotReady++; return; }
+		s.Pending = false;
+		if (disjoint || freq == 0 || s.MarkCount < 2) { gGpuRejDisjoint++; return; }
+		gEffGpuMs += (double)(ts[s.MarkCount - 1] - ts[0]) * 1000.0 / (double)freq;
+		gEffGpuSamples++;
+		// Interval [i, i+1] is the GPU time of the work labelled at mark i.
+		for (int i = 0; i + 1 < s.MarkCount; i++) {
+			if (ts[i + 1] < ts[i]) continue;
+			EffBucketAdd(s.Label[i], (double)(ts[i + 1] - ts[i]) * 1000.0 / (double)freq);
+		}
+	}
+
+	void EffectProfileChainBegin(IDirect3DDevice9* Device) {
+		gEffProfilingEnabled = TheSettingManager->SettingsMain.Develop.ProfileEffects != 0;
+		if (!gEffProfilingEnabled) return;
+		if (gEffQpcFreq == 0) { LARGE_INTEGER f; QueryPerformanceFrequency(&f); gEffQpcFreq = f.QuadPart; }
+		gEffCountFrame = gPassCountFrame = gBlitCountFrame = 0;
+		gEffCpuStart = EffQpcNow();
+
+		EffGpuEnsureQueries(Device);
+		gGpuActiveSlot = -1;
+		if (gGpuAvailable) {
+			// Only start a measurement on a slot whose previous result has been
+			// collected. If both are still pending (a stalled readback), skip timing
+			// this frame rather than re-issue and corrupt a pending query.
+			for (int i = 0; i < 2; i++) {
+				if (!gGpuSlot[i].Pending) { gGpuActiveSlot = i; break; }
+			}
+			if (gGpuActiveSlot >= 0) {
+				GpuTimerSlot& s = gGpuSlot[gGpuActiveSlot];
+				s.MarkCount = 0;
+				s.Disjoint->Issue(D3DISSUE_BEGIN);
+				EffMarkRaw(s, "(setup)"); // mark 0: start of chain
+			}
+		}
+	}
+
+	void EffectProfileChainEnd() {
+		if (!gEffProfilingEnabled) return;
+		gEffCpuMs += (double)(EffQpcNow() - gEffCpuStart) * 1000.0 / (double)gEffQpcFreq;
+		gEffCount += gEffCountFrame; gPassCount += gPassCountFrame; gBlitCount += gBlitCountFrame;
+		if (gEffCountFrame  > gEffMax)  gEffMax  = gEffCountFrame;
+		if (gPassCountFrame > gPassMax) gPassMax = gPassCountFrame;
+		if (gBlitCountFrame > gBlitMax) gBlitMax = gBlitCountFrame;
+
+		if (gGpuAvailable) {
+			if (gGpuActiveSlot >= 0) {
+				GpuTimerSlot& cur = gGpuSlot[gGpuActiveSlot];
+				EffMarkRaw(cur, "(end)"); // final mark closes the last effect's interval
+				cur.Freq->Issue(D3DISSUE_END);
+				cur.Disjoint->Issue(D3DISSUE_END);
+				cur.Pending = true;
+			}
+			// Collect any slot pending from a previous frame (not the one just issued).
+			for (int i = 0; i < 2; i++)
+				if (i != gGpuActiveSlot) EffGpuTryCollect(gGpuSlot[i]);
+		}
+
+		if (++gEffFrames < gEffReportFrames) return;
+		double inv = 1.0 / gEffFrames;
+		Logger::Log("[EffectProfile] avg over %d frames:", gEffFrames);
+		Logger::Log("[EffectProfile]   CPU chain   %8.4f ms/frame", gEffCpuMs * inv);
+		if (gEffGpuSamples)
+			Logger::Log("[EffectProfile]   GPU chain   %8.4f ms/frame  (%u samples)", gEffGpuMs / gEffGpuSamples, gEffGpuSamples);
+		else
+			Logger::Log("[EffectProfile]   GPU chain   (no samples: available=%d notReady=%u disjoint=%u)",
+				(int)gGpuAvailable, gGpuRejNotReady, gGpuRejDisjoint);
+		Logger::Log("[EffectProfile]   Effects     %6.2f /frame  (max %u)", gEffCount * inv, gEffMax);
+		Logger::Log("[EffectProfile]   Passes      %6.2f /frame  (max %u)", gPassCount * inv, gPassMax);
+		Logger::Log("[EffectProfile]   Blits       %6.2f /frame  (max %u)", gBlitCount * inv, gBlitMax);
+		// Per-effect GPU breakdown, averaged over measured frames, sorted by cost desc.
+		if (gEffGpuSamples && gEffBucketCount) {
+			Logger::Log("[EffectProfile]   per-effect GPU (ms/frame, measured frames):");
+			double gpuInv = 1.0 / gEffGpuSamples;
+			for (int a = 0; a < gEffBucketCount; a++) {
+				int best = a;
+				for (int b = a + 1; b < gEffBucketCount; b++)
+					if (gEffBuckets[b].Ms > gEffBuckets[best].Ms) best = b;
+				EffBucket t = gEffBuckets[a]; gEffBuckets[a] = gEffBuckets[best]; gEffBuckets[best] = t;
+				Logger::Log("[EffectProfile]     %-18s %8.4f", gEffBuckets[a].Name, gEffBuckets[a].Ms * gpuInv);
+			}
+		}
+		gEffFrames = 0;
+		gEffCpuMs = gEffGpuMs = 0.0; gEffGpuSamples = 0;
+		gGpuRejNotReady = gGpuRejDisjoint = 0;
+		gEffCount = gPassCount = gBlitCount = 0;
+		gEffMax = gPassMax = gBlitMax = 0;
+		for (int i = 0; i < gEffBucketCount; i++) gEffBuckets[i].Ms = 0.0;
+		gEffBucketCount = 0;
+	}
+}
+
 ShaderProgram::ShaderProgram() {
 
 	FloatShaderValues = NULL;
@@ -814,6 +1016,8 @@ void EffectRecord::Render(IDirect3DDevice9* Device, IDirect3DSurface9* RenderTar
 
 	UINT Passes;
 
+	EffCountEffect();
+	EffMark(ProfileName.c_str()); // open this effect's GPU-time interval (per-effect breakdown)
 	Effect->Begin(&Passes, NULL);
 	for (UINT p = 0; p < Passes; p++) {
 		if (ClearRenderTarget) Device->Clear(0L, NULL, D3DCLEAR_TARGET, D3DCOLOR_ARGB(0, 0, 0, 0), 1.0f, 0L);
@@ -821,6 +1025,7 @@ void EffectRecord::Render(IDirect3DDevice9* Device, IDirect3DSurface9* RenderTar
 		Device->DrawPrimitive(D3DPT_TRIANGLESTRIP, 0, 2);
 		Effect->EndPass();
 		Device->StretchRect(RenderTarget, NULL, RenderedSurface, NULL, D3DTEXF_NONE);
+		EffCountPass(); EffCountBlit();
 	}
 	Effect->End();
 
@@ -2907,7 +3112,15 @@ bool ShaderManager::LoadEffect(EffectRecord* TheEffect, char* Filename, char* Cu
 	bool IsLoaded = TheEffect->LoadEffect(Filename);
 
 	if (IsLoaded) {
-		if (CustomEffectName) ExtraEffects[std::string(CustomEffectName).substr(0, strlen(CustomEffectName) - 3)] = TheEffect;
+		if (CustomEffectName) {
+			std::string Name = std::string(CustomEffectName).substr(0, strlen(CustomEffectName) - 3);
+			TheEffect->ProfileName = Name;
+			ExtraEffects[Name] = TheEffect;
+		}
+		else {
+			const char* base = strrchr(Filename, '\\');
+			TheEffect->ProfileName = base ? base + 1 : Filename; // file basename, e.g. "GodRays"
+		}
 	}
 	else
 		DisposeEffect(TheEffect);
@@ -2946,19 +3159,26 @@ void ShaderManager::DisposeEffect(EffectRecord* TheEffect) {
 
 }
 
+void ShaderManager::ProfileBlitToSource(IDirect3DSurface9* RenderTarget) {
+	EffCountBlit();
+	TheRenderManager->device->StretchRect(RenderTarget, NULL, SourceSurface, NULL, D3DTEXF_NONE);
+}
+
 void ShaderManager::RenderEffects(IDirect3DSurface9* RenderTarget) {
 	SettingsMainStruct::EffectsStruct* Effects = &TheSettingManager->SettingsMain.Effects;
 	IDirect3DDevice9* Device = TheRenderManager->device;
 	TESWorldSpace* currentWorldSpace = Player->GetWorldSpace();
 	D3DXVECTOR4* SunDir = &TheShaderManager->ShaderConst.SunDir;
 
+	EffectProfileChainBegin(Device);
+
 	if (Effects->WetWorld && currentWorldSpace && ShaderConst.WetWorld.Data.x > 0.0f) {
-		Device->StretchRect(RenderTarget, NULL, SourceSurface, NULL, D3DTEXF_NONE);
+		ProfileBlitToSource(RenderTarget);
 		WetWorldEffect->SetCT();
 		WetWorldEffect->Render(Device, RenderTarget, RenderedSurface, false);
 	}
 	else if (Effects->SnowAccumulation && currentWorldSpace && ShaderConst.SnowAccumulation.Params.w > 0.0f) {
-		Device->StretchRect(RenderTarget, NULL, SourceSurface, NULL, D3DTEXF_NONE);
+		ProfileBlitToSource(RenderTarget);
 		SnowAccumulationEffect->SetCT();
 		SnowAccumulationEffect->Render(Device, RenderTarget, RenderedSurface, false);
 	}
@@ -2982,7 +3202,7 @@ void ShaderManager::RenderEffects(IDirect3DSurface9* RenderTarget) {
 		ShadowsInteriorsEffect->Render(Device, RenderTarget, RenderedSurface, false);
 	}
 	if (Effects->Bloom) {
-		Device->StretchRect(RenderTarget, NULL, SourceSurface, NULL, D3DTEXF_NONE);
+		ProfileBlitToSource(RenderTarget);
 		BloomEffect->SetCT();
 		BloomEffect->Render(Device, RenderTarget, RenderedSurface, false);
 	}
@@ -3010,50 +3230,52 @@ void ShaderManager::RenderEffects(IDirect3DSurface9* RenderTarget) {
 			}
 		}
 		if (Effects->AmbientOcclusion && ShaderConst.AmbientOcclusion.Enabled) {
-			Device->StretchRect(RenderTarget, NULL, SourceSurface, NULL, D3DTEXF_NONE);
+			ProfileBlitToSource(RenderTarget);
 			AmbientOcclusionEffect->SetCT();
 			AmbientOcclusionEffect->Render(Device, RenderTarget, RenderedSurface, false);
 		}
 		if (Effects->GodRays && currentWorldSpace && (ShaderConst.SunAmount.x >= 0.4 || ShaderConst.SunAmount.y > 0 || ShaderConst.SunAmount.z >= 0.3)) {
-			Device->StretchRect(RenderTarget, NULL, SourceSurface, NULL, D3DTEXF_NONE);
+			ProfileBlitToSource(RenderTarget);
 			GodRaysEffect->SetCT();
 			GodRaysEffect->Render(Device, RenderTarget, RenderedSurface, false);
 		}
 		else if (ShaderConst.MoonsExist && Effects->KhajiitRays && currentWorldSpace && (ShaderConst.SunAmount.x < 0.4 || ShaderConst.SunAmount.z < 0.3)) {
-			Device->StretchRect(RenderTarget, NULL, SourceSurface, NULL, D3DTEXF_NONE);
+			ProfileBlitToSource(RenderTarget);
 			SecundaRaysEffect->SetCT();
 			SecundaRaysEffect->Render(Device, RenderTarget, RenderedSurface, false);
-			Device->StretchRect(RenderTarget, NULL, SourceSurface, NULL, D3DTEXF_NONE);
+			ProfileBlitToSource(RenderTarget);
 			MasserRaysEffect->SetCT();
 			MasserRaysEffect->Render(Device, RenderTarget, RenderedSurface, false);
 		}
 		if (Effects->VolumetricFog && currentWorldSpace && ShaderConst.VolumetricFog.Data.w) {
-			Device->StretchRect(RenderTarget, NULL, SourceSurface, NULL, D3DTEXF_NONE);
+			ProfileBlitToSource(RenderTarget);
 			VolumetricFogEffect->SetCT();
 			VolumetricFogEffect->Render(Device, RenderTarget, RenderedSurface, false);
 		}
 	}
 	if (Effects->VolumetricLight && currentWorldSpace) {
-		Device->StretchRect(RenderTarget, NULL, SourceSurface, NULL, D3DTEXF_NONE);
+		ProfileBlitToSource(RenderTarget);
 		VolumetricLightEffect->SetCT();
 		VolumetricLightEffect->Render(Device, RenderTarget, RenderedSurface, false);
 	}
 	if (Effects->SMAA) {
-		Device->StretchRect(RenderTarget, NULL, SourceSurface, NULL, D3DTEXF_NONE);
+		ProfileBlitToSource(RenderTarget);
 		Device->SetRenderTarget(0, RenderSurfaceSMAA);
 		SMAAEffect->SetCT();
 		SMAAEffect->Render(Device, RenderSurfaceSMAA, RenderedSurface, true);
 		Device->StretchRect(RenderSurfaceSMAA, NULL, RenderTarget, NULL, D3DTEXF_NONE);
+		EffCountBlit();
 		Device->SetRenderTarget(0, RenderTarget);
 	}
 	if (Effects->TAA) {
-		Device->StretchRect(RenderTarget, NULL, SourceSurface, NULL, D3DTEXF_NONE);
+		ProfileBlitToSource(RenderTarget);
 		TAAEffect->SetCT();
 		TAAEffect->Render(Device, RenderTarget, RenderedSurface, false);
 		Device->StretchRect(RenderedSurface, NULL, TAASurface, NULL, D3DTEXF_NONE);
+		EffCountBlit();
 	}
 	if (Effects->DepthOfField && ShaderConst.DepthOfField.Enabled) {
-		Device->StretchRect(RenderTarget, NULL, SourceSurface, NULL, D3DTEXF_NONE);
+		ProfileBlitToSource(RenderTarget);
 		DepthOfFieldEffect->SetCT();
 		DepthOfFieldEffect->Render(Device, RenderTarget, RenderedSurface, false);
 	}
@@ -3076,7 +3298,7 @@ void ShaderManager::RenderEffects(IDirect3DSurface9* RenderTarget) {
 	if (Effects->Extra) {
 		for (ExtraEffectsList::iterator iter = ExtraEffects.begin(); iter != ExtraEffects.end(); ++iter) {
 			if (iter->second->Enabled) {
-				Device->StretchRect(RenderTarget, NULL, SourceSurface, NULL, D3DTEXF_NONE);
+				ProfileBlitToSource(RenderTarget);
 				iter->second->SetCT();
 				iter->second->Render(Device, RenderTarget, RenderedSurface, false);
 			}
@@ -3086,6 +3308,9 @@ void ShaderManager::RenderEffects(IDirect3DSurface9* RenderTarget) {
 		CinemaEffect->SetCT();
 		CinemaEffect->Render(Device, RenderTarget, RenderedSurface, false);
 	}
+
+	EffectProfileChainEnd(); // exclude the (rare) screenshot save below from timing
+
 	if (TheKeyboardManager->OnKeyDown(TheSettingManager->SettingsMain.Main.ScreenshotKey)) {
 		char Filename[MAX_PATH];
 		char Name[80];

@@ -270,6 +270,7 @@ struct SettingsMainStruct {
 		UInt8	TraceShaders;
 		UInt8	LogShaders;
 		UInt8	ProfileShadows;
+		UInt8	ProfileEffects;
 	};
 
 	MainStruct					Main;

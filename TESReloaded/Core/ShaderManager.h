@@ -373,6 +373,7 @@ public:
 	char*	 					Source;
 	ID3DXBuffer*				Errors;
 	ID3DXEffect*				Effect;
+	std::string					ProfileName = "?"; // label for the ProfileEffects per-effect GPU breakdown
 };
 
 typedef std::map<std::string, EffectRecord*> ExtraEffectsList;
@@ -413,6 +414,7 @@ public:
 	void					RenderEffectsPreHdr(IDirect3DSurface9* RenderTarget);
 	void					RenderEffectsPostHdr(IDirect3DSurface9* RenderTarget);
 	void					RenderEffects(IDirect3DSurface9* RenderTarget);
+	void					ProfileBlitToSource(IDirect3DSurface9* RenderTarget); // counted scene->SourceSurface copy
 	void					SwitchShaderStatus(const char* Name);
 	void					SetCustomConstant(const char* Name, D3DXVECTOR4 Value);
 	void					SetExtraEffectEnabled(const char* Name, bool Value);
