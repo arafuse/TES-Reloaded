@@ -422,6 +422,7 @@ SettingManager::SettingManager() {
 	SettingsMain.Develop.CompileEffects = GetPrivateProfileIntA("Develop", "CompileEffects", 0, Filename);
 	SettingsMain.Develop.TraceShaders = GetPrivateProfileIntA("Develop", "TraceShaders", 0, Filename);
 	SettingsMain.Develop.LogShaders = GetPrivateProfileIntA("Develop", "LogShaders", 0, Filename);
+	SettingsMain.Develop.ProfileShadows = GetPrivateProfileIntA("Develop", "ProfileShadows", 0, Filename);
 
 	GameLoading = false;
 
