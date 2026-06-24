@@ -87,6 +87,13 @@ float LookupLightAmount(samplerCUBE buffer, float4 WorldPos, float4 LightPos) {
 	LightDir = LightDir / Distance;
 	Distance = Distance / LightPos.w;
 
+	// Range cull: beyond the light's far plane (Distance >= 1) the PCF below is
+	// wasted work. When Distance >= 1, darkness saturates to 1, which forces every
+	// Lookup() to return 1.0, so the loop already yields 1.0 here -- this early-out
+	// is exactly equivalent but skips the SAMPLE_NUM_SKIN texCUBE fetches.
+	if (Distance >= 1.0f)
+		return 1.0f;
+
 	float3 ShadowCoord = LightDir;
 	float darkness = saturate(Distance);
 	float darknessStart = 0.9f;
