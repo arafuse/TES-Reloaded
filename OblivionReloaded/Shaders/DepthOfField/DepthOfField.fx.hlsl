@@ -86,7 +86,7 @@ float4 SmartBlur(VSOUT IN) : COLOR0
     float c = TESR_DepthOfFieldBlur.w * 2 * TESR_DepthOfFieldData.y * (tex2D(TESR_RenderedBuffer, IN.UVCoord).r - 0.5);
     float amount = 1;
  
-    for (int i = 0; i < 12; i++)
+    for (int i = 0; i < 8; i++) // Perf: 8 of 12 Poisson taps
     {
         float2 dir = taps[i];
         float2 s_tex = IN.UVCoord + TESR_ReciprocalResolution.xy * dir * c;
@@ -127,12 +127,6 @@ float4 BlurPS(VSOUT IN, uniform bool VertBlur) : COLOR0
 		 
 			color += tex2D(TESR_RenderedBuffer, float2(IN.UVCoord.x - TESR_ReciprocalResolution.x * 2 * scale, IN.UVCoord.y)).rgb * 28;
 			color += tex2D(TESR_RenderedBuffer, float2(IN.UVCoord.x + TESR_ReciprocalResolution.x * 2 * scale, IN.UVCoord.y)).rgb * 28;
-		 
-			color += tex2D(TESR_RenderedBuffer, float2(IN.UVCoord.x - TESR_ReciprocalResolution.x * 3 * scale, IN.UVCoord.y)).rgb * 8;
-			color += tex2D(TESR_RenderedBuffer, float2(IN.UVCoord.x + TESR_ReciprocalResolution.x * 3 * scale, IN.UVCoord.y)).rgb * 8;
-		 
-			color += tex2D(TESR_RenderedBuffer, float2(IN.UVCoord.x - TESR_ReciprocalResolution.x * 4 * scale, IN.UVCoord.y)).rgb * 1;
-			color += tex2D(TESR_RenderedBuffer, float2(IN.UVCoord.x + TESR_ReciprocalResolution.x * 4 * scale, IN.UVCoord.y)).rgb * 1;
 		}
 		else {
 			color += tex2D(TESR_RenderedBuffer, float2(IN.UVCoord.x, IN.UVCoord.y - TESR_ReciprocalResolution.y * 1 * scale)).rgb * 56;
@@ -140,15 +134,10 @@ float4 BlurPS(VSOUT IN, uniform bool VertBlur) : COLOR0
 		 
 			color += tex2D(TESR_RenderedBuffer, float2(IN.UVCoord.x, IN.UVCoord.y - TESR_ReciprocalResolution.y * 2 * scale)).rgb * 28;
 			color += tex2D(TESR_RenderedBuffer, float2(IN.UVCoord.x, IN.UVCoord.y + TESR_ReciprocalResolution.y * 2 * scale)).rgb * 28;
-		 
-			color += tex2D(TESR_RenderedBuffer, float2(IN.UVCoord.x, IN.UVCoord.y - TESR_ReciprocalResolution.y * 3 * scale)).rgb * 8;
-			color += tex2D(TESR_RenderedBuffer, float2(IN.UVCoord.x, IN.UVCoord.y + TESR_ReciprocalResolution.y * 3 * scale)).rgb * 8;
-		 
-			color += tex2D(TESR_RenderedBuffer, float2(IN.UVCoord.x, IN.UVCoord.y - TESR_ReciprocalResolution.y * 4 * scale)).rgb * 1;
-			color += tex2D(TESR_RenderedBuffer, float2(IN.UVCoord.x, IN.UVCoord.y + TESR_ReciprocalResolution.y * 4 * scale)).rgb * 1;
 		}
-			
-		color = color / 256;
+
+		// Perf: 5-tap (center + +/-1 + +/-2), was 9-tap. Weights 70 + 2*(56+28) = 238.
+		color = color / 238;
 	}
 	else
 		color = tex2D(TESR_SourceBuffer, IN.UVCoord).rgb;
