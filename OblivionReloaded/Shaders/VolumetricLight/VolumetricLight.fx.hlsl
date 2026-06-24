@@ -112,7 +112,7 @@ static const float Zdiff = farZ - nearZ;
 static const float BIAS = 0.001f;
 static const float darkness = 0.8f;
 
-static const int MARCH_NUM = 25;
+static const int MARCH_NUM = 14; // Perf: was 25. Ray-march iteration count (both marches).
 static const float SCATTERING = 0.1f;
 static const float SCATTERING_SKY = 0.6f;
 static const float PI = 3.1415926538f;
@@ -344,19 +344,13 @@ float4 VolumetricLightBaseSky(VSOUT IN) : COLOR0
     float stepLength = rayLength / MARCH_NUM;
     float3 step = rayDirection * stepLength;
 
-    float3 currentPosition = startPosition;
-    currentPosition += step * DITHER_PATTERN[int(abs(uv.x) * TESR_VolumetricLightData4.z) % 4][int(abs(uv.y) * TESR_VolumetricLightData4.w) % 4];
-    float3 accumLight = 0.0f.xxx;
-    float3 baseLightScatter = 0.0f;
-
-    for (int i = 0; i < MARCH_NUM; i++)
-    {
-        float scatter = ComputeScatteringSky(dot(rayDirection, TESR_ShadowLightDir)).xxx;
-        float baseScatter = ComputeScattering(dot(rayDirection, TESR_ShadowLightDir), 0.2f).xxx;
-        accumLight += (scatter * ((TESR_VolumetricLightData6.xyz) * TESR_ShadowLightDir.w));
-        baseLightScatter += baseScatter;
-        currentPosition += step;
-    }
+    // Perf: this loop was fully loop-invariant (scatter/baseScatter depend only on
+    // rayDirection, currentPosition was never read). Folded to closed form -- exactly
+    // equivalent to summing the same value MARCH_NUM times, with zero visual change.
+    float scatter = ComputeScatteringSky(dot(rayDirection, TESR_ShadowLightDir)).xxx;
+    float baseScatter = ComputeScattering(dot(rayDirection, TESR_ShadowLightDir), 0.2f).xxx;
+    float3 accumLight = (scatter * ((TESR_VolumetricLightData6.xyz) * TESR_ShadowLightDir.w)) * MARCH_NUM;
+    float3 baseLightScatter = (baseScatter * MARCH_NUM).xxx;
 
     accumLight /= (MARCH_NUM / 0.4f); //TODO eliminate the magic number here
     baseLightScatter /= (MARCH_NUM);
