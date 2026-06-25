@@ -446,6 +446,8 @@ public:
 	IDirect3DSurface9*		EffectSurface;
 	IDirect3DTexture9*		TAATexture;
 	IDirect3DSurface9*		TAASurface;
+	IDirect3DTexture9*		PingTexture;   // multi-pass ping-pong scratch (avoids per-pass blits)
+	IDirect3DSurface9*		PingSurface;
 	D3DMATRIX				PrevWorldViewProjMatrix;
 	bool					RenderedBufferFilled;
 	bool					DepthBufferFilled;
