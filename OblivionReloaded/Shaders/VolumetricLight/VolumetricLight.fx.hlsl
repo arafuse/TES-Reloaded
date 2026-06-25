@@ -111,6 +111,10 @@ static const float Zdiff = farZ - nearZ;
 
 static const float BIAS = 0.001f;
 static const float darkness = 0.8f;
+// Combined world->shadow transforms. Both operands are uniforms, so D3DX folds these to
+// once-per-draw CPU preshaders, removing a mat4 mul per ray-march step (see main loop).
+static const float4x4 ShadowNearCombined = mul(TESR_WorldViewProjectionTransform, TESR_ShadowCameraToLightTransformNear);
+static const float4x4 ShadowFarCombined = mul(TESR_WorldViewProjectionTransform, TESR_ShadowCameraToLightTransformFar);
 
 static const int MARCH_NUM = 14; // Perf: was 25. Ray-march iteration count (both marches).
 static const float SCATTERING = 0.1f;
@@ -299,7 +303,8 @@ float flowNoise(float3 uvw)
 float ComputeScatteringSky(float lightDotView)
 {
     float result = 1.0f - SCATTERING_SKY * SCATTERING_SKY;
-    result /= (4.0f * PI * pow(1.0f + SCATTERING_SKY * SCATTERING_SKY - (2.0f * SCATTERING_SKY) * lightDotView, 1.5f));
+    float g = 1.0f + SCATTERING_SKY * SCATTERING_SKY - (2.0f * SCATTERING_SKY) * lightDotView; // >= 0
+    result /= (4.0f * PI * (g * sqrt(g))); // Perf: pow(g,1.5) -> g*sqrt(g); fxc doesn't fold pow 1.5
     return result;
 }
 
@@ -307,7 +312,8 @@ float ComputeScatteringSkyInt(float lightDotView, float media)
 {
     float scatter = min(SCATTERING + media, 1.0f);
     float result = 1.0f - scatter * scatter;
-    result /= (4.0f * PI * pow(1.0f + scatter * scatter - (2.0f * scatter) * lightDotView, 1.5f));
+    float g = 1.0f + scatter * scatter - (2.0f * scatter) * lightDotView; // >= 0
+    result /= (4.0f * PI * (g * sqrt(g))); // Perf: pow(g,1.5) -> g*sqrt(g)
     return result;
 }
 
@@ -315,7 +321,8 @@ float ComputeScattering(float lightDotView, float media)
 {
     float scatter = min(SCATTERING + media, 0.5f);
     float result = 1.0f - scatter * scatter;
-    result /= (4.0f * PI * pow(1.0f + scatter * scatter - (2.0f * scatter) * lightDotView, 1.5f));
+    float g = 1.0f + scatter * scatter - (2.0f * scatter) * lightDotView; // >= 0
+    result /= (4.0f * PI * (g * sqrt(g))); // Perf: pow(g,1.5) -> g*sqrt(g)
     return result;
 }
 
@@ -440,9 +447,9 @@ float4 VolumetricLight(VSOUT IN) : COLOR0
    
     for (int i = 0; i < MARCH_NUM; i++)
     {
-        float4 pos = mul(float4(currentPosition, 1.0f), TESR_WorldViewProjectionTransform);
-        float4 ShadowNear = mul(pos, TESR_ShadowCameraToLightTransformNear);
-        float4 ShadowFar = mul(pos, TESR_ShadowCameraToLightTransformFar);
+        // Perf: collapse pos=mul(cp,WVP) + two muls into two preshader-combined muls.
+        float4 ShadowNear = mul(float4(currentPosition, 1.0f), ShadowNearCombined);
+        float4 ShadowFar = mul(float4(currentPosition, 1.0f), ShadowFarCombined);
         float4 cpos = float4(currentPosition + shadowCameraVector, 1.0f);
         Shadow = GetLightAmount(ShadowNear, ShadowFar);
 
