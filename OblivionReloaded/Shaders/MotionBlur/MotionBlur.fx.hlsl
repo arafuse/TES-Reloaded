@@ -1,6 +1,6 @@
 // Motion Blur fullscreen shader for Oblivion/Skyrim Reloaded
 
-#define BlurSamples 24
+#define BlurSamples 14 // Perf: was 24
 
 float4 TESR_ReciprocalResolution;
 float4 TESR_MotionBlurParams;

@@ -2,7 +2,7 @@
 
 //TODO: all radius should be resolution dependent but these are good enough for now
 static const float RADIUS = 3.0 / 500.0;
-static const uint SAMPLE_NUM = 9;
+static const uint SAMPLE_NUM = 4; // Perf: was 9. Point/cube shadow PCF taps.
 static const uint TOTAL_SAMPLE_NUM = 32;
 static const float3 POISSON_SAMPLES[TOTAL_SAMPLE_NUM] =
 {

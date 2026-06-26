@@ -1019,15 +1019,61 @@ void EffectRecord::Render(IDirect3DDevice9* Device, IDirect3DSurface9* RenderTar
 	EffCountEffect();
 	EffMark(ProfileName.c_str()); // open this effect's GPU-time interval (per-effect breakdown)
 	Effect->Begin(&Passes, NULL);
+
+	// Original per-pass-copy path for single-pass effects (nothing to ping-pong) and
+	// for clear-based effects (SMAA): SMAA's passes read dedicated intermediate textures
+	// rather than the previous pass via TESR_RenderedBuffer, so the ping-pong assumption
+	// below does not hold for it.
+	if (Passes <= 1 || ClearRenderTarget) {
+		for (UINT p = 0; p < Passes; p++) {
+			if (ClearRenderTarget) Device->Clear(0L, NULL, D3DCLEAR_TARGET, D3DCOLOR_ARGB(0, 0, 0, 0), 1.0f, 0L);
+			Effect->BeginPass(p);
+			Device->DrawPrimitive(D3DPT_TRIANGLESTRIP, 0, 2);
+			Effect->EndPass();
+			Device->StretchRect(RenderTarget, NULL, RenderedSurface, NULL, D3DTEXF_NONE);
+			EffCountPass(); EffCountBlit();
+		}
+		Effect->End();
+		return;
+	}
+
+	// Multi-pass ping-pong. Every pass reads the previous pass's output via
+	// TESR_RenderedBuffer (s0) -- the original code guaranteed this by copying the
+	// render target into RenderedSurface after each pass. Instead we alternate the
+	// render target between RenderedSurface (A, which also holds the s0 input) and the
+	// scratch PingSurface (B), rebinding s0 to whichever texture holds the latest output.
+	// This removes the per-pass full-screen FP16 StretchRect; only one reconciling copy
+	// remains. (Effects needing the pre-effect image use TESR_SourceBuffer, untouched.)
+	IDirect3DTexture9* texA = TheShaderManager->RenderedTexture; // backs RenderedSurface; holds the input
+	IDirect3DSurface9* surfA = RenderedSurface;
+	IDirect3DTexture9* texB = TheShaderManager->PingTexture;
+	IDirect3DSurface9* surfB = TheShaderManager->PingSurface;
+
 	for (UINT p = 0; p < Passes; p++) {
-		if (ClearRenderTarget) Device->Clear(0L, NULL, D3DCLEAR_TARGET, D3DCOLOR_ARGB(0, 0, 0, 0), 1.0f, 0L);
+		// Pass p writes B when p is even, A when p is odd; it reads the buffer written by
+		// pass p-1 (texA for pass 0, the input).
+		IDirect3DSurface9* dstSurf = (p & 1) ? surfA : surfB;
+		IDirect3DTexture9* srcTex  = (p == 0) ? texA : ((p & 1) ? texB : texA);
+		Device->SetTexture(0, srcTex);
+		Device->SetRenderTarget(0, dstSurf);
 		Effect->BeginPass(p);
 		Device->DrawPrimitive(D3DPT_TRIANGLESTRIP, 0, 2);
 		Effect->EndPass();
-		Device->StretchRect(RenderTarget, NULL, RenderedSurface, NULL, D3DTEXF_NONE);
-		EffCountPass(); EffCountBlit();
+		EffCountPass();
 	}
 	Effect->End();
+
+	// Final image is in B when the last pass index (Passes - 1) is even, else in A.
+	if (!((Passes - 1) & 1)) {
+		Device->StretchRect(surfB, NULL, surfA, NULL, D3DTEXF_NONE); // make RenderedSurface (s0 input for next effect) final
+		EffCountBlit();
+	}
+	Device->StretchRect(surfA, NULL, RenderTarget, NULL, D3DTEXF_NONE); // restore the original contract: RenderTarget holds final
+	EffCountBlit();
+
+	// Restore the inter-effect state the chain expects (device RT = RenderTarget, s0 = RenderedTexture).
+	Device->SetRenderTarget(0, RenderTarget);
+	Device->SetTexture(0, texA);
 
 }
 
@@ -1047,6 +1093,8 @@ ShaderManager::ShaderManager() {
 	RenderSurfaceSMAA = NULL;
 	EffectTexture = NULL;
 	EffectSurface = NULL;
+	PingTexture = NULL;
+	PingSurface = NULL;
 	RenderedBufferFilled = false;
 	DepthBufferFilled = false;
 	EffectVertex = NULL;
@@ -1104,11 +1152,13 @@ ShaderManager::ShaderManager() {
 	TheRenderManager->device->CreateTexture(TheRenderManager->width, TheRenderManager->height, 1, D3DUSAGE_RENDERTARGET, D3DFMT_A16B16G16R16F, D3DPOOL_DEFAULT, &RenderTextureSMAA, NULL);
 	TheRenderManager->device->CreateTexture(TheRenderManager->width, TheRenderManager->height, 1, D3DUSAGE_RENDERTARGET, D3DFMT_A16B16G16R16F, D3DPOOL_DEFAULT, &EffectTexture, NULL);
 	TheRenderManager->device->CreateTexture(TheRenderManager->width, TheRenderManager->height, 1, D3DUSAGE_RENDERTARGET, D3DFMT_A16B16G16R16F, D3DPOOL_DEFAULT, &TAATexture, NULL);
+	TheRenderManager->device->CreateTexture(TheRenderManager->width, TheRenderManager->height, 1, D3DUSAGE_RENDERTARGET, D3DFMT_A16B16G16R16F, D3DPOOL_DEFAULT, &PingTexture, NULL);
 	SourceTexture->GetSurfaceLevel(0, &SourceSurface);
 	RenderedTexture->GetSurfaceLevel(0, &RenderedSurface);
 	RenderTextureSMAA->GetSurfaceLevel(0, &RenderSurfaceSMAA);
 	EffectTexture->GetSurfaceLevel(0, &EffectSurface);
 	TAATexture->GetSurfaceLevel(0, &TAASurface);
+	PingTexture->GetSurfaceLevel(0, &PingSurface);
 	UseIntervalUpdate = TheSettingManager->SettingsShadows.Exteriors.UseIntervalUpdate;
 	if (TheSettingManager->SettingsMain.Develop.CompileShaders) {
 		CompileShaders(ShadersPath);
@@ -3248,7 +3298,8 @@ void ShaderManager::RenderEffects(IDirect3DSurface9* RenderTarget) {
 			MasserRaysEffect->Render(Device, RenderTarget, RenderedSurface, false);
 		}
 		if (Effects->VolumetricFog && currentWorldSpace && ShaderConst.VolumetricFog.Data.w) {
-			ProfileBlitToSource(RenderTarget);
+			// VolumetricFog samples only TESR_RenderedBuffer/TESR_DepthBuffer, never
+			// TESR_SourceBuffer -- so the scene->SourceSurface blit was wasted work.
 			VolumetricFogEffect->SetCT();
 			VolumetricFogEffect->Render(Device, RenderTarget, RenderedSurface, false);
 		}

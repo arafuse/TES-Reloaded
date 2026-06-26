@@ -26,38 +26,29 @@ static const float sinAngleBias = sin(angleBiasRadians);
 static const float2 OffsetMaskH = float2(1.0f, 0.0f);
 static const float2 OffsetMaskV = float2(0.0f, 1.0f);
 static const float PI = 3.14159265;
-static const int cKernelSize = 12;
+// Perf: 7-tap blur (center + 6 offsets) instead of 13-tap (center + 12).
+// Gaussian sigma=2.0, renormalized so center + sum(offsets) == 1.
+// Center weight (0.21609) is the WeightSum seed in BlurPS below.
+static const int cKernelSize = 6;
 
-static const float BlurWeights[cKernelSize] = 
+static const float BlurWeights[cKernelSize] =
 {
-	0.057424882f,
-	0.058107773f,
-	0.061460144f,
-	0.071020611f,
-	0.088092873f,
-	0.106530916f,
-	0.106530916f,
-	0.088092873f,
-	0.071020611f,
-	0.061460144f,
-	0.058107773f,
-	0.057424882f
+	0.07017f,
+	0.13107f,
+	0.19071f,
+	0.19071f,
+	0.13107f,
+	0.07017f
 };
- 
-static const float2 BlurOffsets[cKernelSize] = 
+
+static const float2 BlurOffsets[cKernelSize] =
 {
-	float2(-6.0f * TESR_ReciprocalResolution.x, -6.0f * TESR_ReciprocalResolution.y),
-	float2(-5.0f * TESR_ReciprocalResolution.x, -5.0f * TESR_ReciprocalResolution.y),
-	float2(-4.0f * TESR_ReciprocalResolution.x, -4.0f * TESR_ReciprocalResolution.y),
 	float2(-3.0f * TESR_ReciprocalResolution.x, -3.0f * TESR_ReciprocalResolution.y),
 	float2(-2.0f * TESR_ReciprocalResolution.x, -2.0f * TESR_ReciprocalResolution.y),
 	float2(-1.0f * TESR_ReciprocalResolution.x, -1.0f * TESR_ReciprocalResolution.y),
 	float2( 1.0f * TESR_ReciprocalResolution.x,  1.0f * TESR_ReciprocalResolution.y),
 	float2( 2.0f * TESR_ReciprocalResolution.x,  2.0f * TESR_ReciprocalResolution.y),
-	float2( 3.0f * TESR_ReciprocalResolution.x,  3.0f * TESR_ReciprocalResolution.y),
-	float2( 4.0f * TESR_ReciprocalResolution.x,  4.0f * TESR_ReciprocalResolution.y),
-	float2( 5.0f * TESR_ReciprocalResolution.x,  5.0f * TESR_ReciprocalResolution.y),
-	float2( 6.0f * TESR_ReciprocalResolution.x,  6.0f * TESR_ReciprocalResolution.y)
+	float2( 3.0f * TESR_ReciprocalResolution.x,  3.0f * TESR_ReciprocalResolution.y)
 };
  
 struct VSOUT
@@ -177,7 +168,7 @@ float4 AOPass(VSOUT IN) : COLOR0
 
 float4 BlurPS(VSOUT IN, uniform float2 OffsetMask) : COLOR0
 {
-	float WeightSum = 0.114725602f;
+	float WeightSum = 0.21609f; // center tap weight (matches cKernelSize=6 Gaussian)
 	float4 ao = tex2D(TESR_RenderedBuffer, IN.UVCoord);
 	ao.r = ao.r * WeightSum;
  
