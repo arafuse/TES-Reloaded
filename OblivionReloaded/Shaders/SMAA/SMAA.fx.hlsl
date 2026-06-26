@@ -79,7 +79,7 @@ float4 TESR_ReciprocalResolution;
  * Range: [0, 98]
  */
 #ifndef SMAA_MAX_SEARCH_STEPS
-#define SMAA_MAX_SEARCH_STEPS 32
+#define SMAA_MAX_SEARCH_STEPS 16 // Perf: was 32
 #endif
 
 /**
@@ -93,7 +93,7 @@ float4 TESR_ReciprocalResolution;
  * steps), but it can have a significant impact on older machines.
  */
 #ifndef SMAA_MAX_SEARCH_STEPS_DIAG
-#define SMAA_MAX_SEARCH_STEPS_DIAG 16
+#define SMAA_MAX_SEARCH_STEPS_DIAG 8 // Perf: was 16
 #endif
 
 /**

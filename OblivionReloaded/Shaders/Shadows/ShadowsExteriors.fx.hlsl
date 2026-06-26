@@ -137,12 +137,13 @@ float GetLightAmountFar(float4 ShadowPos) {
 
 	ShadowPos.x = ShadowPos.x * 0.5f + 0.5f;
 	ShadowPos.y = ShadowPos.y * -0.5f + 0.5f;
-	for (x = -0.5f; x <= 0.5f; x += 0.5f) {
-		for (y = -0.5f; y <= 0.5f; y += 0.5f) {
+	// Perf: 2x2 = 4 taps (was 3x3 = 9). Aggressive quality trade.
+	for (x = -0.5f; x <= 0.5f; x += 1.0f) {
+		for (y = -0.5f; y <= 0.5f; y += 1.0f) {
 			Shadow += LookupFar(ShadowPos, float2(x, y));
 		}
 	}
-	Shadow /= 9.0f;
+	Shadow /= 4.0f;
 	return Shadow;
 
 }
@@ -179,12 +180,13 @@ float GetLightAmount(float4 WorldPos, float4 ShadowPos, float4 ShadowPosFar, flo
 	ShadowPos.x = ShadowPos.x * 0.5f + 0.5f;
 	ShadowPos.y = ShadowPos.y * -0.5f + 0.5f;
 
-	for (y = -2.5f; y <= 2.5f; y += 1.0f) {
-		for (x = -2.5f; x <= 2.5f; x += 1.0f) {
+	// Perf: 4x4 = 16 taps (was 6x6 = 36). Aggressive quality trade.
+	for (y = -1.5f; y <= 1.5f; y += 1.0f) {
+		for (x = -1.5f; x <= 1.5f; x += 1.0f) {
 			Shadow += Lookup(ShadowPos, float2(x, y), bias);
 		}
 	}
-	Shadow /= 36.0f;
+	Shadow /= 16.0f;
 
 	Shadow += AddProximityLight(WorldPos, TESR_ShadowLightPosition0);
 	Shadow += AddProximityLight(WorldPos, TESR_ShadowLightPosition1);

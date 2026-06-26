@@ -1,5 +1,5 @@
 // Rain fullscreen shader for Oblivion Reloaded
-#define RainLayers 40
+#define RainLayers 24 // Perf: was 40. Number of depth-stacked rain-streak layers.
 
 float4x4 TESR_WorldViewProjectionTransform;
 float4x4 TESR_ViewTransform;
@@ -22,10 +22,13 @@ static const float rangeZ = farZ - nearZ;
 static const float timetick = TESR_Tick.y / 1500.0f;
 static const float hscale = 0.025f;
 static const float3x3 p = float3x3(30.323122,30.323122,30.323122,30.323122,30.323122,30.323122,30.323122,30.323122,30.323122);
+// Combined world->ortho transform. Both operands are uniforms, so D3DX folds this to a
+// once-per-draw CPU preshader -- lets the occlusion march step incrementally (below).
+static const float4x4 OrthoCombined = mul(TESR_WorldViewProjectionTransform, TESR_ShadowCameraToLightTransformOrtho);
 
 #define DEPTH 8.0
 #define SPEED 8.0
-#define OCCLUSION_STEPS 10
+#define OCCLUSION_STEPS 6 // Perf: was 10.
 #define MAX_RAIN_DEPTH 2000.0
 
 struct VSOUT
@@ -99,13 +102,14 @@ float4 Rain( VSOUT IN ) : COLOR0
 	float marchDepth = min(depth, MAX_RAIN_DEPTH);
 	float stepSize = marchDepth / OCCLUSION_STEPS;
 
-	// Forward ray march: accumulate open-air fraction from camera to surface
+	// Forward ray march: accumulate open-air fraction from camera to surface.
+	// The per-step transform is affine, so step the homogeneous ortho position by a
+	// constant delta each iteration instead of doing two matrix muls per step.
+	float4 stepOrtho = mul(float4(TESR_CameraPosition.xyz, 1.0f), OrthoCombined);
+	float4 stepOrthoDelta = mul(float4(world * stepSize, 0.0f), OrthoCombined);
 	float openSteps = 0.0f;
 	for (int i = 1; i <= OCCLUSION_STEPS; i++) {
-		float3 stepPos = TESR_CameraPosition.xyz + world * (stepSize * i);
-		float4 stepWorld = float4(stepPos, 1.0f);
-		float4 stepClip = mul(stepWorld, TESR_WorldViewProjectionTransform);
-		float4 stepOrtho = mul(stepClip, TESR_ShadowCameraToLightTransformOrtho);
+		stepOrtho += stepOrthoDelta;
 		openSteps += GetOrtho(stepOrtho);
 	}
 	float ortho = openSteps / OCCLUSION_STEPS;
