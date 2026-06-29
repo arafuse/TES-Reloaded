@@ -34,6 +34,7 @@ float LookupLightAmount(samplerCUBE buffer, float4 WorldPos, float4 LightPos) {
 }
 
 float GetLightAmount(float4 pos) {
+	return 1.0f; // SHADOWS DISABLED: point/cube skin shadow sampling dummied out (reference code below)
 
 	float shadows[11];
 	if (TESR_ShadowLightPosition[0].w) shadows[0] = LookupLightAmount(TESR_ShadowCubeMapBuffer0, pos, TESR_ShadowLightPosition[0]);
