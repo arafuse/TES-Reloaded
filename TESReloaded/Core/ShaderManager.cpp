@@ -3232,6 +3232,7 @@ void ShaderManager::RenderEffects(IDirect3DSurface9* RenderTarget) {
 		SnowAccumulationEffect->SetCT();
 		SnowAccumulationEffect->Render(Device, RenderTarget, RenderedSurface, false);
 	}
+#if 0 // SHADOWS DISABLED: image-space shadow-apply passes (exterior directional, exterior point, interior) skipped — maps are no longer generated so these full-screen passes are pure waste. Dead reference.
 	if (TheSettingManager->SettingsShadows.Exteriors.Enabled && TheSettingManager->SettingsShadows.Exteriors.UsePostProcessing && currentWorldSpace) {
 		ShadowsExteriorsEffect->SetCT();
 		ShadowsExteriorsEffect->Render(Device, RenderTarget, RenderedSurface, false);
@@ -3251,6 +3252,7 @@ void ShaderManager::RenderEffects(IDirect3DSurface9* RenderTarget) {
 		ShadowsInteriorsEffect->SetCT();
 		ShadowsInteriorsEffect->Render(Device, RenderTarget, RenderedSurface, false);
 	}
+#endif // SHADOWS DISABLED
 	if (Effects->Bloom) {
 		ProfileBlitToSource(RenderTarget);
 		BloomEffect->SetCT();

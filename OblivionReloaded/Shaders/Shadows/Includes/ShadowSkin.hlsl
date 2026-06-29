@@ -28,6 +28,7 @@ float LookupEye(float4 ShadowPos, float2 OffSet) {
 }
 
 float GetLightAmountSkinFar(float4 ShadowPos, float4 InvPos) {
+	return 1.0f; // SHADOWS DISABLED: skin shadow sampling dummied out (reference code below)
 
 	float Shadow = 0.0f;
 	float x;
@@ -68,6 +69,7 @@ float GetLightAmountSkinFar(float4 ShadowPos, float4 InvPos) {
 }
 //
 float GetLightAmountSkin(float4 ShadowPos, float4 ShadowPosFar, float4 InvPos) {
+	return 1.0f; // SHADOWS DISABLED: skin shadow sampling dummied out (reference code below)
 
 	float Shadow = 0.0f;
 	float x;
@@ -101,6 +103,7 @@ float GetLightAmountSkin(float4 ShadowPos, float4 ShadowPosFar, float4 InvPos) {
 }
 
 float GetLightAmountSkinDialog(float4 ShadowPos, float4 ShadowPosFar, float4 InvPos) {
+	return 1.0f; // SHADOWS DISABLED: skin shadow sampling dummied out (reference code below)
 
 	float Shadow = 0.0f;
 	float x;

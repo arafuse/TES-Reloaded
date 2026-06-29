@@ -185,16 +185,38 @@ void ShadowManager::LoadShadowShaders(IDirect3DDevice9* Device) {
 }
 
 void ShadowManager::CreateShadowMapSurfaces(IDirect3DDevice9* Device, SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors) {
+	// SHADOWS DISABLED: only the ortho map is still rendered (precipitation dependency). The
+	// Near/Far/Skin maps (incl. 4096^2 Near/Skin) are left unallocated to reclaim VRAM.
+	// TextureManager captures the NULL handle at shader-load and the bind path
+	// (ShaderManager: `if (Value->Texture->Texture)`) skips NULL textures; the neutered
+	// scene shaders never sample them anyway.
 	for (int i = 0; i < 4; i++) {
-		UINT ShadowMapSize = ShadowsExteriors->ShadowMapSize[i];
-		Device->CreateTexture(ShadowMapSize, ShadowMapSize, 1, D3DUSAGE_RENDERTARGET, D3DFMT_R32F, D3DPOOL_DEFAULT, &ShadowMapTexture[i], NULL);
-		ShadowMapTexture[i]->GetSurfaceLevel(0, &ShadowMapSurface[i]);
-		Device->CreateDepthStencilSurface(ShadowMapSize, ShadowMapSize, D3DFMT_D24S8, D3DMULTISAMPLE_NONE, 0, true, &ShadowMapDepthSurface[i], NULL);
-		ShadowMapViewPort[i] = { 0, 0, ShadowMapSize, ShadowMapSize, 0.0f, 1.0f };
+		ShadowMapTexture[i] = NULL;
+		ShadowMapSurface[i] = NULL;
+		ShadowMapDepthSurface[i] = NULL;
+		ShadowMapViewPort[i] = { 0, 0, 0, 0, 0.0f, 1.0f };
 	}
+	int Ortho = ShadowMapTypeEnum::MapOrtho;
+	UINT ShadowMapSize = ShadowsExteriors->ShadowMapSize[Ortho];
+	Device->CreateTexture(ShadowMapSize, ShadowMapSize, 1, D3DUSAGE_RENDERTARGET, D3DFMT_R32F, D3DPOOL_DEFAULT, &ShadowMapTexture[Ortho], NULL);
+	ShadowMapTexture[Ortho]->GetSurfaceLevel(0, &ShadowMapSurface[Ortho]);
+	Device->CreateDepthStencilSurface(ShadowMapSize, ShadowMapSize, D3DFMT_D24S8, D3DMULTISAMPLE_NONE, 0, true, &ShadowMapDepthSurface[Ortho], NULL);
+	ShadowMapViewPort[Ortho] = { 0, 0, ShadowMapSize, ShadowMapSize, 0.0f, 1.0f };
 }
 
 void ShadowManager::CreateCubeMapSurfaces(IDirect3DDevice9* Device, UINT CubeMapSize) {
+	// SHADOWS DISABLED: point-light cube maps are no longer generated; leave all 12 unallocated
+	// to reclaim VRAM (12 * 6 faces of R32F + depth). TextureManager captures NULL and the bind
+	// path skips it; the neutered scene shaders never sample these. Dead reference: original
+	// allocation in the #if 0 block below.
+	for (int i = 0; i < 12; i++) {
+		ShadowCubeMapTexture[i] = NULL;
+		for (int j = 0; j < 6; j++) {
+			ShadowCubeMapSurface[i][j] = NULL;
+			ShadowCubeMapDepthSurface[i][j] = NULL;
+		}
+	}
+#if 0 // SHADOWS DISABLED: original cube-map allocation (dead reference)
 	for (int i = 0; i < 12; i++) {
 		Device->CreateCubeTexture(CubeMapSize, 1, D3DUSAGE_RENDERTARGET, D3DFMT_R32F, D3DPOOL_DEFAULT, &ShadowCubeMapTexture[i], NULL);
 		for (int j = 0; j < 6; j++) {
@@ -202,6 +224,7 @@ void ShadowManager::CreateCubeMapSurfaces(IDirect3DDevice9* Device, UINT CubeMap
 			Device->CreateDepthStencilSurface(CubeMapSize, CubeMapSize, D3DFMT_D24S8, D3DMULTISAMPLE_NONE, 0, true, &ShadowCubeMapDepthSurface[i][j], NULL);
 		}
 	}
+#endif // SHADOWS DISABLED
 }
 
 ShadowManager::ShadowManager() {
@@ -294,6 +317,7 @@ void ShadowManager::GetShadowFrustum(ShadowMapTypeEnum ShadowMapType, D3DMATRIX*
 
 }
 
+#if 0 // SHADOWS DISABLED: dead reference — cube/point-light frustum helpers (unused by ortho path)
 void ShadowManager::GetFrustumPlanes(D3DXPLANE* Frustum, D3DXMATRIX* Matrix) {
 
 	Frustum[PlaneNear].a   = Matrix->_13;
@@ -349,6 +373,8 @@ bool ShadowManager::InFrustum(D3DXPLANE* Frustum, NiGeometry* Geo) {
 
 }
 
+#endif // SHADOWS DISABLED
+
 // True if the form type can ever cast shadows (independent of the per-map-type Forms filter).
 static bool IsShadowCastableType(UInt8 TypeID) {
 	switch (TypeID) {
@@ -384,6 +410,7 @@ static bool FormsAllows(SettingsShadowStruct::FormsStruct* Forms, UInt8 TypeID) 
 	}
 }
 
+#if 0 // SHADOWS DISABLED: dead reference — cube/point-light ref filters (unused by ortho path)
 TESObjectREFR* ShadowManager::GetRef(TESObjectREFR* Ref, SettingsShadowStruct::FormsStruct* Forms, SettingsShadowStruct::ExcludedFormsList* ExcludedForms) {
 
 	if (Ref && Ref->GetNode()) {
@@ -408,6 +435,8 @@ TESObjectREFR* ShadowManager::GetRefO(TESObjectREFR* Ref) {
 	return r;
 
 }
+
+#endif // SHADOWS DISABLED
 
 bool ShadowManager::InShadowFrustum(ShadowMapTypeEnum ShadowMapType, NiAVObject* Object) {
 
@@ -472,6 +501,7 @@ bool ShadowManager::LeafInShadowFrustum(ShadowMapTypeEnum ShadowMapType, const D
 	return true;
 }
 
+#if 0 // SHADOWS DISABLED: dead reference — cube/point-light scene-graph collectors (unused by ortho path)
 void ShadowManager::RenderObjectPoint(NiAVObject* Object, D3DXVECTOR4* ShadowData, bool HasWater) {
 
 	if (Object && !(Object->m_flags & NiAVObject::kFlag_AppCulled)) {
@@ -559,6 +589,8 @@ void ShadowManager::RenderObjectPointActor(NiAVObject* Object, D3DXVECTOR4* Shad
 
 }
 
+#endif // SHADOWS DISABLED
+
 void ShadowManager::RenderTerrain(NiAVObject* Object, ShadowMapTypeEnum ShadowMapType, D3DXVECTOR4* ShadowData) {
 
 	if (Object && !(Object->m_flags & NiAVObject::kFlag_AppCulled)) {
@@ -614,6 +646,7 @@ void ShadowManager::Render(NiGeometry* Geo, D3DXVECTOR4* ShadowData, const D3DMA
 
 }
 
+#if 0 // SHADOWS DISABLED: dead reference — cube/point-light actor draw (unused by ortho path)
 void ShadowManager::RenderActor(NiGeometry* Geo, D3DXVECTOR4* ShadowData, int lightIndex) {
 	NiGeometryData* ModelData = Geo->geomData;
 	NiGeometryBufferData* GeoData = ModelData->BuffData;
@@ -655,6 +688,8 @@ void ShadowManager::RenderActor(NiGeometry* Geo, D3DXVECTOR4* ShadowData, int li
 		RenderActorSkinnedGeo(Geo, ShadowData, lightIndex);
 	}
 }
+
+#endif // SHADOWS DISABLED
 
 void ShadowManager::SetupShadowMapMatrices(ShadowMapTypeEnum ShadowMapType, SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors, D3DXVECTOR3* At, D3DXVECTOR4* ShadowLightDir) {
 	float FarPlane = ShadowsExteriors->ShadowMapFarPlane;
@@ -999,6 +1034,35 @@ void ShadowManager::RenderShadowMap(ShadowMapTypeEnum ShadowMapType, SettingsSha
 	Device->EndScene();
 }
 
+// Ortho-only exterior pass. The full shadow system (directional Near/Far/Skin maps, point-light
+// cube maps, and interior shadows) is dummied out pending a rewrite; the only thing kept alive is
+// the ortho depth map, which the precipitation effects (Rain/Snow/SnowAccumulation) sample for
+// occlusion. RenderShadowMap(MapOrtho) also sets ShaderConst.ShadowMap.ShadowCameraToLight[MapOrtho]
+// (-> TESR_ShadowCameraToLightTransformOrtho) via SetupShadowMapMatrices. The original full
+// directional/interval logic is preserved as dead reference in the #if 0 block below.
+void ShadowManager::RenderExteriorShadows() {
+	if (!Player->GetWorldSpace()) return;
+	ScopeTimer profile(Phase_ExtTotal);
+
+	SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors = SelectExteriorShadowSettings();
+	D3DXVECTOR4* ShadowData = &TheShaderManager->ShaderConst.Shadow.Data;
+	D3DXVECTOR4* OrthoData  = &TheShaderManager->ShaderConst.Shadow.OrthoData;
+	D3DXVECTOR4  OrthoDir   = D3DXVECTOR3(0.05f, 0.05f, 1.0f);
+
+	CurrentVertex = ShadowMapVertex;
+	CurrentPixel  = ShadowMapPixel;
+
+	D3DXVECTOR3 At, SkinAt;
+	ComputeExteriorLookAt(At, SkinAt, ShadowsExteriors);
+
+	{ ScopeTimer profileBuild(Phase_BuildGeoItems); BuildExteriorGeoItems(ShadowsExteriors); }
+
+	RenderShadowMap(MapOrtho, ShadowsExteriors, &At, &OrthoDir, ShadowData);
+
+	OrthoData->z = 1.0f / (float)ShadowsExteriors->ShadowMapSize[MapOrtho];
+}
+
+#if 0 // SHADOWS DISABLED: dead reference — point-light cube maps, interior shadows, and the old directional exterior path (Near/Far/Skin + interval). Replaced by the ortho-only RenderExteriorShadows above.
 void ShadowManager::RenderShadowCubeMapExt(NiPointLight** Lights, int LightIndex, float radiusScan, SettingsShadowStruct::InteriorsStruct* ShadowSettings, D3DXVECTOR4* ShadowData) {
 	double StaticValues[12] = { 0 };
 	bool forceRedrawMap[12] = { false };
@@ -1278,6 +1342,8 @@ void ShadowManager::RenderInteriorShadows() {
 	ShadowData->z = 1.0f / (float)ShadowSettings->ShadowCubeMapSize;
 }
 
+#endif // SHADOWS DISABLED
+
 void ShadowManager::RenderShadowMaps() {
 	Global->RenderShadowMaps(); //Window reflections seem to be rendered here
 
@@ -1302,12 +1368,13 @@ void ShadowManager::RenderShadowMaps() {
 	{
 		ScopeTimer profile(Phase_FrameTotal);
 		RenderExteriorShadows();
-		RenderInteriorShadows();
+		// RenderInteriorShadows(); // SHADOWS DISABLED: interior/point-light path dummied out
 	}
 	Device->SetDepthStencilSurface(DepthSurface);
 	ShadowProfileFrameEnd();
 }
 
+#if 0 // SHADOWS DISABLED: dead reference — shadow/cube map clears + light-position register setters (unused by ortho path)
 void ShadowManager::ClearShadowMap(IDirect3DDevice9* Device) {
 	Device->SetRenderTarget(0, ShadowMapSurface[MapNear]);
 	Device->SetDepthStencilSurface(ShadowMapDepthSurface[MapNear]);
@@ -1457,6 +1524,8 @@ void ShadowManager::SetShadowCubeMapRegisters(int index) {
 	TheShaderManager->ShaderConst.ShadowCube.Data.z = TheShaderManager->ShaderConst.ShadowMap.ShadowCastLightPosition[index].w;
 }
 
+#endif // SHADOWS DISABLED
+
 void ShadowManager::ResetIntervals() {
 	GameTime = -1;
 }
@@ -1473,10 +1542,13 @@ void ShadowManager::LoadShadowLightPointSettings() {
 	}
 }
 
+#if 0 // SHADOWS DISABLED: dead reference — point-light magic test (unused by ortho path)
 bool ShadowManager::IsLightFromMagic(NiPointLight* light) {
 	//TODO: a better way to check this
 	return light->m_parent && strstr(light->m_parent->m_pcName, "agic") != NULL;
 }
+
+#endif // SHADOWS DISABLED
 
 void ShadowManager::SetupGeoStreams(NiGeometryBufferData* GeoData) {
 	IDirect3DDevice9* Device = TheRenderManager->device;
@@ -1504,6 +1576,7 @@ void ShadowManager::DrawGeoArrays(NiGeometryBufferData* GeoData, D3DPRIMITIVETYP
 	}
 }
 
+#if 0 // SHADOWS DISABLED: dead reference — cube-face orientation helper (unused by ortho path)
 void ShadowManager::GetCubeFaceAtUp(int Face, D3DXVECTOR3& At, D3DXVECTOR3& Up) {
 	switch (Face) {
 	case D3DCUBEMAP_FACE_POSITIVE_X: At += D3DXVECTOR3( 1.0f,  0.0f,  0.0f); Up = D3DXVECTOR3(0.0f,  1.0f,  0.0f); break;
@@ -1514,6 +1587,8 @@ void ShadowManager::GetCubeFaceAtUp(int Face, D3DXVECTOR3& At, D3DXVECTOR3& Up) 
 	case D3DCUBEMAP_FACE_NEGATIVE_Z: At += D3DXVECTOR3( 0.0f,  0.0f,  1.0f); Up = D3DXVECTOR3(0.0f,  1.0f,  0.0f); break;
 	}
 }
+
+#endif // SHADOWS DISABLED
 
 void ShadowManager::SetupSpeedTreeLeafShader(NiGeometry* Geo, D3DXVECTOR4* ShadowData) {
 	IDirect3DDevice9* Device = TheRenderManager->device;
@@ -1582,6 +1657,7 @@ void ShadowManager::RenderSkinnedGeo(NiGeometry* Geo, D3DXVECTOR4* ShadowData) {
 	}
 }
 
+#if 0 // SHADOWS DISABLED: dead reference — cube actor frusta/draw + interior light classification & selection (unused by ortho path)
 // Build the 6 cube-face view-projections and their frustums for a light, once per light. The
 // light position and far plane are constant across all of the light's actor geos, so this is
 // hoisted out of the per-geo/per-partition draw path (where View*Proj used to be rebuilt every
@@ -1706,6 +1782,8 @@ void ShadowManager::UpdateStaticTrackers(int LightIndex, double* StaticValues, b
 	}
 }
 
+#endif // SHADOWS DISABLED
+
 SettingsShadowStruct::ExteriorsStruct* ShadowManager::SelectExteriorShadowSettings() {
 	TESWeather* currentWeather = Tes->sky->firstWeather;
 	if (currentWeather->weatherType != TESWeather::WeatherType::kType_Pleasant && currentWeather->weatherType != TESWeather::WeatherType::kType_None)
@@ -1726,6 +1804,7 @@ void ShadowManager::ComputeExteriorLookAt(D3DXVECTOR3& At, D3DXVECTOR3& SkinAt, 
 		LookAtPosition = newPos;
 }
 
+#if 0 // SHADOWS DISABLED: dead reference — directional sun-dir adjust/interval + interior cell/scene-light helpers (unused by ortho path)
 void ShadowManager::AdjustShadowLightDir(D3DXVECTOR4*& ShadowLightDir) {
 	if (ShadowLightDir->z < 0.0f && TheShaderManager->ShaderConst.DayPhase == Dusk)
 		ShadowLightDir = &TheShaderManager->ShaderConst.MasserDir;
@@ -1840,6 +1919,8 @@ bool ShadowManager::CategorizeSceneLight(NiPointLight* Light, int& shadowCastInd
 	}
 	return (shadowCastIndex + shadowCullIndex) == (ShadowSettings->iShadowLightPoints + ShadowSettings->iShadowCullLightPoints) - 1;
 }
+
+#endif // SHADOWS DISABLED
 
 static __declspec(naked) void RenderShadowMapHook() {
 

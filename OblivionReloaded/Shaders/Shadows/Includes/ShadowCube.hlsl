@@ -84,6 +84,7 @@ float LookupLightAmountSpec(samplerCUBE buffer, float4 WorldPos, float4 LightPos
 }
 
 float GetLightAmount(float4 pos) {
+	return 1.0f; // SHADOWS DISABLED: point/cube shadow sampling dummied out (reference code below)
 
 	float shadows[12];
 	shadows[0] = 1.0f;
@@ -165,6 +166,7 @@ float GetLightAmount(float4 pos) {
 }
 
 float GetLightAmountSpec(float4 pos) {
+	return 1.0f; // SHADOWS DISABLED: point/cube shadow sampling dummied out (reference code below)
 
 	float shadows[12];
 	shadows[0] = 1.0f;

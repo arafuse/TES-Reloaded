@@ -114,6 +114,7 @@ float LookupLightAmount(samplerCUBE buffer, float4 WorldPos, float4 LightPos, fl
 }
 
 float4 Shadow(VSOUT IN) : COLOR0{
+	return float4(tex2D(TESR_RenderedBuffer, IN.UVCoord).rgb, 1.0f); // SHADOWS DISABLED: pass-through (reference code below)
 
 	float3 color = tex2D(TESR_RenderedBuffer, IN.UVCoord).rgb;
 	float depth = readDepth(IN.UVCoord);

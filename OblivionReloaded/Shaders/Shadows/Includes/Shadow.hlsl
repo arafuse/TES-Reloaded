@@ -30,6 +30,7 @@ float LookupFarLeaves(float4 ShadowPos) {
 }
 
 float GetLightAmountFar(float4 ShadowPos) {
+	return 1.0f; // SHADOWS DISABLED: directional shadow sampling dummied out (reference code below)
 
 	float Shadow = 0.0f;
 	float x;
@@ -49,6 +50,7 @@ float GetLightAmountFar(float4 ShadowPos) {
 }
 
 float GetLightAmountFarLeaves(float4 ShadowPos) {
+	return 1.0f; // SHADOWS DISABLED: directional shadow sampling dummied out (reference code below)
 
 	float Shadow = 0.0f;
 	float x;
@@ -76,6 +78,7 @@ float Lookup(float4 ShadowPos) {
 }
 
 float GetLightAmount(float4 ShadowPos, float4 ShadowPosFar, float4 InvPos) {
+	return 1.0f; // SHADOWS DISABLED: directional shadow sampling dummied out (reference code below)
 
 	float Shadow = 0.0f;
 	float x;
@@ -115,6 +118,7 @@ float GetLightAmount(float4 ShadowPos, float4 ShadowPosFar, float4 InvPos) {
 }
 
 float GetLightAmountLeaves(float4 ShadowPos, float4 ShadowPosFar, float4 InvPos) {
+	return 1.0f; // SHADOWS DISABLED: directional shadow sampling dummied out (reference code below)
 
 	float Shadow = 0.0f;
 	float x;
@@ -156,6 +160,7 @@ float GetLightAmountLeaves(float4 ShadowPos, float4 ShadowPosFar, float4 InvPos)
 
 
 float GetLightAmountFarGrass(float4 ShadowPos) {
+	return 1.0f; // SHADOWS DISABLED: directional shadow sampling dummied out (reference code below)
 
 	float Shadow = 0.0f;
 	float x;
@@ -177,6 +182,7 @@ float GetLightAmountFarGrass(float4 ShadowPos) {
 }
 
 float GetLightAmountGrass(float4 ShadowPos, float4 ShadowPosFar, float4 InvPos) {
+	return 1.0f; // SHADOWS DISABLED: directional shadow sampling dummied out (reference code below)
 
 	float Shadow = 0.0f;
 	float x;
