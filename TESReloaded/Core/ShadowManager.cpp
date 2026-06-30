@@ -1034,6 +1034,24 @@ void ShadowManager::RenderShadowMap(ShadowMapTypeEnum ShadowMapType, SettingsSha
 	Device->EndScene();
 }
 
+// The ortho depth map's only consumers are the precipitation effects (Rain/Snow/SnowAccumulation),
+// which sample it for occlusion. Rebuild it only while one of them is still contributing: rain/snow
+// intensity ramps (RainData.x / SnowData.x) or the snow-accumulation amount (Params.w), which keeps
+// decreasing for a while after snow stops. If both effects are disabled in the INI nothing can ever
+// sample the map, so skip unconditionally. Values are maintained in ShaderManager::UpdateConstants;
+// reading them here may be one frame stale relative to that update, which is invisible for a depth
+// occlusion map across weather ramps.
+bool ShadowManager::OrthoNeeded() {
+	SettingsMainStruct::EffectsStruct* Effects = &TheSettingManager->SettingsMain.Effects;
+	if (!Effects->Precipitations && !Effects->SnowAccumulation) return false;
+	if (Effects->Precipitations &&
+		(TheShaderManager->ShaderConst.Precipitations.RainData.x > 0.0f ||
+		 TheShaderManager->ShaderConst.Precipitations.SnowData.x > 0.0f)) return true;
+	if (Effects->SnowAccumulation &&
+		TheShaderManager->ShaderConst.SnowAccumulation.Params.w > 0.0f) return true;
+	return false;
+}
+
 // Ortho-only exterior pass. The full shadow system (directional Near/Far/Skin maps, point-light
 // cube maps, and interior shadows) is dummied out pending a rewrite; the only thing kept alive is
 // the ortho depth map, which the precipitation effects (Rain/Snow/SnowAccumulation) sample for
@@ -1042,6 +1060,7 @@ void ShadowManager::RenderShadowMap(ShadowMapTypeEnum ShadowMapType, SettingsSha
 // directional/interval logic is preserved as dead reference in the #if 0 block below.
 void ShadowManager::RenderExteriorShadows() {
 	if (!Player->GetWorldSpace()) return;
+	if (!OrthoNeeded()) return;
 	ScopeTimer profile(Phase_ExtTotal);
 
 	SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors = SelectExteriorShadowSettings();
