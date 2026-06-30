@@ -719,18 +719,17 @@ void ShadowManager::RenderShadowMapCellTerrain(TESObjectCELL* Cell, ShadowMapTyp
 	}
 }
 
-// Flatten every shadow-casting ref in the loaded grid into ShadowGeoPool once per frame,
-// grouped per ref. Node/flag/excluded eligibility, world transforms, bounds, the water test,
-// and instancing eligibility are all map-type-independent, so they are resolved here exactly
-// once; each of the 4 directional passes then only does the per-type Forms filter, the frustum
-// cull, and the draw. Geo classification that *does* vary per pass (AlphaEnabled, MinRadius)
-// is kept as flags/fields and applied in the pass loop.
+// Flatten every ortho-frustum-visible, Forms-allowed shadow-casting ref in the loaded grid into
+// ShadowGeoPool once per frame. Node/flag/excluded/type/Forms eligibility, the ref-root frustum cull,
+// world transforms, bounds, the water test, the per-geo leaf cull, the MinRadius cut, and instancing
+// eligibility are all resolved here; RenderShadowMap then draws the flat list with no further culling.
 void ShadowManager::BuildExteriorGeoItems(SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors) {
-	ShadowRefGroups.clear();
 	ShadowGeoCount = 0;
 	SettingsShadowStruct::ExcludedFormsList* ExcludedForms = &ShadowsExteriors->ExcludedForms;
 	bool HasExcluded = ExcludedForms->size() > 0;
 	bool HasWater = TheShaderManager->ShaderConst.HasWater;
+	// Single live pass = ortho. Apply its Forms filter and frustum cull here instead of per-pass.
+	SettingsShadowStruct::FormsStruct* Forms = &ShadowsExteriors->Forms[MapOrtho];
 	for (UInt32 x = 0; x < *SettingGridsToLoad; x++) {
 		for (UInt32 y = 0; y < *SettingGridsToLoad; y++) {
 			TESObjectCELL* Cell = Tes->gridCellArray->GetCell(x, y);
@@ -743,22 +742,13 @@ void ShadowManager::BuildExteriorGeoItems(SettingsShadowStruct::ExteriorsStruct*
 				TESForm* Form = Ref->baseForm;
 				UInt8 TypeID = Form->formType;
 				if (!IsShadowCastableType(TypeID)) continue;
+				if (!FormsAllows(Forms, TypeID)) continue;
 				if (HasExcluded && std::binary_search(ExcludedForms->begin(), ExcludedForms->end(), Form->refID)) continue;
 				NiBound* RootBound = Node->GetWorldBound();
-				if (!RootBound) continue; // InShadowFrustum would cull this ref in every pass
-
-				int FirstItem = ShadowGeoCount;
+				if (!RootBound) continue;
+				D3DXVECTOR3 RootCenter = { RootBound->Center.x - TheRenderManager->CameraPosition.x, RootBound->Center.y - TheRenderManager->CameraPosition.y, RootBound->Center.z - TheRenderManager->CameraPosition.z };
+				if (!RootInShadowFrustum(MapOrtho, RootCenter, RootBound->Radius)) continue; // whole-subtree cull
 				CollectExteriorGeo(Node, HasWater);
-				int ItemCount = ShadowGeoCount - FirstItem;
-				if (ItemCount == 0) continue; // nothing drawable under this ref
-
-				ShadowRefGroup Group;
-				Group.TypeID = TypeID;
-				Group.RootCenter = { RootBound->Center.x - TheRenderManager->CameraPosition.x, RootBound->Center.y - TheRenderManager->CameraPosition.y, RootBound->Center.z - TheRenderManager->CameraPosition.z };
-				Group.RootRadius = RootBound->Radius;
-				Group.FirstItem = FirstItem;
-				Group.ItemCount = ItemCount;
-				ShadowRefGroups.push_back(Group);
 			}
 		}
 	}
@@ -789,6 +779,12 @@ void ShadowManager::CollectExteriorGeo(NiAVObject* Object, bool HasWater) {
 	// Water test (frame-constant): drop submerged opaque geo when water is present.
 	if (!(Geo->skinInstance || !HasWater || Bound->Center.z > 0.0f)) return;
 
+	// Per-pass cuts, now applied at collection (single live pass = ortho): drop sub-MinRadius geo and
+	// anything outside the ortho frustum. Center is reused for the stored item below.
+	if (Bound->Radius < MinRadii[MapOrtho]) return;
+	D3DXVECTOR3 Center = { Bound->Center.x - TheRenderManager->CameraPosition.x, Bound->Center.y - TheRenderManager->CameraPosition.y, Bound->Center.z - TheRenderManager->CameraPosition.z };
+	if (!LeafInShadowFrustum(MapOrtho, Center, Bound->Radius)) return;
+
 	// Resolve the buffer Render() will use: model buffer (static path), else first skin
 	// partition (RenderSkinnedGeo path, signalled by storing GeoData = NULL on the item).
 	NiGeometryBufferData* ModelBuff = Geo->geomData->BuffData;
@@ -818,7 +814,7 @@ void ShadowManager::CollectExteriorGeo(NiAVObject* Object, bool HasWater) {
 	ShadowGeoItem& Item = ShadowGeoPool[ShadowGeoCount++];
 	Item.Geo = Geo;
 	Item.GeoData = ModelBuff; // NULL => Render() takes the skinned path and ignores World
-	Item.Center = { Bound->Center.x - TheRenderManager->CameraPosition.x, Bound->Center.y - TheRenderManager->CameraPosition.y, Bound->Center.z - TheRenderManager->CameraPosition.z };
+	Item.Center = Center;
 	Item.Radius = Bound->Radius;
 	Item.BaseInstanceable = BaseInstanceable;
 	Item.HasAlphaMask = HasAlphaMask;
@@ -978,7 +974,9 @@ void ShadowManager::RenderShadowMap(ShadowMapTypeEnum ShadowMapType, SettingsSha
 	ScopeTimer profile((ShadowPhase)(Phase_PassNear + ShadowMapType)); // enum order matches Near/Far/Ortho/Skin
 
 	AlphaEnabled = ShadowsExteriors->AlphaEnabled[ShadowMapType];
-	SetupShadowMapMatrices(ShadowMapType, ShadowsExteriors, At, ShadowLightDir);
+	// Matrices/frustum are set up by the caller (RenderExteriorShadows) before geometry collection,
+	// so the pool is already culled to this map's frustum; do not recompute here.
+	if (!ShadowMapSurface[ShadowMapType]) return; // only MapOrtho is allocated in the dummied-out build
 	Device->SetRenderTarget(0, ShadowMapSurface[ShadowMapType]);
 	Device->SetDepthStencilSurface(ShadowMapDepthSurface[ShadowMapType]);
 	Device->SetViewport(&ShadowMapViewPort[ShadowMapType]);
@@ -998,36 +996,20 @@ void ShadowManager::RenderShadowMap(ShadowMapTypeEnum ShadowMapType, SettingsSha
 			if (TESObjectCELL* Cell = Tes->gridCellArray->GetCell(x, y))
 				RenderShadowMapCellTerrain(Cell, ShadowMapType, ShadowData);
 	gTerrainBucket = false;
-	SettingsShadowStruct::FormsStruct* Forms = &ShadowsExteriors->Forms[ShadowMapType];
-	float MinRadius = MinRadii[ShadowMapType];
 	bool UseInstancing = ShadowsExteriors->UseInstancing && ShadowMapInstancedVertexShader;
 	if (UseInstancing) { InstanceGroupIndex.clear(); InstanceGroupCount = 0; }
 
-	// Resolve the per-type Forms filter once per pass (form type fits in a UInt8) so the group
-	// loop is a flat lookup instead of re-running the FormsAllows switch for every ref.
-	bool FormsAllowed[256];
-	for (int t = 0; t < 256; t++) FormsAllowed[t] = FormsAllows(Forms, (UInt8)t);
-
-	// Iterate the once-per-frame flat list: per-type filter + cheap ref-root early-out, then a
-	// leaf-level cull + draw, reusing precomputed matrices. Instanceable opaque statics are
-	// batched into instance groups (flushed below); everything else draws immediately.
-	for (const ShadowRefGroup& Group : ShadowRefGroups) {
-		if (!FormsAllowed[Group.TypeID]) continue;
-		if (!RootInShadowFrustum(ShadowMapType, Group.RootCenter, Group.RootRadius)) continue;
-		int End = Group.FirstItem + Group.ItemCount;
-		for (int i = Group.FirstItem; i < End; i++) {
-			ShadowGeoItem& Item = ShadowGeoPool[i];
-			if (Item.Radius < MinRadius) continue;
-			if (!LeafInShadowFrustum(ShadowMapType, Item.Center, Item.Radius)) continue;
-			if (UseInstancing && Item.BaseInstanceable && !(AlphaEnabled && Item.HasAlphaMask)) {
-				AddInstance(Item.GeoData, i);
-				ProfileCount(Cnt_DirItemsInstanced);
-			} else {
-				Render(Item.Geo, ShadowData, Item.GeoData ? &Item.World : NULL);
-				// Why immediate: not instanceable at all, vs. instanceable-but-alpha-masked this pass.
-				if (!Item.BaseInstanceable) ProfileCount(Cnt_DirItemsImmNonInst);
-				else ProfileCount(Cnt_DirItemsImmAlpha);
-			}
+	// Pool is already culled to this map's frustum and Forms-filtered (BuildExteriorGeoItems), so just
+	// draw: batch instanceable opaque statics, draw everything else immediately.
+	for (int i = 0; i < ShadowGeoCount; i++) {
+		ShadowGeoItem& Item = ShadowGeoPool[i];
+		if (UseInstancing && Item.BaseInstanceable && !(AlphaEnabled && Item.HasAlphaMask)) {
+			AddInstance(Item.GeoData, i);
+			ProfileCount(Cnt_DirItemsInstanced);
+		} else {
+			Render(Item.Geo, ShadowData, Item.GeoData ? &Item.World : NULL);
+			if (!Item.BaseInstanceable) ProfileCount(Cnt_DirItemsImmNonInst);
+			else ProfileCount(Cnt_DirItemsImmAlpha);
 		}
 	}
 	if (UseInstancing) FlushInstanceGroups(ShadowData);
@@ -1073,6 +1055,11 @@ void ShadowManager::RenderExteriorShadows() {
 
 	D3DXVECTOR3 At, SkinAt;
 	ComputeExteriorLookAt(At, SkinAt, ShadowsExteriors);
+
+	// Matrices/frustum first: collection culls geometry against ShadowMapFrustum[MapOrtho], so the
+	// frustum must exist before the walk. SetupShadowMapMatrices also publishes
+	// ShadowCameraToLight[MapOrtho] (-> TESR_ShadowCameraToLightTransformOrtho) and Billboard vectors.
+	SetupShadowMapMatrices(MapOrtho, ShadowsExteriors, &At, &OrthoDir);
 
 	{ ScopeTimer profileBuild(Phase_BuildGeoItems); BuildExteriorGeoItems(ShadowsExteriors); }
 
