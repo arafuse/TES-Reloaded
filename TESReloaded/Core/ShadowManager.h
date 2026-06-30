@@ -218,10 +218,11 @@ public:
 	// Camera-relative world matrices for CubeMapGeoList, computed once per light and reused
 	// across all 6 faces instead of rebuilding each geo's matrix per visible face.
 	std::vector<D3DMATRIX>	CubeMapGeoWorld;
-	// Exterior shadow-casting geometry flattened once per frame, reused across the 4 directional
-	// map passes (Near/Far/Ortho/Skin) instead of re-walking the cell grid and re-classifying
-	// per pass. World transforms, bounds, and instancing eligibility are frame-constant, so they
-	// are precomputed here; each pass only does the per-pass filter + frustum cull + draw.
+	// Exterior shadow-casting geometry for the single live ortho pass, flattened once per frame.
+	// BuildExteriorGeoItems applies the Forms filter, the ref-root + per-leaf frustum cull, and the
+	// MinRadius cut during collection, so this pool is already filtered to exactly what gets drawn;
+	// RenderShadowMap then iterates it and draws with no further culling. World transforms, bounds,
+	// and instancing eligibility are precomputed here.
 	struct ShadowGeoItem {
 		NiGeometry*            Geo;
 		NiGeometryBufferData*  GeoData;          // geomData->BuffData (NULL => skinned, drawn via RenderSkinnedGeo)
