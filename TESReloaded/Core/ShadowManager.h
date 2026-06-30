@@ -232,17 +232,9 @@ public:
 		bool                   HasAlphaMask;     // alpha blend/test present (blocks instancing when AlphaEnabled)
 		bool                   PassesWater;      // skinInstance || !HasWater || center.z > 0
 	};
-	struct ShadowRefGroup {
-		UInt8        TypeID;       // for the per-pass Forms filter
-		D3DXVECTOR3  RootCenter;   // camera-relative candidate-node bound center
-		float        RootRadius;
-		int          FirstItem;    // [FirstItem, FirstItem + ItemCount) into ShadowGeoPool
-		int          ItemCount;
-	};
 	// Pooled across frames; only the *Count fields reset each frame so capacity is retained.
 	std::vector<ShadowGeoItem>  ShadowGeoPool;
 	int                         ShadowGeoCount;
-	std::vector<ShadowRefGroup> ShadowRefGroups;
 };
 
 void CreateShadowsHook();
