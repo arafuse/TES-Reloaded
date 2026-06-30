@@ -69,6 +69,7 @@ public:
 	void                    RenderShadowCubeMap(int LightIndex, std::vector<NiNode*>* refMap, D3DXVECTOR4* ShadowData, bool enabled);
 	void                    RenderShadowCubeMapActor(int LightIndex, std::vector<NiNode*>* refMap, D3DXVECTOR4* ShadowData, bool enabled);
 	void					RenderExteriorShadows();
+	bool					OrthoNeeded();
 	void					RenderInteriorShadows();
 	void					RenderShadowMaps();
 	void					ClearShadowMap(IDirect3DDevice9* Device);
