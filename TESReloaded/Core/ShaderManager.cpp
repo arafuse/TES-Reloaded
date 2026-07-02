@@ -3232,11 +3232,13 @@ void ShaderManager::RenderEffects(IDirect3DSurface9* RenderTarget) {
 		SnowAccumulationEffect->SetCT();
 		SnowAccumulationEffect->Render(Device, RenderTarget, RenderedSurface, false);
 	}
-#if 0 // SHADOWS DISABLED: image-space shadow-apply passes (exterior directional, exterior point, interior) skipped — maps are no longer generated so these full-screen passes are pure waste. Dead reference.
-	if (TheSettingManager->SettingsShadows.Exteriors.Enabled && TheSettingManager->SettingsShadows.Exteriors.UsePostProcessing && currentWorldSpace) {
+	// Exterior sun-shadow apply pass (reimplemented). Darkens the scene from the Near/Far depth maps.
+	// The point-light and interior image-space apply passes below remain dummied out pending rewrite.
+	if (TheSettingManager->SettingsShadows.Exteriors.UsePostProcessing && currentWorldSpace) {
 		ShadowsExteriorsEffect->SetCT();
 		ShadowsExteriorsEffect->Render(Device, RenderTarget, RenderedSurface, false);
 	}
+#if 0 // SHADOWS DISABLED: point-light + interior image-space apply passes skipped — their maps are not generated yet. Dead reference.
 	if (TheSettingManager->SettingsShadows.ExteriorsPoint.Enabled && TheSettingManager->SettingsShadows.ExteriorsPoint.UsePostProcessing && currentWorldSpace) {
 
 		if (!(MenuManager->IsActive(Menu::MenuType::kMenuType_Dialog) || MenuManager->IsActive(Menu::MenuType::kMenuType_Persuasion))) {
