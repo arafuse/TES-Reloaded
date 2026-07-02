@@ -103,8 +103,8 @@ public:
 	void					ComputeCubeFaceFrusta(int lightIndex);
 	void					SetupShadowMapMatrices(ShadowMapTypeEnum ShadowMapType, SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors, D3DXVECTOR3* At, D3DXVECTOR4* ShadowLightDir);
 	void					RenderShadowMapCellTerrain(TESObjectCELL* Cell, ShadowMapTypeEnum ShadowMapType, D3DXVECTOR4* ShadowData);
-	void					BuildExteriorGeoItems(SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors);
-	void					CollectExteriorGeo(NiAVObject* Object, bool HasWater);
+	void					BuildExteriorGeoItems(SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors, ShadowMapTypeEnum ShadowMapType);
+	void					CollectExteriorGeo(NiAVObject* Object, bool HasWater, ShadowMapTypeEnum ShadowMapType, bool IsActorRef);
 	void					SetupCubeMapRenderState();
 	RefLightInfo			BuildRefLightInfo(TESObjectREFR* Ref);
 	void					ClassifyRefForLight(const RefLightInfo& Info, NiPointLight** Lights, int L, float radiusScan, std::vector<NiNode*>* refMap, std::vector<NiNode*>* actorMap, double* StaticValues, bool* forceRedrawMap);
@@ -233,6 +233,7 @@ public:
 		bool                   BaseInstanceable; // instanceable ignoring the per-pass AlphaEnabled
 		bool                   HasAlphaMask;     // alpha blend/test present (blocks instancing when AlphaEnabled)
 		bool                   PassesWater;      // skinInstance || !HasWater || center.z > 0
+		bool                   IsActor;          // ref is an actor/creature => dynamic caster (Stage 2 split)
 	};
 	// Pooled across frames; only the *Count fields reset each frame so capacity is retained.
 	std::vector<ShadowGeoItem>  ShadowGeoPool;
