@@ -1065,7 +1065,9 @@ bool ShadowManager::SunShadowNeeded() {
 // directional/interval logic is preserved as dead reference in the #if 0 block below.
 void ShadowManager::RenderExteriorShadows() {
 	if (!Player->GetWorldSpace()) return;
-	if (!OrthoNeeded()) return;
+	bool DoOrtho = OrthoNeeded();
+	bool DoSun   = SunShadowNeeded();
+	if (!DoOrtho && !DoSun) return;
 	ScopeTimer profile(Phase_ExtTotal);
 
 	SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors = SelectExteriorShadowSettings();
@@ -1079,16 +1081,35 @@ void ShadowManager::RenderExteriorShadows() {
 	D3DXVECTOR3 At, SkinAt;
 	ComputeExteriorLookAt(At, SkinAt, ShadowsExteriors);
 
-	// Matrices/frustum first: collection culls geometry against ShadowMapFrustum[MapOrtho], so the
-	// frustum must exist before the walk. SetupShadowMapMatrices also publishes
-	// ShadowCameraToLight[MapOrtho] (-> TESR_ShadowCameraToLightTransformOrtho) and Billboard vectors.
-	SetupShadowMapMatrices(MapOrtho, ShadowsExteriors, &At, &OrthoDir);
+	if (DoOrtho) {
+		// Matrices/frustum first: collection culls geometry against ShadowMapFrustum[MapOrtho], so the
+		// frustum must exist before the walk. SetupShadowMapMatrices also publishes
+		// ShadowCameraToLight[MapOrtho] (-> TESR_ShadowCameraToLightTransformOrtho) and Billboard vectors.
+		SetupShadowMapMatrices(MapOrtho, ShadowsExteriors, &At, &OrthoDir);
 
-	{ ScopeTimer profileBuild(Phase_BuildGeoItems); BuildExteriorGeoItems(ShadowsExteriors, MapOrtho); }
+		{ ScopeTimer profileBuild(Phase_BuildGeoItems); BuildExteriorGeoItems(ShadowsExteriors, MapOrtho); }
 
-	RenderShadowMap(MapOrtho, ShadowsExteriors, &At, &OrthoDir, ShadowData);
+		RenderShadowMap(MapOrtho, ShadowsExteriors, &At, &OrthoDir, ShadowData);
 
-	OrthoData->z = 1.0f / (float)ShadowsExteriors->ShadowMapSize[MapOrtho];
+		OrthoData->z = 1.0f / (float)ShadowsExteriors->ShadowMapSize[MapOrtho];
+	}
+
+	if (DoSun) {
+		D3DXVECTOR4* ShadowLightDir = &TheShaderManager->ShaderConst.ShadowMap.ShadowLightDir;
+		// Near then Far: each map sets up its own matrices/frustum, then collects a pool culled to
+		// that frustum, then draws it (RenderShadowMap draws the flat pool with no further culling).
+		SetupShadowMapMatrices(MapNear, ShadowsExteriors, &At, ShadowLightDir);
+		BuildExteriorGeoItems(ShadowsExteriors, MapNear);
+		RenderShadowMap(MapNear, ShadowsExteriors, &At, ShadowLightDir, ShadowData);
+
+		SetupShadowMapMatrices(MapFar, ShadowsExteriors, &At, ShadowLightDir);
+		BuildExteriorGeoItems(ShadowsExteriors, MapFar);
+		RenderShadowMap(MapFar, ShadowsExteriors, &At, ShadowLightDir, ShadowData);
+
+		ShadowData->y = ShadowsExteriors->Darkness;
+		ShadowData->z = 1.0f / (float)ShadowsExteriors->ShadowMapSize[MapNear];
+		ShadowData->w = 1.0f / (float)ShadowsExteriors->ShadowMapSize[MapFar];
+	}
 }
 
 #if 0 // SHADOWS DISABLED: dead reference — point-light cube maps, interior shadows, and the old directional exterior path (Near/Far/Skin + interval). Replaced by the ortho-only RenderExteriorShadows above.
