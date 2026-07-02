@@ -734,13 +734,12 @@ void ShadowManager::RenderShadowMapCellTerrain(TESObjectCELL* Cell, ShadowMapTyp
 // ShadowGeoPool once per frame. Node/flag/excluded/type/Forms eligibility, the ref-root frustum cull,
 // world transforms, bounds, the water test, the per-geo leaf cull, the MinRadius cut, and instancing
 // eligibility are all resolved here; RenderShadowMap then draws the flat list with no further culling.
-void ShadowManager::BuildExteriorGeoItems(SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors) {
+void ShadowManager::BuildExteriorGeoItems(SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors, ShadowMapTypeEnum ShadowMapType) {
 	ShadowGeoCount = 0;
 	SettingsShadowStruct::ExcludedFormsList* ExcludedForms = &ShadowsExteriors->ExcludedForms;
 	bool HasExcluded = ExcludedForms->size() > 0;
 	bool HasWater = TheShaderManager->ShaderConst.HasWater;
-	// Single live pass = ortho. Apply its Forms filter and frustum cull here instead of per-pass.
-	SettingsShadowStruct::FormsStruct* Forms = &ShadowsExteriors->Forms[MapOrtho];
+	SettingsShadowStruct::FormsStruct* Forms = &ShadowsExteriors->Forms[ShadowMapType];
 	for (UInt32 x = 0; x < *SettingGridsToLoad; x++) {
 		for (UInt32 y = 0; y < *SettingGridsToLoad; y++) {
 			TESObjectCELL* Cell = Tes->gridCellArray->GetCell(x, y);
@@ -758,8 +757,9 @@ void ShadowManager::BuildExteriorGeoItems(SettingsShadowStruct::ExteriorsStruct*
 				NiBound* RootBound = Node->GetWorldBound();
 				if (!RootBound) continue;
 				D3DXVECTOR3 RootCenter = { RootBound->Center.x - TheRenderManager->CameraPosition.x, RootBound->Center.y - TheRenderManager->CameraPosition.y, RootBound->Center.z - TheRenderManager->CameraPosition.z };
-				if (!RootInShadowFrustum(MapOrtho, RootCenter, RootBound->Radius)) continue; // whole-subtree cull
-				CollectExteriorGeo(Node, HasWater);
+				if (!RootInShadowFrustum(ShadowMapType, RootCenter, RootBound->Radius)) continue; // whole-subtree cull
+				bool IsActorRef = (TypeID >= TESForm::FormType::kFormType_NPC && TypeID <= TESForm::FormType::kFormType_LeveledCreature); // used by the Stage 2 static/dynamic split
+				CollectExteriorGeo(Node, HasWater, ShadowMapType, IsActorRef);
 			}
 		}
 	}
@@ -770,13 +770,13 @@ void ShadowManager::BuildExteriorGeoItems(SettingsShadowStruct::ExteriorsStruct*
 // state instead of drawing. Anything Render()/RenderSkinnedGeo() would have drawn is collected;
 // anything they would have skipped (torch, no shader, submerged, no lighting property on opaque
 // statics, no usable buffer) is dropped here.
-void ShadowManager::CollectExteriorGeo(NiAVObject* Object, bool HasWater) {
+void ShadowManager::CollectExteriorGeo(NiAVObject* Object, bool HasWater, ShadowMapTypeEnum ShadowMapType, bool IsActorRef) {
 	if (!Object || (Object->m_flags & NiAVObject::kFlag_AppCulled)) return;
 	void* VFT = *(void**)Object;
 	if (VFT == VFTNiNode || VFT == VFTBSFadeNode || VFT == VFTBSFaceGenNiNode || VFT == VFTBSTreeNode || VFT == VFTNiLODNode) {
 		NiNode* Node = (NiNode*)Object;
 		for (int i = 0; i < Node->m_children.end; i++)
-			CollectExteriorGeo(Node->m_children.data[i], HasWater);
+			CollectExteriorGeo(Node->m_children.data[i], HasWater, ShadowMapType, IsActorRef);
 		return;
 	}
 	if (VFT != VFTNiTriShape && VFT != VFTNiTriStrips) return;
@@ -790,11 +790,11 @@ void ShadowManager::CollectExteriorGeo(NiAVObject* Object, bool HasWater) {
 	// Water test (frame-constant): drop submerged opaque geo when water is present.
 	if (!(Geo->skinInstance || !HasWater || Bound->Center.z > 0.0f)) return;
 
-	// Per-pass cuts, now applied at collection (single live pass = ortho): drop sub-MinRadius geo and
-	// anything outside the ortho frustum. Center is reused for the stored item below.
-	if (Bound->Radius < MinRadii[MapOrtho]) return;
+	// Per-pass cuts, applied at collection: drop sub-MinRadius geo and anything outside this pass's
+	// frustum. Center is reused for the stored item below.
+	if (Bound->Radius < MinRadii[ShadowMapType]) return;
 	D3DXVECTOR3 Center = { Bound->Center.x - TheRenderManager->CameraPosition.x, Bound->Center.y - TheRenderManager->CameraPosition.y, Bound->Center.z - TheRenderManager->CameraPosition.z };
-	if (!LeafInShadowFrustum(MapOrtho, Center, Bound->Radius)) return;
+	if (!LeafInShadowFrustum(ShadowMapType, Center, Bound->Radius)) return;
 
 	// Resolve the buffer Render() will use: model buffer (static path), else first skin
 	// partition (RenderSkinnedGeo path, signalled by storing GeoData = NULL on the item).
@@ -829,6 +829,7 @@ void ShadowManager::CollectExteriorGeo(NiAVObject* Object, bool HasWater) {
 	Item.Radius = Bound->Radius;
 	Item.BaseInstanceable = BaseInstanceable;
 	Item.HasAlphaMask = HasAlphaMask;
+	Item.IsActor = IsActorRef;
 	if (!DrawViaSkin) CreateD3DMatrix(&Item.World, &Geo->m_worldTransform);
 }
 
@@ -1083,7 +1084,7 @@ void ShadowManager::RenderExteriorShadows() {
 	// ShadowCameraToLight[MapOrtho] (-> TESR_ShadowCameraToLightTransformOrtho) and Billboard vectors.
 	SetupShadowMapMatrices(MapOrtho, ShadowsExteriors, &At, &OrthoDir);
 
-	{ ScopeTimer profileBuild(Phase_BuildGeoItems); BuildExteriorGeoItems(ShadowsExteriors); }
+	{ ScopeTimer profileBuild(Phase_BuildGeoItems); BuildExteriorGeoItems(ShadowsExteriors, MapOrtho); }
 
 	RenderShadowMap(MapOrtho, ShadowsExteriors, &At, &OrthoDir, ShadowData);
 
