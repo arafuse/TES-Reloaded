@@ -202,6 +202,17 @@ void ShadowManager::CreateShadowMapSurfaces(IDirect3DDevice9* Device, SettingsSh
 	ShadowMapTexture[Ortho]->GetSurfaceLevel(0, &ShadowMapSurface[Ortho]);
 	Device->CreateDepthStencilSurface(ShadowMapSize, ShadowMapSize, D3DFMT_D24S8, D3DMULTISAMPLE_NONE, 0, true, &ShadowMapDepthSurface[Ortho], NULL);
 	ShadowMapViewPort[Ortho] = { 0, 0, ShadowMapSize, ShadowMapSize, 0.0f, 1.0f };
+
+	// Directional sun maps (reimplemented). Near = crisp small radius, Far = wide coarse.
+	// R32F color + D24S8 depth, matching the ortho map's formats.
+	for (int m = ShadowMapTypeEnum::MapNear; m <= ShadowMapTypeEnum::MapFar; m++) {
+		UINT Size = ShadowsExteriors->ShadowMapSize[m];
+		if (!Size) continue;
+		Device->CreateTexture(Size, Size, 1, D3DUSAGE_RENDERTARGET, D3DFMT_R32F, D3DPOOL_DEFAULT, &ShadowMapTexture[m], NULL);
+		ShadowMapTexture[m]->GetSurfaceLevel(0, &ShadowMapSurface[m]);
+		Device->CreateDepthStencilSurface(Size, Size, D3DFMT_D24S8, D3DMULTISAMPLE_NONE, 0, true, &ShadowMapDepthSurface[m], NULL);
+		ShadowMapViewPort[m] = { 0, 0, Size, Size, 0.0f, 1.0f };
+	}
 }
 
 void ShadowManager::CreateCubeMapSurfaces(IDirect3DDevice9* Device, UINT CubeMapSize) {
