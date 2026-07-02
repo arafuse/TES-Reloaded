@@ -1054,7 +1054,7 @@ bool ShadowManager::SunShadowNeeded() {
 	if (!TheSettingManager->SettingsShadows.Exteriors.UsePostProcessing) return false;
 	if (!TheShaderManager->isFullyInitialized) return false;
 	if (!Player->GetWorldSpace()) return false;
-	return TheShaderManager->ShaderConst.ShadowMap.ShadowLightDir.z > 0.15f; // sun-up threshold (Task 6 makes this INI-driven)
+	return TheShaderManager->ShaderConst.ShadowMap.ShadowLightDir.z > TheSettingManager->SettingsShadows.Exteriors.SunUpThreshold;
 }
 
 // Exterior shadow pass. Renders two independent, separately-gated things:

@@ -1268,6 +1268,8 @@ void SettingManager::LoadSettings() {
 	SettingsShadows.Exteriors.Darkness = atof(value);
 	GetPrivateProfileStringA("Exteriors", "ShadowMapFarPlane", "8192.0", value, SettingStringBuffer, Filename);
 	SettingsShadows.Exteriors.ShadowMapFarPlane = atof(value);
+	GetPrivateProfileStringA("Exteriors", "SunUpThreshold", "0.15", value, SettingStringBuffer, Filename);
+	SettingsShadows.Exteriors.SunUpThreshold = atof(value);
 	GetPrivateProfileStringA("Exteriors", "forwardNormBias", "0.001", value, SettingStringBuffer, Filename);
 	SettingsShadows.Exteriors.forwardNormBias = atof(value);
 	GetPrivateProfileStringA("Exteriors", "forwardFarNormBias", "0.001", value, SettingStringBuffer, Filename);
