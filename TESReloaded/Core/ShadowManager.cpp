@@ -1057,12 +1057,14 @@ bool ShadowManager::SunShadowNeeded() {
 	return TheShaderManager->ShaderConst.ShadowMap.ShadowLightDir.z > 0.15f; // sun-up threshold (Task 6 makes this INI-driven)
 }
 
-// Ortho-only exterior pass. The full shadow system (directional Near/Far/Skin maps, point-light
-// cube maps, and interior shadows) is dummied out pending a rewrite; the only thing kept alive is
-// the ortho depth map, which the precipitation effects (Rain/Snow/SnowAccumulation) sample for
-// occlusion. RenderShadowMap(MapOrtho) also sets ShaderConst.ShadowMap.ShadowCameraToLight[MapOrtho]
-// (-> TESR_ShadowCameraToLightTransformOrtho) via SetupShadowMapMatrices. The original full
-// directional/interval logic is preserved as dead reference in the #if 0 block below.
+// Exterior shadow pass. Renders two independent, separately-gated things:
+//  - Ortho depth map (DoOrtho): sampled by the precipitation effects (Rain/Snow/SnowAccumulation)
+//    for occlusion; also publishes ShaderConst.ShadowMap.ShadowCameraToLight[MapOrtho]
+//    (-> TESR_ShadowCameraToLightTransformOrtho) via SetupShadowMapMatrices.
+//  - Directional sun maps MapNear/MapFar (DoSun): reimplemented per-frame directional shadows,
+//    applied in image space by ShadowsExteriors.fx.
+// The Skin map, point-light cube maps, and interior shadows remain dummied out (dead reference in
+// the #if 0 block below) pending later work.
 void ShadowManager::RenderExteriorShadows() {
 	if (!Player->GetWorldSpace()) return;
 	bool DoOrtho = OrthoNeeded();
