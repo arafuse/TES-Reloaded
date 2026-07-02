@@ -1045,6 +1045,17 @@ bool ShadowManager::OrthoNeeded() {
 	return false;
 }
 
+// Directional sun shadows only make sense in an exterior worldspace with the sun above the
+// horizon. ShadowLightDir.z is the sun's vertical component (published by ShaderManager); below a
+// small threshold (dusk/dawn/night) there is effectively no sun to cast shadows, so skip the whole
+// pass and pay nothing. UsePostProcessing gates on the feature being enabled at all.
+bool ShadowManager::SunShadowNeeded() {
+	if (!TheSettingManager->SettingsShadows.Exteriors.UsePostProcessing) return false;
+	if (!TheShaderManager->isFullyInitialized) return false;
+	if (!Player->GetWorldSpace()) return false;
+	return TheShaderManager->ShaderConst.ShadowMap.ShadowLightDir.z > 0.15f; // sun-up threshold (Task 6 makes this INI-driven)
+}
+
 // Ortho-only exterior pass. The full shadow system (directional Near/Far/Skin maps, point-light
 // cube maps, and interior shadows) is dummied out pending a rewrite; the only thing kept alive is
 // the ortho depth map, which the precipitation effects (Rain/Snow/SnowAccumulation) sample for
