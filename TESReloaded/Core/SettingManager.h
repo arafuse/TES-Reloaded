@@ -315,6 +315,7 @@ struct SettingsShadowStruct {
 		float				Darkness;
 		float				ShadowMapRadius[4];
 		float				ShadowMapFarPlane;
+		float				SunUpThreshold;
 		bool                UsePostProcessing;
 		bool				UseIntervalUpdate;
 		bool				UseInstancing;
