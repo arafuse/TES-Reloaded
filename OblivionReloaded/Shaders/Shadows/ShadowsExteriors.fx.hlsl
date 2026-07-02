@@ -188,43 +188,11 @@ float GetLightAmount(float4 WorldPos, float4 ShadowPos, float4 ShadowPosFar, flo
 	}
 	Shadow /= 16.0f;
 
-	Shadow += AddProximityLight(WorldPos, TESR_ShadowLightPosition0);
-	Shadow += AddProximityLight(WorldPos, TESR_ShadowLightPosition1);
-	Shadow += AddProximityLight(WorldPos, TESR_ShadowLightPosition2);
-	Shadow += AddProximityLight(WorldPos, TESR_ShadowLightPosition3);
-	Shadow += AddProximityLight(WorldPos, TESR_ShadowLightPosition4);
-	Shadow += AddProximityLight(WorldPos, TESR_ShadowLightPosition5);
-	Shadow += AddProximityLight(WorldPos, TESR_ShadowLightPosition6);
-	Shadow += AddProximityLight(WorldPos, TESR_ShadowLightPosition7);
-	Shadow += AddProximityLight(WorldPos, TESR_ShadowLightPosition8);
-	Shadow += AddProximityLight(WorldPos, TESR_ShadowLightPosition9);
-	Shadow += AddProximityLight(WorldPos, TESR_ShadowLightPosition10);
-	Shadow += AddProximityLight(WorldPos, TESR_ShadowLightPosition11);
-	Shadow += AddProximityLight(WorldPos, TESR_ShadowCullLightPosition0);
-	Shadow += AddProximityLight(WorldPos, TESR_ShadowCullLightPosition1);
-	Shadow += AddProximityLight(WorldPos, TESR_ShadowCullLightPosition2);
-	Shadow += AddProximityLight(WorldPos, TESR_ShadowCullLightPosition3);
-	Shadow += AddProximityLight(WorldPos, TESR_ShadowCullLightPosition4);
-	Shadow += AddProximityLight(WorldPos, TESR_ShadowCullLightPosition5);
-	Shadow += AddProximityLight(WorldPos, TESR_ShadowCullLightPosition6);
-	Shadow += AddProximityLight(WorldPos, TESR_ShadowCullLightPosition7);
-	Shadow += AddProximityLight(WorldPos, TESR_ShadowCullLightPosition8);
-	Shadow += AddProximityLight(WorldPos, TESR_ShadowCullLightPosition9);
-	Shadow += AddProximityLight(WorldPos, TESR_ShadowCullLightPosition10);
-	Shadow += AddProximityLight(WorldPos, TESR_ShadowCullLightPosition11);
-	Shadow += AddProximityLight(WorldPos, TESR_ShadowCullLightPosition12);
-	Shadow += AddProximityLight(WorldPos, TESR_ShadowCullLightPosition13);
-	Shadow += AddProximityLight(WorldPos, TESR_ShadowCullLightPosition14);
-	Shadow += AddProximityLight(WorldPos, TESR_ShadowCullLightPosition15);
-	Shadow += AddProximityLight(WorldPos, TESR_ShadowCullLightPosition16);
-	Shadow += AddProximityLight(WorldPos, TESR_ShadowCullLightPosition17);
 	return saturate(Shadow);
 
 }
 
 float4 Shadow(VSOUT IN) : COLOR0{
-	return float4(tex2D(TESR_RenderedBuffer, IN.UVCoord).rgb, 1.0f); // SHADOWS DISABLED: pass-through (reference code below)
-
 	float3 color = tex2D(TESR_RenderedBuffer, IN.UVCoord).rgb;
 
 	if (length(color) > 1.4f) {
