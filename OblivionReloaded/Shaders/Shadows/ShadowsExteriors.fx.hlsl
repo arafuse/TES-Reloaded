@@ -55,7 +55,7 @@ static const float nearZ = TESR_ProjectionTransform._43 / TESR_ProjectionTransfo
 static const float farZ = (TESR_ProjectionTransform._33 * nearZ) / (TESR_ProjectionTransform._33 - 1.0f);
 static const float Zmul = nearZ * farZ;
 static const float Zdiff = farZ - nearZ;
-static const float darkness = 0.8f;
+static const float darkness = TESR_ShadowData.y; // INI [Exteriors] Darkness (lower = darker shadows). Preshader.
 
 struct VSOUT
 {
