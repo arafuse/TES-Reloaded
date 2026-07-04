@@ -355,6 +355,17 @@ UInt32 RenderHook::TrackSetupShaderPrograms(NiGeometry* Geometry, NiSkinInstance
 			RenderState->SetRenderState(D3DRS_ZWRITEENABLE, FALSE, 0);
 		}
 
+		// Pre-water depth for the sun-shadow apply: the first water draw of the main pass means the
+		// opaque scene (incl. submerged geometry) is complete but water has not written depth yet.
+		// Resolve the current depth-stencil into DepthTexturePreWater. Reflections render before the
+		// main pass and the flag is reset just before the main WorldSceneGraph render (TrackRenderObject),
+		// so the main-pass water bind is the one that populates it.
+		if (!TheShaderManager->PreWaterDepthBufferFilled && !memcmp(PixelShader->ShaderName, "WATER", 5)) {
+			TheRenderManager->ResolvePreWaterDepthBuffer();
+			TheShaderManager->PreWaterDepthBufferFilled = true;
+			if (TheSettingManager->SettingsMain.Develop.ProfileShadows) Logger::Log("[PreWaterDbg] resolved pre-water depth at first water bind: %s", PixelShader->ShaderName); // TEMP (removed in Task 4)
+		}
+
 		if (PixelShader->ShaderProg && TheRenderManager->renderState->GetPixelShader() != PixelShader->ShaderHandle) PixelShader->ShaderProg->SetCT();
 		if (RenderWindowRootNode) {
 			char Name[256];
@@ -451,9 +462,11 @@ void __cdecl TrackSetShaderPackage(int Arg1, int Arg2, UInt8 Force1XShaders, int
 void (__cdecl * RenderObject)(NiCamera*, NiNode*, NiCullingProcess*, NiVisibleArray*) = (void (__cdecl *)(NiCamera*, NiNode*, NiCullingProcess*, NiVisibleArray*))0x0070C0B0;
 void __cdecl TrackRenderObject(NiCamera* Camera, NiNode* Object, NiCullingProcess* CullingProcess, NiVisibleArray* VisibleArray) {
 
+	if (Object == WorldSceneGraph) TheShaderManager->PreWaterDepthBufferFilled = false; // reset before the main pass so only main-pass water binds populate the pre-water depth
 	RenderObject(Camera, Object, CullingProcess, VisibleArray);
 	if (Object == WorldSceneGraph) {
 		TheRenderManager->ResolveDepthBuffer();
+		if (!TheShaderManager->PreWaterDepthBufferFilled) TheRenderManager->ResolvePreWaterDepthBuffer(); // no water this frame -> pre-water depth == post-water depth
 	}
 	else if (Object == Player->firstPersonNiNode) {
 		TheRenderManager->ResolveDepthBuffer();

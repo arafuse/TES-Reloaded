@@ -1097,6 +1097,7 @@ ShaderManager::ShaderManager() {
 	PingSurface = NULL;
 	RenderedBufferFilled = false;
 	DepthBufferFilled = false;
+	PreWaterDepthBufferFilled = false;
 	EffectVertex = NULL;
 	UnderwaterEffect = NULL;
 	WaterLensEffect = NULL;
@@ -2461,6 +2462,7 @@ void ShaderManager::BeginScene() {
 
 	RenderedBufferFilled = false;
 	DepthBufferFilled = false;
+	PreWaterDepthBufferFilled = false;
 }
 
 void ShaderManager::CreateShader(const char* Name) {
