@@ -31,6 +31,8 @@ class RenderManager: public NiDX9Renderer {
 public:
 	void				Initialize();
 	void				ResolveDepthBuffer();
+	void				ResolvePreWaterDepthBuffer();
+	void				ResolveDepthInto(IDirect3DTexture9* Target);
 	void				GetSceneCameraData();
 	void				SetupSceneCamera();
 	void				SetSceneGraph();
@@ -42,6 +44,7 @@ public:
 	IDirect3DSurface9*	BackBuffer;
 	IDirect3DSurface9*	DepthSurface;
 	IDirect3DTexture9*	DepthTexture;
+	IDirect3DTexture9*	DepthTexturePreWater;
 	IDirect3DTexture9*	DepthTextureINTZ;
 	RECT				SaveGameScreenShotRECT;
 	bool				IsSaveGameScreenShot;
