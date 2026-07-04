@@ -203,7 +203,7 @@ float4 Shadow(VSOUT IN) : COLOR0{
 	float3 camera_vector = toWorld(IN.UVCoord) * depth;
 	float4 world_pos = float4(TESR_CameraPosition.xyz + camera_vector, 1.0f);
 
-	if (world_pos.z > 1.0f) {
+	if (world_pos.z > TESR_WaterSettings.x + 1.0f) { // shadow only above the waterline; skip the water surface (was hardcoded 1.0, ignored elevated water)
 		float fogCoeff = (saturate((distance(world_pos, TESR_CameraPosition.xyz) - ((TESR_FogData.y - 2000))) / 1000)) + 1.0f;
 		float4 pos = mul(world_pos, TESR_WorldViewProjectionTransform);
 		float4 farPos = pos;
