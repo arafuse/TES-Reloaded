@@ -451,6 +451,7 @@ public:
 	D3DMATRIX				PrevWorldViewProjMatrix;
 	bool					RenderedBufferFilled;
 	bool					DepthBufferFilled;
+	bool					PreWaterDepthBufferFilled;
 	bool					isFullyInitialized;
 	bool					UseIntervalUpdate;
 	TESObjectCELL*			previousCell;
