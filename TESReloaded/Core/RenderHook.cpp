@@ -366,7 +366,6 @@ UInt32 RenderHook::TrackSetupShaderPrograms(NiGeometry* Geometry, NiSkinInstance
 		if (!TheShaderManager->PreWaterDepthBufferFilled && !memcmp(PixelShader->ShaderName, "WATER", 5) && PixelShader->ShaderName[5] >= '0' && PixelShader->ShaderName[5] <= '9') {
 			TheRenderManager->ResolvePreWaterDepthBuffer();
 			TheShaderManager->PreWaterDepthBufferFilled = true;
-			if (TheSettingManager->SettingsMain.Develop.ProfileShadows) Logger::Log("[PreWaterDbg] resolved pre-water depth at first water bind: %s", PixelShader->ShaderName); // TEMP (removed in Task 4)
 		}
 
 		if (PixelShader->ShaderProg && TheRenderManager->renderState->GetPixelShader() != PixelShader->ShaderHandle) PixelShader->ShaderProg->SetCT();
