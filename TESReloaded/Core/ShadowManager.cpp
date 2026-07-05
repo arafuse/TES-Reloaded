@@ -787,8 +787,10 @@ void ShadowManager::CollectExteriorGeo(NiAVObject* Object, bool HasWater, Shadow
 
 	NiBound* Bound = Geo->GetWorldBound();
 	if (!Bound) return; // no bound: can't cull/place; the ref-root test already requires one
-	// Water test (frame-constant): drop submerged opaque geo when water is present.
-	if (!(Geo->skinInstance || !HasWater || Bound->Center.z > 0.0f)) return;
+	// Submerged casters are intentionally NOT dropped: pre-water depth shadows underwater receivers, so
+	// submerged geometry must cast (a caster resting on a submerged base then grounds correctly instead of
+	// peter-panning). Skinned casters were already exempt (6d662023); this applies the same to statics.
+	// HasWater is still propagated through the recursion but no longer gates collection here.
 
 	// Per-pass cuts, applied at collection: drop sub-MinRadius geo and anything outside this pass's
 	// frustum. Center is reused for the stored item below.
