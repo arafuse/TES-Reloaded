@@ -4,6 +4,7 @@
 #define WordRenderedBuffer "TESR_RenderedBuffer"
 #define WordTAABuffer "TESR_TAABuffer"
 #define WordDepthBuffer "TESR_DepthBuffer"
+#define WordDepthBufferPreWater "TESR_DepthBufferPreWater"
 #define WordShadowMapBufferNear "TESR_ShadowMapBufferNear"
 #define WordShadowMapBufferFar "TESR_ShadowMapBufferFar"
 #define WordShadowMapBufferSkin "TESR_ShadowMapBufferSkin"
@@ -30,6 +31,7 @@ enum TextureRecordType {
 	TextureRecordType_RenderedBuffer,
 	TextureRecordType_TAABuffer,
 	TextureRecordType_DepthBuffer,
+	TextureRecordType_DepthBufferPreWater,
 	TextureRecordType_ShadowMapBufferNear,
 	TextureRecordType_ShadowMapBufferFar,
 	TextureRecordType_ShadowMapBufferSkin,

@@ -49,6 +49,9 @@ bool TextureRecord::LoadTexture(TextureRecordType Type, const char* Filename) {
 		case TextureRecordType_DepthBuffer:
 			Texture = TheRenderManager->DepthTexture;
 			break;
+		case TextureRecordType_DepthBufferPreWater:
+			Texture = TheRenderManager->DepthTexturePreWater;
+			break;
 		case TextureRecordType_ShadowMapBufferNear:
 			Texture = TheShadowManager->ShadowMapTexture[ShadowManager::ShadowMapTypeEnum::MapNear];
 			break;
@@ -187,6 +190,13 @@ TextureRecord* TextureManager::LoadTexture(const char* ShaderSource, UInt32 Regi
 					if (SamplerParser && SamplerParser < strstr(Sampler, WordSamplerDelimeter)) {
 						Type = TextureRecordType_TAABuffer;
 						strcpy(Filename, WordTAABuffer);
+					}
+				}
+				if (!Type) {
+					SamplerParser = strstr(Sampler, WordDepthBufferPreWater);
+					if (SamplerParser && SamplerParser < strstr(Sampler, WordSamplerDelimeter)) {
+						Type = TextureRecordType_DepthBufferPreWater;
+						strcpy(Filename, WordDepthBufferPreWater);
 					}
 				}
 				if (!Type) {
