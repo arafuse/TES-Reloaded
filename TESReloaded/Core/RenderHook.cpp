@@ -360,7 +360,10 @@ UInt32 RenderHook::TrackSetupShaderPrograms(NiGeometry* Geometry, NiSkinInstance
 		// Resolve the current depth-stencil into DepthTexturePreWater. Reflections render before the
 		// main pass and the flag is reset just before the main WorldSceneGraph render (TrackRenderObject),
 		// so the main-pass water bind is the one that populates it.
-		if (!TheShaderManager->PreWaterDepthBufferFilled && !memcmp(PixelShader->ShaderName, "WATER", 5)) {
+		// Match only the numbered water SURFACE shaders (WATER000-012); exclude the water height-map
+		// pre-pass shaders (WATERHMAP*/WATERHEIGHTMAP*, which have 'H' at index 5) — those run earlier
+		// and would capture the wrong depth / consume the once-per-frame flag before the real water draw.
+		if (!TheShaderManager->PreWaterDepthBufferFilled && !memcmp(PixelShader->ShaderName, "WATER", 5) && PixelShader->ShaderName[5] >= '0' && PixelShader->ShaderName[5] <= '9') {
 			TheRenderManager->ResolvePreWaterDepthBuffer();
 			TheShaderManager->PreWaterDepthBufferFilled = true;
 			if (TheSettingManager->SettingsMain.Develop.ProfileShadows) Logger::Log("[PreWaterDbg] resolved pre-water depth at first water bind: %s", PixelShader->ShaderName); // TEMP (removed in Task 4)
