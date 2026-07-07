@@ -2162,6 +2162,38 @@ public:
 };
 assert(sizeof(NiGeometryData) == 0x040);
 
+// NiTriBasedGeomData : NiGeometryData (adds the triangle count). Offsets are the documented Oblivion
+// layout; validated by the Task 1 spike before any draw code relies on them.
+class NiTriBasedGeomData : public NiGeometryData {
+public:
+	UInt16						NumTriangles;		// 040
+	UInt16						pad042;				// 042
+};
+
+// NiTriShapeData : NiTriBasedGeomData. Triangles is NumTriangles*3 UInt16 indices (triangle list).
+class NiTriShapeData : public NiTriBasedGeomData {
+public:
+	UInt32						NumTrianglePoints;	// 044
+	UInt8						HasTriangles;		// 048
+	UInt8						pad049[3];			// 049
+	UInt16*						Triangles;			// 04C
+	UInt16						NumMatchGroups;		// 050
+	UInt16						pad052;				// 052
+	UInt16**					MatchGroups;		// 054
+};
+
+// NiTriStripsData : NiTriBasedGeomData. Points is the concatenated strip index array; StripLengths[i]
+// is the index count of strip i (total = sum of StripLengths).
+class NiTriStripsData : public NiTriBasedGeomData {
+public:
+	UInt16						NumStrips;			// 044
+	UInt16						pad046;				// 046
+	UInt16*						StripLengths;		// 048
+	UInt8						HasPoints;			// 04C
+	UInt8						pad04D[3];			// 04D
+	UInt16*						Points;				// 050
+};
+
 class NiSkinPartition : public NiObject {
 public:
 	class Partition {
