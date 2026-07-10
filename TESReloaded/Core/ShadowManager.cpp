@@ -1066,6 +1066,9 @@ void ShadowManager::RenderShadowMap(ShadowMapTypeEnum ShadowMapType, SettingsSha
 		if (UseInstancing && Item.BaseInstanceable && !(AlphaEnabled && Item.HasAlphaMask)) {
 			AddInstance(Item.GeoData, i);
 			ProfileCount(Cnt_DirItemsInstanced);
+		} else if (Item.SoftwareDraw) {
+			// Buffer-less software casters: drawn via RenderSoftwareGeo in the next task. Skip here for now
+			// (must NOT fall to Render(): GeoData==NULL routes to RenderSkinnedGeo which NULL-derefs skinInstance).
 		} else {
 			Render(Item.Geo, ShadowData, Item.GeoData ? &Item.World : NULL);
 			if (!Item.BaseInstanceable) ProfileCount(Cnt_DirItemsImmNonInst);
