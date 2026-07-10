@@ -234,6 +234,7 @@ public:
 		bool                   HasAlphaMask;     // alpha blend/test present (blocks instancing when AlphaEnabled)
 		bool                   PassesWater;      // skinInstance || !HasWater || center.z > 0
 		bool                   IsActor;          // ref is an actor/creature => dynamic caster (Stage 2 split)
+		bool                   SoftwareDraw;     // no GPU buffer: draw from software verts via DrawIndexedPrimitiveUP
 	};
 	// Pooled across frames; only the *Count fields reset each frame so capacity is retained.
 	std::vector<ShadowGeoItem>  ShadowGeoPool;
