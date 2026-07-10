@@ -820,16 +820,6 @@ void ShadowManager::CollectExteriorGeo(NiAVObject* Object, bool HasWater, Shadow
 		if (!(Geo->skinInstance && Geo->skinInstance->SkinPartition && Geo->skinInstance->SkinPartition->Partitions
 			&& Geo->skinInstance->SkinPartition->Partitions[0].BuffData)) {
 			if (gCasterDbg && Geo->m_pcName) Logger::Log("[CasterDbg]   geo DROP name=%s reason=NotDrawable parent=%s geomData=%p skin=%p", Geo->m_pcName, (Geo->m_parent && Geo->m_parent->m_pcName) ? Geo->m_parent->m_pcName : "?", (void*)Geo->geomData, (void*)Geo->skinInstance); // TEMP
-			if (gCasterDbg && Geo->m_pcName) { // TEMP SPIKE: validate NiTriShapeData/NiTriStripsData offsets
-				NiGeometryData* GD = Geo->geomData;
-				if (VFT == VFTNiTriShape) {
-					NiTriShapeData* TSD = (NiTriShapeData*)GD;
-					Logger::Log("[CasterSpike] %s TRISHAPE verts=%u tris=%u triPts=%u triPtr=%p i0=%u i1=%u i2=%u", Geo->m_pcName, (UInt32)GD->Vertices, (UInt32)TSD->NumTriangles, TSD->NumTrianglePoints, (void*)TSD->Triangles, TSD->Triangles ? TSD->Triangles[0] : 0xFFFF, TSD->Triangles ? TSD->Triangles[1] : 0xFFFF, TSD->Triangles ? TSD->Triangles[2] : 0xFFFF);
-				} else if (VFT == VFTNiTriStrips) {
-					NiTriStripsData* TSD = (NiTriStripsData*)GD;
-					Logger::Log("[CasterSpike] %s TRISTRIPS verts=%u strips=%u lenPtr=%p ptsPtr=%p len0=%u p0=%u p1=%u", Geo->m_pcName, (UInt32)GD->Vertices, (UInt32)TSD->NumStrips, (void*)TSD->StripLengths, (void*)TSD->Points, (TSD->StripLengths ? TSD->StripLengths[0] : 0xFFFF), (TSD->Points ? TSD->Points[0] : 0xFFFF), (TSD->Points ? TSD->Points[1] : 0xFFFF));
-				}
-			}
 			return;
 		} // not drawable
 		DrawViaSkin = true;
