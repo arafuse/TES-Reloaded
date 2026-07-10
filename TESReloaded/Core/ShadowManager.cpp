@@ -657,6 +657,49 @@ void ShadowManager::Render(NiGeometry* Geo, D3DXVECTOR4* ShadowData, const D3DMA
 
 }
 
+// Draw an opaque caster that has no GPU buffer (geomData->BuffData == NULL) straight from its software
+// vertex/index arrays. Position-only: the shadow VS opaque path (TESR_ShadowData.x == 0) reads only
+// POSITION and applies world*viewproj, so a D3DFVF_XYZ DrawIndexedPrimitiveUP of the model-space verts
+// with ShadowWorld = the geo's world matrix renders the same depth as the normal path.
+void ShadowManager::RenderSoftwareGeo(NiGeometry* Geo, D3DXVECTOR4* ShadowData) {
+	IDirect3DDevice9* Device = TheRenderManager->device;
+	NiDX9RenderState* RenderState = TheRenderManager->renderState;
+	NiGeometryData* GD = Geo->geomData;
+	if (!GD || !GD->Vertex || GD->Vertices == 0) return;
+
+	ShadowData->x = 0.0f; // opaque path
+	ShadowData->y = 0.0f;
+	CreateD3DMatrix(&TheShaderManager->ShaderConst.ShadowMap.ShadowWorld, &Geo->m_worldTransform);
+	CurrentVertex->SetCT();
+	CurrentPixel->SetCT();
+	RenderState->SetFVF(D3DFVF_XYZ, false);
+
+	void* VFT = *(void**)Geo;
+	if (VFT == VFTNiTriShape) {
+		NiTriShapeData* TSD = (NiTriShapeData*)GD;
+		if (!TSD->Triangles || TSD->NumTriangles == 0) return;
+		if (TSD->Triangles[0] >= GD->Vertices) return; // offset/data sanity: first index must be in range
+		Device->DrawIndexedPrimitiveUP(D3DPT_TRIANGLELIST, 0, GD->Vertices, TSD->NumTriangles,
+			TSD->Triangles, D3DFMT_INDEX16, GD->Vertex, sizeof(NiPoint3));
+		ProfileCount(Cnt_DrawCalls);
+	} else if (VFT == VFTNiTriStrips) {
+		NiTriStripsData* TSD = (NiTriStripsData*)GD;
+		if (!TSD->Points || !TSD->StripLengths || TSD->NumStrips == 0) return;
+		if (TSD->Points[0] >= GD->Vertices) return; // offset/data sanity: first index must be in range
+		// One DrawIndexedPrimitiveUP per strip (strip index runs are concatenated in Points).
+		UInt32 Offset = 0;
+		for (UInt16 s = 0; s < TSD->NumStrips; s++) {
+			UInt16 Len = TSD->StripLengths[s];
+			if (Len >= 3) {
+				Device->DrawIndexedPrimitiveUP(D3DPT_TRIANGLESTRIP, 0, GD->Vertices, Len - 2,
+					TSD->Points + Offset, D3DFMT_INDEX16, GD->Vertex, sizeof(NiPoint3));
+				ProfileCount(Cnt_DrawCalls);
+			}
+			Offset += Len;
+		}
+	}
+}
+
 #if 0 // SHADOWS DISABLED: dead reference — cube/point-light actor draw (unused by ortho path)
 void ShadowManager::RenderActor(NiGeometry* Geo, D3DXVECTOR4* ShadowData, int lightIndex) {
 	NiGeometryData* ModelData = Geo->geomData;
@@ -1067,8 +1110,8 @@ void ShadowManager::RenderShadowMap(ShadowMapTypeEnum ShadowMapType, SettingsSha
 			AddInstance(Item.GeoData, i);
 			ProfileCount(Cnt_DirItemsInstanced);
 		} else if (Item.SoftwareDraw) {
-			// Buffer-less software casters: drawn via RenderSoftwareGeo in the next task. Skip here for now
-			// (must NOT fall to Render(): GeoData==NULL routes to RenderSkinnedGeo which NULL-derefs skinInstance).
+			RenderSoftwareGeo(Item.Geo, ShadowData);
+			ProfileCount(Cnt_DirItemsImmNonInst);
 		} else {
 			Render(Item.Geo, ShadowData, Item.GeoData ? &Item.World : NULL);
 			if (!Item.BaseInstanceable) ProfileCount(Cnt_DirItemsImmNonInst);
