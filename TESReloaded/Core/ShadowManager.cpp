@@ -263,6 +263,8 @@ ShadowManager::ShadowManager() {
 	ShadowGeoCount = 0;
 	CollectWorldSpace = false;
 
+	for (int i = 0; i < 2; i++) { Regions[i].Valid = false; D3DXMatrixIdentity(&Regions[i].BakedViewProj); }
+
 	LoadShadowShaders(Device);
 	CreateShadowMapSurfaces(Device, ShadowsExteriors);
 	CreateCubeMapSurfaces(Device, ShadowCubeMapSize);
@@ -776,7 +778,12 @@ void ShadowManager::SetupCachedRegionMatrices(ShadowMapTypeEnum ShadowMapType, S
 // into the cached (possibly stale) light space correctly.
 void ShadowManager::PublishCachedRegionSampleMatrix(ShadowMapTypeEnum ShadowMapType) {
 	int r = ShadowMapType - MapNear;
-	TheShaderManager->ShaderConst.ShadowMap.ShadowCameraToLight[ShadowMapType] = TheRenderManager->InvViewProjMatrix * Regions[r].BakedViewProj;
+	// InvViewProjMatrix maps current clip -> CAMERA-RELATIVE world (WorldViewProj bakes in T(-CameraPosition)).
+	// BakedViewProj is absolute-world -> light. Re-add the camera translation so the sample point is absolute
+	// before projecting into the cached light space.
+	D3DXMATRIX Trans;
+	D3DXMatrixTranslation(&Trans, TheRenderManager->CameraPosition.x, TheRenderManager->CameraPosition.y, TheRenderManager->CameraPosition.z);
+	TheShaderManager->ShaderConst.ShadowMap.ShadowCameraToLight[ShadowMapType] = TheRenderManager->InvViewProjMatrix * Trans * Regions[r].BakedViewProj;
 }
 
 // A cached region is due for a rebake when it is invalid, the look-at focus has left the guard band
