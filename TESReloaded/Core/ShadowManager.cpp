@@ -764,6 +764,27 @@ void ShadowManager::PublishCachedRegionSampleMatrix(ShadowMapTypeEnum ShadowMapT
 	TheShaderManager->ShaderConst.ShadowMap.ShadowCameraToLight[ShadowMapType] = TheRenderManager->InvViewProjMatrix * Regions[r].BakedViewProj;
 }
 
+// A cached region is due for a rebake when it is invalid, the look-at focus has left the guard band
+// the map was baked to cover, or the sun has rotated past the interval. Near uses a small margin
+// (rebakes more often); far uses a large one (rarely).
+bool ShadowManager::RegionNeedsRebake(ShadowMapTypeEnum ShadowMapType) {
+	int r = ShadowMapType - MapNear;
+	CachedRegion& Reg = Regions[r];
+	if (!Reg.Valid) return true;
+
+	SettingsShadowStruct::ExteriorsStruct* S = SelectExteriorShadowSettings();
+	float Radius = S->ShadowMapRadius[ShadowMapType];
+	float MarginFrac = (ShadowMapType == MapNear) ? S->RebakeMarginNear : S->RebakeMarginFar;
+	D3DXVECTOR3 Drift = LookAtPosition - Reg.AnchorPos;
+	if (D3DXVec3Length(&Drift) > Radius * MarginFrac) return true;
+
+	D3DXVECTOR4* Sun = &TheShaderManager->ShaderConst.ShadowMap.ShadowLightDir;
+	float SunDot = Sun->x * Reg.BakedSunDir.x + Sun->y * Reg.BakedSunDir.y + Sun->z * Reg.BakedSunDir.z;
+	if (SunDot < S->RebakeSunInterval) return true;
+
+	return false;
+}
+
 static const float MinRadii[4] = { 9.0f, 100.0f, 100.0f, 0.0f }; // Near, Far, Ortho, Skin
 
 void ShadowManager::RenderShadowMapCellTerrain(TESObjectCELL* Cell, ShadowMapTypeEnum ShadowMapType, D3DXVECTOR4* ShadowData) {
@@ -1140,6 +1161,11 @@ void ShadowManager::RenderExteriorShadows() {
 		RenderShadowMap(MapOrtho, ShadowsExteriors, &At, &OrthoDir, ShadowData);
 
 		OrthoData->z = 1.0f / (float)ShadowsExteriors->ShadowMapSize[MapOrtho];
+	}
+
+	if (CurrentCell != Player->parentCell) {
+		CurrentCell = Player->parentCell;
+		Regions[0].Valid = Regions[1].Valid = false;
 	}
 
 	if (DoSun) {
