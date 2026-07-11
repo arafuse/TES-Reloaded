@@ -51,6 +51,7 @@ sampler2D TESR_ShadowMapBufferNear : register(s2) = sampler_state { ADDRESSU = C
 sampler2D TESR_ShadowMapBufferFar : register(s3) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
 sampler2D TESR_SourceBuffer : register(s4) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
 sampler2D TESR_DepthBufferPreWater : register(s5) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
+sampler2D TESR_ShadowMapBufferSkin : register(s6) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
 
 static const float nearZ = TESR_ProjectionTransform._43 / TESR_ProjectionTransform._33;
 static const float farZ = (TESR_ProjectionTransform._33 * nearZ) / (TESR_ProjectionTransform._33 - 1.0f);
@@ -188,6 +189,18 @@ float GetLightAmount(float4 WorldPos, float4 ShadowPos, float4 ShadowPosFar, flo
 		}
 	}
 	Shadow /= 16.0f;
+
+	// Per-frame actor overlay (Task 9): actors are drawn dynamically into MapSkin each frame, aligned
+	// texel-for-texel with the cached near-static map (both sampled via the near ViewProj), so it can be
+	// looked up in the same near UV/space and min-combined with the static shadow term.
+	float ActorShadow = 0.0f;
+	for (y = -1.5f; y <= 1.5f; y += 1.0f)
+		for (x = -1.5f; x <= 1.5f; x += 1.0f) {
+			float s = tex2D(TESR_ShadowMapBufferSkin, ShadowPos.xy + float2(x, y) * TESR_ShadowData.z).r;
+			ActorShadow += (s < ShadowPos.z - bias) ? darkness : 1.0f;
+		}
+	ActorShadow /= 16.0f;
+	Shadow = min(Shadow, ActorShadow);
 
 	return saturate(Shadow);
 
