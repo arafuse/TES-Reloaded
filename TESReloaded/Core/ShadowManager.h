@@ -255,11 +255,13 @@ public:
 	// Pooled across frames; only the *Count fields reset each frame so capacity is retained.
 	std::vector<ShadowGeoItem>  ShadowGeoPool;
 	int                         ShadowGeoCount;
-	// When true, BuildExteriorGeoItems/CollectExteriorGeo collect world-space centers/matrices (no
-	// camera subtraction) for a cached static bake against a world-anchored ShadowViewProj; set/cleared
+	// When true, BuildExteriorGeoItems/CollectExteriorGeo collect ANCHOR-relative centers/matrices
+	// (subtract CollectAnchor) for a cached static bake against an anchor-relative ShadowViewProj; set/cleared
 	// around each bake (BakeStaticRegion, RenderActorOverlay). False (default) keeps the normal
-	// camera-relative per-frame collection.
+	// camera-relative per-frame collection. Anchor-relative (not absolute-world) keeps coordinates small so
+	// float32 shadow-map precision is preserved (absolute world coords ~1e5 make shadow edges flicker).
 	bool                        CollectWorldSpace;
+	D3DXVECTOR3                 CollectAnchor; // world origin the current cached bake draws relative to
 };
 
 void CreateShadowsHook();
