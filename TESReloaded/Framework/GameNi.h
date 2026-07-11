@@ -2162,9 +2162,8 @@ public:
 };
 assert(sizeof(NiGeometryData) == 0x040);
 
-// NiTriBasedGeomData : NiGeometryData (adds the triangle count). Offsets VALIDATED in-game via the
-// Task 1 spike raw-memory dump (see 2026-07-06 spike): NumTriangles@0x40; NumTriangles*3 == the shape's
-// NumTrianglePoints; the index-array pointers are heap-resident even when geomData->BuffData is NULL.
+// NiTriBasedGeomData : NiGeometryData (adds the triangle count). Offsets are the documented Oblivion
+// layout; validated by the Task 1 spike before any draw code relies on them.
 class NiTriBasedGeomData : public NiGeometryData {
 public:
 	UInt16						NumTriangles;		// 040
@@ -2172,22 +2171,27 @@ public:
 };
 
 // NiTriShapeData : NiTriBasedGeomData. Triangles is NumTriangles*3 UInt16 indices (triangle list).
-// VALIDATED: Triangles is at 0x48 (there is NO HasTriangles bool before it), NumTrianglePoints@0x44.
 class NiTriShapeData : public NiTriBasedGeomData {
 public:
-	UInt32						NumTrianglePoints;	// 044  (== NumTriangles * 3)
-	UInt16*						Triangles;			// 048  (validated heap ptr; NULL means indices not resident)
+	UInt32						NumTrianglePoints;	// 044
+	UInt8						HasTriangles;		// 048
+	UInt8						pad049[3];			// 049
+	UInt16*						Triangles;			// 04C
+	UInt16						NumMatchGroups;		// 050
+	UInt16						pad052;				// 052
+	UInt16**					MatchGroups;		// 054
 };
 
 // NiTriStripsData : NiTriBasedGeomData. Points is the concatenated strip index array; StripLengths[i]
-// is the index count of strip i. VALIDATED: NumStrips@0x44, StripLengths@0x48, Points@0x4C (no HasPoints
-// bool; 0x50 holds an unrelated field/static value, not Points).
+// is the index count of strip i (total = sum of StripLengths).
 class NiTriStripsData : public NiTriBasedGeomData {
 public:
 	UInt16						NumStrips;			// 044
 	UInt16						pad046;				// 046
-	UInt16*						StripLengths;		// 048  (validated heap ptr: NumStrips lengths)
-	UInt16*						Points;				// 04C  (validated heap ptr: concatenated strip indices)
+	UInt16*						StripLengths;		// 048
+	UInt8						HasPoints;			// 04C
+	UInt8						pad04D[3];			// 04D
+	UInt16*						Points;				// 050
 };
 
 class NiSkinPartition : public NiObject {

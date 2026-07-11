@@ -657,49 +657,6 @@ void ShadowManager::Render(NiGeometry* Geo, D3DXVECTOR4* ShadowData, const D3DMA
 
 }
 
-// Draw an opaque caster that has no GPU buffer (geomData->BuffData == NULL) straight from its software
-// vertex/index arrays. Position-only: the shadow VS opaque path (TESR_ShadowData.x == 0) reads only
-// POSITION and applies world*viewproj, so a D3DFVF_XYZ DrawIndexedPrimitiveUP of the model-space verts
-// with ShadowWorld = the geo's world matrix renders the same depth as the normal path.
-void ShadowManager::RenderSoftwareGeo(NiGeometry* Geo, D3DXVECTOR4* ShadowData) {
-	IDirect3DDevice9* Device = TheRenderManager->device;
-	NiDX9RenderState* RenderState = TheRenderManager->renderState;
-	NiGeometryData* GD = Geo->geomData;
-	if (!GD || !GD->Vertex || GD->Vertices == 0) return;
-
-	ShadowData->x = 0.0f; // opaque path
-	ShadowData->y = 0.0f;
-	CreateD3DMatrix(&TheShaderManager->ShaderConst.ShadowMap.ShadowWorld, &Geo->m_worldTransform);
-	CurrentVertex->SetCT();
-	CurrentPixel->SetCT();
-	RenderState->SetFVF(D3DFVF_XYZ, false);
-
-	void* VFT = *(void**)Geo;
-	if (VFT == VFTNiTriShape) {
-		NiTriShapeData* TSD = (NiTriShapeData*)GD;
-		if (!TSD->Triangles || TSD->NumTriangles == 0) return;
-		if (TSD->Triangles[0] >= GD->Vertices) return; // offset/data sanity: first index must be in range
-		Device->DrawIndexedPrimitiveUP(D3DPT_TRIANGLELIST, 0, GD->Vertices, TSD->NumTriangles,
-			TSD->Triangles, D3DFMT_INDEX16, GD->Vertex, sizeof(NiPoint3));
-		ProfileCount(Cnt_DrawCalls);
-	} else if (VFT == VFTNiTriStrips) {
-		NiTriStripsData* TSD = (NiTriStripsData*)GD;
-		if (!TSD->Points || !TSD->StripLengths || TSD->NumStrips == 0) return;
-		if (TSD->Points[0] >= GD->Vertices) return; // offset/data sanity: first index must be in range
-		// One DrawIndexedPrimitiveUP per strip (strip index runs are concatenated in Points).
-		UInt32 Offset = 0;
-		for (UInt16 s = 0; s < TSD->NumStrips; s++) {
-			UInt16 Len = TSD->StripLengths[s];
-			if (Len >= 3) {
-				Device->DrawIndexedPrimitiveUP(D3DPT_TRIANGLESTRIP, 0, GD->Vertices, Len - 2,
-					TSD->Points + Offset, D3DFMT_INDEX16, GD->Vertex, sizeof(NiPoint3));
-				ProfileCount(Cnt_DrawCalls);
-			}
-			Offset += Len;
-		}
-	}
-}
-
 #if 0 // SHADOWS DISABLED: dead reference — cube/point-light actor draw (unused by ortho path)
 void ShadowManager::RenderActor(NiGeometry* Geo, D3DXVECTOR4* ShadowData, int lightIndex) {
 	NiGeometryData* ModelData = Geo->geomData;
@@ -773,7 +730,8 @@ void ShadowManager::RenderShadowMapCellTerrain(TESObjectCELL* Cell, ShadowMapTyp
 	}
 }
 
-static bool gCasterDbg = false; // TEMP diagnostic: log large-caster drops (Develop.ProfileShadows, MapNear only)
+static bool gCasterDbg = false;    // TEMP diagnostic: log large-caster drops (Develop.ProfileShadows)
+static bool gCasterDbgRef = false; // TEMP: geo-level logging scoped to the current big kept ref
 
 // Flatten every ortho-frustum-visible, Forms-allowed shadow-casting ref in the loaded grid into
 // ShadowGeoPool once per frame. Node/flag/excluded/type/Forms eligibility, the ref-root frustum cull,
@@ -811,34 +769,14 @@ void ShadowManager::BuildExteriorGeoItems(SettingsShadowStruct::ExteriorsStruct*
 				if (!RootBound) continue;
 				D3DXVECTOR3 RootCenter = { RootBound->Center.x - TheRenderManager->CameraPosition.x, RootBound->Center.y - TheRenderManager->CameraPosition.y, RootBound->Center.z - TheRenderManager->CameraPosition.z };
 				if (!RootInShadowFrustum(ShadowMapType, RootCenter, RootBound->Radius)) { if (dbgBig) Logger::Log("[CasterDbg] %s DROP id=%08X %-32s r=%.0f d=%.0f type=%u reason=NotInFrustum", dbgMap, dbgID, dbgNm, dbgRad, dbgDist, TypeID); continue; } // whole-subtree cull
-				if (dbgBig) Logger::Log("[CasterDbg] %s KEEP id=%08X %-32s r=%.0f d=%.0f type=%u", dbgMap, dbgID, dbgNm, dbgRad, dbgDist, TypeID); // TEMP
 				bool IsActorRef = (TypeID >= TESForm::FormType::kFormType_NPC && TypeID <= TESForm::FormType::kFormType_LeveledCreature); // used by the Stage 2 static/dynamic split
+				gCasterDbgRef = dbgBig; int dbgBefore = ShadowGeoCount;                                          // TEMP
 				CollectExteriorGeo(Node, HasWater, ShadowMapType, IsActorRef);
+				gCasterDbgRef = false;                                                                           // TEMP
+				if (dbgBig) Logger::Log("[CasterDbg] %s KEEP id=%08X %-32s r=%.0f d=%.0f type=%u collected=%d", dbgMap, dbgID, dbgNm, dbgRad, dbgDist, TypeID, ShadowGeoCount - dbgBefore); // TEMP
 			}
 		}
 	}
-}
-
-// A buffer-less (no GeoData) geo can still be drawn into the shadow map from its software vertex/index
-// arrays IF: it has verts, it has a resident triangle-list/strip index array, and it is an opaque
-// static (a lighting property present, no alpha-test/blend). Returns primitive kind via *OutStrips.
-static bool SoftwareGeoEligible(NiGeometry* Geo, void* VFT, bool* OutStrips) {
-	NiGeometryData* GD = Geo->geomData;
-	if (!GD || !GD->Vertex || GD->Vertices == 0) return false;
-	if (VFT == VFTNiTriShape) {
-		NiTriShapeData* TSD = (NiTriShapeData*)GD;
-		if (!TSD->Triangles || TSD->NumTriangles == 0) return false;
-		*OutStrips = false;
-	} else if (VFT == VFTNiTriStrips) {
-		NiTriStripsData* TSD = (NiTriStripsData*)GD;
-		if (!TSD->Points || TSD->NumStrips == 0 || !TSD->StripLengths) return false;
-		*OutStrips = true;
-	} else return false;
-	BSShaderProperty* LProp = (BSShaderProperty*)Geo->GetProperty(NiProperty::PropertyType::kType_Lighting);
-	if (!LProp || !LProp->IsLightingProperty()) return false;
-	NiAlphaProperty* AProp = (NiAlphaProperty*)Geo->GetProperty(NiProperty::PropertyType::kType_Alpha);
-	if (AProp && (AProp->flags & (NiAlphaProperty::AlphaFlags::ALPHA_BLEND_MASK | NiAlphaProperty::AlphaFlags::TEST_ENABLE_MASK))) return false;
-	return true;
 }
 
 // Recursive collector: walks one ref's sub-tree and appends drawable geometry to ShadowGeoPool.
@@ -847,22 +785,23 @@ static bool SoftwareGeoEligible(NiGeometry* Geo, void* VFT, bool* OutStrips) {
 // anything they would have skipped (torch, no shader, submerged, no lighting property on opaque
 // statics, no usable buffer) is dropped here.
 void ShadowManager::CollectExteriorGeo(NiAVObject* Object, bool HasWater, ShadowMapTypeEnum ShadowMapType, bool IsActorRef) {
+	if (gCasterDbgRef && Object) { void* vft = *(void**)Object; bool isNode = (vft == VFTNiNode || vft == VFTBSFadeNode || vft == VFTBSFaceGenNiNode || vft == VFTBSTreeNode); bool isGeo = (vft == VFTNiTriShape || vft == VFTNiTriStrips); NiRTTI* rtti = Object->GetType(); Logger::Log("[CasterDbg]   walk name=%s type=%s vft=%p culled=%d node=%d geo=%d children=%d", Object->m_pcName ? Object->m_pcName : "?", (rtti && rtti->name) ? rtti->name : "?", vft, (Object->m_flags & NiAVObject::kFlag_AppCulled) ? 1 : 0, isNode ? 1 : 0, isGeo ? 1 : 0, isNode ? ((NiNode*)Object)->m_children.end : -1); } // TEMP
 	if (!Object || (Object->m_flags & NiAVObject::kFlag_AppCulled)) return;
 	void* VFT = *(void**)Object;
 	if (VFT == VFTNiNode || VFT == VFTBSFadeNode || VFT == VFTBSFaceGenNiNode || VFT == VFTBSTreeNode || VFT == VFTNiLODNode) {
-		NiNode* Node = (NiNode*)Object;
+		NiNode* Node = (NiNode*)Object; // NiLODNode derives from NiNode, so children access is valid; the drawable (active) LOD casts, others are filtered by AppCull/NotDrawable
 		for (int i = 0; i < Node->m_children.end; i++)
 			CollectExteriorGeo(Node->m_children.data[i], HasWater, ShadowMapType, IsActorRef);
 		return;
 	}
 	if (VFT != VFTNiTriShape && VFT != VFTNiTriStrips) {
-		if (gCasterDbg && Object->m_pcName) Logger::Log("[CasterDbg]   subtree STOP (unhandled node/type) name=%s", Object->m_pcName); // TEMP
+		if (gCasterDbgRef &&Object->m_pcName) Logger::Log("[CasterDbg]   subtree STOP (unhandled node/type) name=%s", Object->m_pcName); // TEMP
 		return;
 	}
 
 	NiGeometry* Geo = (NiGeometry*)Object;
 	if (Geo->m_pcName && !memcmp(Geo->m_pcName, "Torch", 5)) return; // skipped by Render() anyway
-	if (!Geo->shader) { if (gCasterDbg && Geo->m_pcName) Logger::Log("[CasterDbg]   geo DROP name=%s reason=NoShader", Geo->m_pcName); return; } // TEMP
+	if (!Geo->shader) { if (gCasterDbgRef &&Geo->m_pcName) Logger::Log("[CasterDbg]   geo DROP name=%s reason=NoShader", Geo->m_pcName); return; } // TEMP
 
 	NiBound* Bound = Geo->GetWorldBound();
 	if (!Bound) return; // no bound: can't cull/place; the ref-root test already requires one
@@ -881,28 +820,20 @@ void ShadowManager::CollectExteriorGeo(NiAVObject* Object, bool HasWater, Shadow
 	// partition (RenderSkinnedGeo path, signalled by storing GeoData = NULL on the item).
 	NiGeometryBufferData* ModelBuff = Geo->geomData->BuffData;
 	bool DrawViaSkin = false;
-	bool SoftwareDraw = false;
-	bool SoftwareStrips = false;
 	if (!ModelBuff) {
-		if (Geo->skinInstance && Geo->skinInstance->SkinPartition && Geo->skinInstance->SkinPartition->Partitions
-			&& Geo->skinInstance->SkinPartition->Partitions[0].BuffData) {
-			DrawViaSkin = true;
-		} else if (SoftwareGeoEligible(Geo, VFT, &SoftwareStrips)) {
-			SoftwareDraw = true; // draw from software verts/indices (Task 3)
-		} else {
-			if (gCasterDbg && Geo->m_pcName) Logger::Log("[CasterDbg]   geo DROP name=%s reason=NotDrawable parent=%s geomData=%p skin=%p", Geo->m_pcName, (Geo->m_parent && Geo->m_parent->m_pcName) ? Geo->m_parent->m_pcName : "?", (void*)Geo->geomData, (void*)Geo->skinInstance); // TEMP
-			return; // truly not drawable (no buffer, not skinned, no resident software geo)
-		}
+		if (!(Geo->skinInstance && Geo->skinInstance->SkinPartition && Geo->skinInstance->SkinPartition->Partitions
+			&& Geo->skinInstance->SkinPartition->Partitions[0].BuffData)) { if (gCasterDbgRef &&Geo->m_pcName) Logger::Log("[CasterDbg]   geo DROP name=%s reason=NotDrawable", Geo->m_pcName); return; } // not drawable // TEMP
+		DrawViaSkin = true;
 	}
 
 	bool BaseInstanceable = false;
 	bool HasAlphaMask = false;
-	if (!DrawViaSkin && !SoftwareDraw) {
+	if (!DrawViaSkin) {
 		bool IsLeaf = Geo->m_parent && Geo->m_parent->m_pcName && !memcmp(Geo->m_parent->m_pcName, "Leaves", 6);
 		if (!IsLeaf) {
 			// Opaque static path: Render() early-outs without a lighting property, so drop it here.
 			BSShaderProperty* LProp = (BSShaderProperty*)Geo->GetProperty(NiProperty::PropertyType::kType_Lighting);
-			if (!LProp || !LProp->IsLightingProperty()) { if (gCasterDbg && Geo->m_pcName) Logger::Log("[CasterDbg]   geo DROP name=%s reason=NoLightingProperty", Geo->m_pcName); return; } // TEMP
+			if (!LProp || !LProp->IsLightingProperty()) { if (gCasterDbgRef &&Geo->m_pcName) Logger::Log("[CasterDbg]   geo DROP name=%s reason=NoLightingProperty", Geo->m_pcName); return; } // TEMP
 			NiAlphaProperty* AProp = (NiAlphaProperty*)Geo->GetProperty(NiProperty::PropertyType::kType_Alpha);
 			HasAlphaMask = AProp && (AProp->flags & (NiAlphaProperty::AlphaFlags::ALPHA_BLEND_MASK | NiAlphaProperty::AlphaFlags::TEST_ENABLE_MASK));
 			BaseInstanceable = ModelBuff->VertexDeclaration && !Geo->skinInstance; // FVF-only / skinned excluded
@@ -919,9 +850,7 @@ void ShadowManager::CollectExteriorGeo(NiAVObject* Object, bool HasWater, Shadow
 	Item.BaseInstanceable = BaseInstanceable;
 	Item.HasAlphaMask = HasAlphaMask;
 	Item.IsActor = IsActorRef;
-	Item.SoftwareDraw = SoftwareDraw;
-	if (!DrawViaSkin && !SoftwareDraw) CreateD3DMatrix(&Item.World, &Geo->m_worldTransform);
-	if (gCasterDbg && Geo->m_pcName) Logger::Log("[CasterDbg]   geo KEEP name=%s viaSkin=%d instanceable=%d alpha=%d", Geo->m_pcName, (int)DrawViaSkin, (int)BaseInstanceable, (int)HasAlphaMask); // TEMP
+	if (!DrawViaSkin) CreateD3DMatrix(&Item.World, &Geo->m_worldTransform);
 }
 
 // Append a pool item to its mesh's instance group (keyed by the shared NiGeometryBufferData),
@@ -1109,9 +1038,6 @@ void ShadowManager::RenderShadowMap(ShadowMapTypeEnum ShadowMapType, SettingsSha
 		if (UseInstancing && Item.BaseInstanceable && !(AlphaEnabled && Item.HasAlphaMask)) {
 			AddInstance(Item.GeoData, i);
 			ProfileCount(Cnt_DirItemsInstanced);
-		} else if (Item.SoftwareDraw) {
-			RenderSoftwareGeo(Item.Geo, ShadowData);
-			ProfileCount(Cnt_DirItemsImmNonInst);
 		} else {
 			Render(Item.Geo, ShadowData, Item.GeoData ? &Item.World : NULL);
 			if (!Item.BaseInstanceable) ProfileCount(Cnt_DirItemsImmNonInst);
