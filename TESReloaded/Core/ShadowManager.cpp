@@ -730,9 +730,6 @@ void ShadowManager::RenderShadowMapCellTerrain(TESObjectCELL* Cell, ShadowMapTyp
 	}
 }
 
-static bool gCasterDbg = false;    // TEMP diagnostic: log large-caster drops (Develop.ProfileShadows)
-static bool gCasterDbgRef = false; // TEMP: geo-level logging scoped to the current big kept ref
-
 // Flatten every ortho-frustum-visible, Forms-allowed shadow-casting ref in the loaded grid into
 // ShadowGeoPool once per frame. Node/flag/excluded/type/Forms eligibility, the ref-root frustum cull,
 // world transforms, bounds, the water test, the per-geo leaf cull, the MinRadius cut, and instancing
@@ -743,7 +740,6 @@ void ShadowManager::BuildExteriorGeoItems(SettingsShadowStruct::ExteriorsStruct*
 	bool HasExcluded = ExcludedForms->size() > 0;
 	bool HasWater = TheShaderManager->ShaderConst.HasWater;
 	SettingsShadowStruct::FormsStruct* Forms = &ShadowsExteriors->Forms[ShadowMapType];
-	gCasterDbg = (ShadowMapType == MapNear || ShadowMapType == MapFar) && TheSettingManager->SettingsMain.Develop.ProfileShadows; // TEMP
 	for (UInt32 x = 0; x < *SettingGridsToLoad; x++) {
 		for (UInt32 y = 0; y < *SettingGridsToLoad; y++) {
 			TESObjectCELL* Cell = Tes->gridCellArray->GetCell(x, y);
@@ -752,28 +748,18 @@ void ShadowManager::BuildExteriorGeoItems(SettingsShadowStruct::ExteriorsStruct*
 			for (; Entry; Entry = Entry->next) {
 				TESObjectREFR* Ref = Entry->item;
 				NiNode* Node;
-				if (!Ref || !(Node = Ref->GetNode())) continue;
+				if (!Ref || !(Node = Ref->GetNode()) || (Ref->flags & TESForm::FormFlags::kFormFlags_NotCastShadows)) continue;
 				TESForm* Form = Ref->baseForm;
 				UInt8 TypeID = Form->formType;
-				NiBound* RootBound = Node->GetWorldBound();                                                     // TEMP: fetched early for the drop log
-				const char* dbgMap = (ShadowMapType == MapNear) ? "Near" : "Far ";                              // TEMP
-				const char* dbgNm = Node->m_pcName ? Node->m_pcName : "?";                                       // TEMP
-				UInt32 dbgID = Ref->refID;                                                                       // TEMP
-				float dbgRad = RootBound ? RootBound->Radius : 0.0f;                                             // TEMP
-				float dbgDist = 0.0f; if (RootBound) { float ddx = RootBound->Center.x - TheRenderManager->CameraPosition.x, ddy = RootBound->Center.y - TheRenderManager->CameraPosition.y, ddz = RootBound->Center.z - TheRenderManager->CameraPosition.z; dbgDist = sqrtf(ddx * ddx + ddy * ddy + ddz * ddz); } // TEMP
-				bool dbgBig = gCasterDbg && dbgRad > 500.0f;                                                     // TEMP
-				if (Ref->flags & TESForm::FormFlags::kFormFlags_NotCastShadows) { if (dbgBig) Logger::Log("[CasterDbg] %s DROP id=%08X %-32s r=%.0f d=%.0f type=%u reason=NotCastShadows", dbgMap, dbgID, dbgNm, dbgRad, dbgDist, TypeID); continue; }
-				if (!IsShadowCastableType(TypeID)) { if (dbgBig) Logger::Log("[CasterDbg] %s DROP id=%08X %-32s r=%.0f d=%.0f type=%u reason=NotCastableType", dbgMap, dbgID, dbgNm, dbgRad, dbgDist, TypeID); continue; }
-				if (!FormsAllows(Forms, TypeID)) { if (dbgBig) Logger::Log("[CasterDbg] %s DROP id=%08X %-32s r=%.0f d=%.0f type=%u reason=FormsDisabled", dbgMap, dbgID, dbgNm, dbgRad, dbgDist, TypeID); continue; }
-				if (HasExcluded && std::binary_search(ExcludedForms->begin(), ExcludedForms->end(), Form->refID)) { if (dbgBig) Logger::Log("[CasterDbg] %s DROP id=%08X %-32s r=%.0f d=%.0f type=%u reason=Excluded", dbgMap, dbgID, dbgNm, dbgRad, dbgDist, TypeID); continue; }
+				if (!IsShadowCastableType(TypeID)) continue;
+				if (!FormsAllows(Forms, TypeID)) continue;
+				if (HasExcluded && std::binary_search(ExcludedForms->begin(), ExcludedForms->end(), Form->refID)) continue;
+				NiBound* RootBound = Node->GetWorldBound();
 				if (!RootBound) continue;
 				D3DXVECTOR3 RootCenter = { RootBound->Center.x - TheRenderManager->CameraPosition.x, RootBound->Center.y - TheRenderManager->CameraPosition.y, RootBound->Center.z - TheRenderManager->CameraPosition.z };
-				if (!RootInShadowFrustum(ShadowMapType, RootCenter, RootBound->Radius)) { if (dbgBig) Logger::Log("[CasterDbg] %s DROP id=%08X %-32s r=%.0f d=%.0f type=%u reason=NotInFrustum", dbgMap, dbgID, dbgNm, dbgRad, dbgDist, TypeID); continue; } // whole-subtree cull
+				if (!RootInShadowFrustum(ShadowMapType, RootCenter, RootBound->Radius)) continue; // whole-subtree cull
 				bool IsActorRef = (TypeID >= TESForm::FormType::kFormType_NPC && TypeID <= TESForm::FormType::kFormType_LeveledCreature); // used by the Stage 2 static/dynamic split
-				gCasterDbgRef = dbgBig; int dbgBefore = ShadowGeoCount;                                          // TEMP
 				CollectExteriorGeo(Node, HasWater, ShadowMapType, IsActorRef);
-				gCasterDbgRef = false;                                                                           // TEMP
-				if (dbgBig) Logger::Log("[CasterDbg] %s KEEP id=%08X %-32s r=%.0f d=%.0f type=%u collected=%d", dbgMap, dbgID, dbgNm, dbgRad, dbgDist, TypeID, ShadowGeoCount - dbgBefore); // TEMP
 			}
 		}
 	}
@@ -785,7 +771,6 @@ void ShadowManager::BuildExteriorGeoItems(SettingsShadowStruct::ExteriorsStruct*
 // anything they would have skipped (torch, no shader, submerged, no lighting property on opaque
 // statics, no usable buffer) is dropped here.
 void ShadowManager::CollectExteriorGeo(NiAVObject* Object, bool HasWater, ShadowMapTypeEnum ShadowMapType, bool IsActorRef) {
-	if (gCasterDbgRef && Object) { void* vft = *(void**)Object; bool isNode = (vft == VFTNiNode || vft == VFTBSFadeNode || vft == VFTBSFaceGenNiNode || vft == VFTBSTreeNode); bool isGeo = (vft == VFTNiTriShape || vft == VFTNiTriStrips); NiRTTI* rtti = Object->GetType(); Logger::Log("[CasterDbg]   walk name=%s type=%s vft=%p culled=%d node=%d geo=%d children=%d", Object->m_pcName ? Object->m_pcName : "?", (rtti && rtti->name) ? rtti->name : "?", vft, (Object->m_flags & NiAVObject::kFlag_AppCulled) ? 1 : 0, isNode ? 1 : 0, isGeo ? 1 : 0, isNode ? ((NiNode*)Object)->m_children.end : -1); } // TEMP
 	if (!Object || (Object->m_flags & NiAVObject::kFlag_AppCulled)) return;
 	void* VFT = *(void**)Object;
 	if (VFT == VFTNiNode || VFT == VFTBSFadeNode || VFT == VFTBSFaceGenNiNode || VFT == VFTBSTreeNode || VFT == VFTNiLODNode) {
@@ -794,14 +779,11 @@ void ShadowManager::CollectExteriorGeo(NiAVObject* Object, bool HasWater, Shadow
 			CollectExteriorGeo(Node->m_children.data[i], HasWater, ShadowMapType, IsActorRef);
 		return;
 	}
-	if (VFT != VFTNiTriShape && VFT != VFTNiTriStrips) {
-		if (gCasterDbgRef &&Object->m_pcName) Logger::Log("[CasterDbg]   subtree STOP (unhandled node/type) name=%s", Object->m_pcName); // TEMP
-		return;
-	}
+	if (VFT != VFTNiTriShape && VFT != VFTNiTriStrips) return;
 
 	NiGeometry* Geo = (NiGeometry*)Object;
 	if (Geo->m_pcName && !memcmp(Geo->m_pcName, "Torch", 5)) return; // skipped by Render() anyway
-	if (!Geo->shader) { if (gCasterDbgRef &&Geo->m_pcName) Logger::Log("[CasterDbg]   geo DROP name=%s reason=NoShader", Geo->m_pcName); return; } // TEMP
+	if (!Geo->shader) return;
 
 	NiBound* Bound = Geo->GetWorldBound();
 	if (!Bound) return; // no bound: can't cull/place; the ref-root test already requires one
@@ -822,7 +804,7 @@ void ShadowManager::CollectExteriorGeo(NiAVObject* Object, bool HasWater, Shadow
 	bool DrawViaSkin = false;
 	if (!ModelBuff) {
 		if (!(Geo->skinInstance && Geo->skinInstance->SkinPartition && Geo->skinInstance->SkinPartition->Partitions
-			&& Geo->skinInstance->SkinPartition->Partitions[0].BuffData)) { if (gCasterDbgRef &&Geo->m_pcName) Logger::Log("[CasterDbg]   geo DROP name=%s reason=NotDrawable", Geo->m_pcName); return; } // not drawable // TEMP
+			&& Geo->skinInstance->SkinPartition->Partitions[0].BuffData)) return; // not drawable
 		DrawViaSkin = true;
 	}
 
@@ -833,7 +815,7 @@ void ShadowManager::CollectExteriorGeo(NiAVObject* Object, bool HasWater, Shadow
 		if (!IsLeaf) {
 			// Opaque static path: Render() early-outs without a lighting property, so drop it here.
 			BSShaderProperty* LProp = (BSShaderProperty*)Geo->GetProperty(NiProperty::PropertyType::kType_Lighting);
-			if (!LProp || !LProp->IsLightingProperty()) { if (gCasterDbgRef &&Geo->m_pcName) Logger::Log("[CasterDbg]   geo DROP name=%s reason=NoLightingProperty", Geo->m_pcName); return; } // TEMP
+			if (!LProp || !LProp->IsLightingProperty()) return;
 			NiAlphaProperty* AProp = (NiAlphaProperty*)Geo->GetProperty(NiProperty::PropertyType::kType_Alpha);
 			HasAlphaMask = AProp && (AProp->flags & (NiAlphaProperty::AlphaFlags::ALPHA_BLEND_MASK | NiAlphaProperty::AlphaFlags::TEST_ENABLE_MASK));
 			BaseInstanceable = ModelBuff->VertexDeclaration && !Geo->skinInstance; // FVF-only / skinned excluded
