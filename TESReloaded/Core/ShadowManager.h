@@ -102,6 +102,8 @@ public:
 	void					RenderActorSkinnedGeo(NiGeometry* Geo, D3DXVECTOR4* ShadowData, int lightIndex);
 	void					ComputeCubeFaceFrusta(int lightIndex);
 	void					SetupShadowMapMatrices(ShadowMapTypeEnum ShadowMapType, SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors, D3DXVECTOR3* At, D3DXVECTOR4* ShadowLightDir);
+	void					SetupCachedRegionMatrices(ShadowMapTypeEnum ShadowMapType, SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors, D3DXVECTOR4* SunDir);
+	void					PublishCachedRegionSampleMatrix(ShadowMapTypeEnum ShadowMapType);
 	void					RenderShadowMapCellTerrain(TESObjectCELL* Cell, ShadowMapTypeEnum ShadowMapType, D3DXVECTOR4* ShadowData);
 	void					BuildExteriorGeoItems(SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors, ShadowMapTypeEnum ShadowMapType);
 	void					CollectExteriorGeo(NiAVObject* Object, bool HasWater, ShadowMapTypeEnum ShadowMapType, bool IsActorRef);
@@ -152,6 +154,17 @@ public:
 	D3DXPLANE				ShadowMapFrustum[4][6];
 	NiVector4				BillboardRight;
 	NiVector4				BillboardUp;
+
+	// Cached directional regions (MapNear, MapFar). The static depth in each map is baked in
+	// world space around a snapped anchor and reused across frames; only the per-frame sample
+	// matrix (below) follows the camera. See Task 7/8/9.
+	struct CachedRegion {
+		D3DXMATRIX  BakedViewProj;   // world->light-clip used at last bake; apply samples via this
+		D3DXVECTOR3 AnchorPos;       // snapped world center the map was baked around
+		D3DXVECTOR4 BakedSunDir;     // sun direction at last bake
+		bool        Valid;           // false => force rebake
+	};
+	CachedRegion			Regions[2];         // [0]=MapNear, [1]=MapFar
 
 	//-------SHADOW CUBE MAP--------
 
