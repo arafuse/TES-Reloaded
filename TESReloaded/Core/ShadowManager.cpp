@@ -203,9 +203,11 @@ void ShadowManager::CreateShadowMapSurfaces(IDirect3DDevice9* Device, SettingsSh
 	Device->CreateDepthStencilSurface(ShadowMapSize, ShadowMapSize, D3DFMT_D24S8, D3DMULTISAMPLE_NONE, 0, true, &ShadowMapDepthSurface[Ortho], NULL);
 	ShadowMapViewPort[Ortho] = { 0, 0, ShadowMapSize, ShadowMapSize, 0.0f, 1.0f };
 
-	// Directional sun maps (reimplemented). Near = crisp small radius, Far = wide coarse.
-	// R32F color + D24S8 depth, matching the ortho map's formats.
-	for (int m = ShadowMapTypeEnum::MapNear; m <= ShadowMapTypeEnum::MapFar; m++) {
+	// Directional sun maps (reimplemented). Near = crisp small radius, Far = wide coarse. Skin = the
+	// per-frame actor overlay (Task 9), drawn against the near region's baked projection. R32F color
+	// + D24S8 depth, matching the ortho map's formats.
+	for (int m = ShadowMapTypeEnum::MapNear; m <= ShadowMapTypeEnum::MapSkin; m++) {
+		if (m == ShadowMapTypeEnum::MapOrtho) continue; // allocated separately above
 		UINT Size = ShadowsExteriors->ShadowMapSize[m];
 		if (!Size) continue;
 		Device->CreateTexture(Size, Size, 1, D3DUSAGE_RENDERTARGET, D3DFMT_R32F, D3DPOOL_DEFAULT, &ShadowMapTexture[m], NULL);
@@ -259,6 +261,7 @@ ShadowManager::ShadowManager() {
 	InstanceVBCapacity = 0;
 	InstanceGroupCount = 0;
 	ShadowGeoCount = 0;
+	CollectWorldSpace = false;
 
 	LoadShadowShaders(Device);
 	CreateShadowMapSurfaces(Device, ShadowsExteriors);
@@ -293,6 +296,18 @@ void ShadowManager::CreateD3DMatrix(D3DMATRIX* Matrix, NiTransform* Transform) {
 	Matrix->_43 = Pos->z - TheRenderManager->CameraPosition.z;
 	Matrix->_44 = 1.0f;
 
+}
+
+// World-space variant of CreateD3DMatrix (no camera subtraction) for cached bakes rendered against a
+// world-anchored ShadowViewProj.
+void ShadowManager::CreateD3DMatrixWorld(D3DMATRIX* Matrix, NiTransform* Transform) {
+	NiMatrix33* Rot = &Transform->rot;
+	NiPoint3* Pos = &Transform->pos;
+	float Scale = Transform->scale;
+	Matrix->_11 = Rot->data[0][0] * Scale; Matrix->_12 = Rot->data[1][0] * Scale; Matrix->_13 = Rot->data[2][0] * Scale; Matrix->_14 = 0.0f;
+	Matrix->_21 = Rot->data[0][1] * Scale; Matrix->_22 = Rot->data[1][1] * Scale; Matrix->_23 = Rot->data[2][1] * Scale; Matrix->_24 = 0.0f;
+	Matrix->_31 = Rot->data[0][2] * Scale; Matrix->_32 = Rot->data[1][2] * Scale; Matrix->_33 = Rot->data[2][2] * Scale; Matrix->_34 = 0.0f;
+	Matrix->_41 = Pos->x; Matrix->_42 = Pos->y; Matrix->_43 = Pos->z; Matrix->_44 = 1.0f;
 }
 
 void ShadowManager::GetShadowFrustum(ShadowMapTypeEnum ShadowMapType, D3DMATRIX* Matrix) {
@@ -785,6 +800,38 @@ bool ShadowManager::RegionNeedsRebake(ShadowMapTypeEnum ShadowMapType) {
 	return false;
 }
 
+// Rebake a cached region's STATIC depth only (Near or Far): world-anchored matrices, world-space
+// collection, statics filtered out of the pool (actors are dynamic and draw via the per-frame
+// overlay instead), then drawn into the persistent ShadowMapSurface[ShadowMapType].
+void ShadowManager::BakeStaticRegion(ShadowMapTypeEnum ShadowMapType, SettingsShadowStruct::ExteriorsStruct* S, D3DXVECTOR4* SunDir) {
+	SetupCachedRegionMatrices(ShadowMapType, S, SunDir);
+	CollectWorldSpace = true;
+	BuildExteriorGeoItems(S, ShadowMapType);
+	int w = 0; // statics only (actors draw in the per-frame overlay)
+	for (int i = 0; i < ShadowGeoCount; i++) if (!ShadowGeoPool[i].IsActor) ShadowGeoPool[w++] = ShadowGeoPool[i];
+	ShadowGeoCount = w;
+	RenderShadowMap(ShadowMapType, S, &LookAtPosition, SunDir, &TheShaderManager->ShaderConst.Shadow.Data);
+	CollectWorldSpace = false;
+}
+
+// Per-frame actor overlay (MapSkin): reuses the near region's baked world->light projection so it
+// aligns texel-for-texel with the cached near-static map (both sampled via
+// TESR_ShadowCameraToLightTransformNear in the shader). World-space collection, actors only, terrain
+// skipped (statics/terrain are already covered by the cached near/far bakes).
+void ShadowManager::RenderActorOverlay(SettingsShadowStruct::ExteriorsStruct* S, D3DXVECTOR4* SunDir) {
+	// Reuse the near region's baked world->light projection so the overlay aligns texel-for-texel with the
+	// cached near-static map (both sampled via TESR_ShadowCameraToLightTransformNear).
+	TheShaderManager->ShaderConst.ShadowMap.ShadowViewProj = Regions[0].BakedViewProj;
+	GetShadowFrustum(MapSkin, &TheShaderManager->ShaderConst.ShadowMap.ShadowViewProj);
+	CollectWorldSpace = true;
+	BuildExteriorGeoItems(S, MapSkin);
+	int w = 0; // actors only
+	for (int i = 0; i < ShadowGeoCount; i++) if (ShadowGeoPool[i].IsActor) ShadowGeoPool[w++] = ShadowGeoPool[i];
+	ShadowGeoCount = w;
+	RenderShadowMap(MapSkin, S, &LookAtPosition, SunDir, &TheShaderManager->ShaderConst.Shadow.Data, /*SkipTerrain=*/true);
+	CollectWorldSpace = false;
+}
+
 static const float MinRadii[4] = { 9.0f, 100.0f, 100.0f, 0.0f }; // Near, Far, Ortho, Skin
 
 void ShadowManager::RenderShadowMapCellTerrain(TESObjectCELL* Cell, ShadowMapTypeEnum ShadowMapType, D3DXVECTOR4* ShadowData) {
@@ -821,7 +868,9 @@ void ShadowManager::BuildExteriorGeoItems(SettingsShadowStruct::ExteriorsStruct*
 				if (HasExcluded && std::binary_search(ExcludedForms->begin(), ExcludedForms->end(), Form->refID)) continue;
 				NiBound* RootBound = Node->GetWorldBound();
 				if (!RootBound) continue;
-				D3DXVECTOR3 RootCenter = { RootBound->Center.x - TheRenderManager->CameraPosition.x, RootBound->Center.y - TheRenderManager->CameraPosition.y, RootBound->Center.z - TheRenderManager->CameraPosition.z };
+				D3DXVECTOR3 RootCenter;
+				if (CollectWorldSpace) { RootCenter.x = RootBound->Center.x; RootCenter.y = RootBound->Center.y; RootCenter.z = RootBound->Center.z; }
+				else { RootCenter.x = RootBound->Center.x - TheRenderManager->CameraPosition.x; RootCenter.y = RootBound->Center.y - TheRenderManager->CameraPosition.y; RootCenter.z = RootBound->Center.z - TheRenderManager->CameraPosition.z; }
 				if (!RootInShadowFrustum(ShadowMapType, RootCenter, RootBound->Radius)) continue; // whole-subtree cull
 				bool IsActorRef = (TypeID >= TESForm::FormType::kFormType_NPC && TypeID <= TESForm::FormType::kFormType_LeveledCreature); // used by the Stage 2 static/dynamic split
 				CollectExteriorGeo(Node, HasWater, ShadowMapType, IsActorRef);
@@ -860,7 +909,9 @@ void ShadowManager::CollectExteriorGeo(NiAVObject* Object, bool HasWater, Shadow
 	// Per-pass cuts, applied at collection: drop sub-MinRadius geo and anything outside this pass's
 	// frustum. Center is reused for the stored item below.
 	if (Bound->Radius < MinRadii[ShadowMapType]) return;
-	D3DXVECTOR3 Center = { Bound->Center.x - TheRenderManager->CameraPosition.x, Bound->Center.y - TheRenderManager->CameraPosition.y, Bound->Center.z - TheRenderManager->CameraPosition.z };
+	D3DXVECTOR3 Center;
+	if (CollectWorldSpace) { Center.x = Bound->Center.x; Center.y = Bound->Center.y; Center.z = Bound->Center.z; }
+	else { Center.x = Bound->Center.x - TheRenderManager->CameraPosition.x; Center.y = Bound->Center.y - TheRenderManager->CameraPosition.y; Center.z = Bound->Center.z - TheRenderManager->CameraPosition.z; }
 	if (!LeafInShadowFrustum(ShadowMapType, Center, Bound->Radius)) return;
 
 	// Resolve the buffer Render() will use: model buffer (static path), else first skin
@@ -897,7 +948,7 @@ void ShadowManager::CollectExteriorGeo(NiAVObject* Object, bool HasWater, Shadow
 	Item.BaseInstanceable = BaseInstanceable;
 	Item.HasAlphaMask = HasAlphaMask;
 	Item.IsActor = IsActorRef;
-	if (!DrawViaSkin) CreateD3DMatrix(&Item.World, &Geo->m_worldTransform);
+	if (!DrawViaSkin) { if (CollectWorldSpace) CreateD3DMatrixWorld(&Item.World, &Geo->m_worldTransform); else CreateD3DMatrix(&Item.World, &Geo->m_worldTransform); }
 }
 
 // Append a pool item to its mesh's instance group (keyed by the shared NiGeometryBufferData),
@@ -1047,7 +1098,7 @@ void ShadowManager::FlushInstanceGroups(D3DXVECTOR4* ShadowData) {
 	}
 }
 
-void ShadowManager::RenderShadowMap(ShadowMapTypeEnum ShadowMapType, SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors, D3DXVECTOR3* At, D3DXVECTOR4* ShadowLightDir, D3DXVECTOR4* ShadowData) {
+void ShadowManager::RenderShadowMap(ShadowMapTypeEnum ShadowMapType, SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors, D3DXVECTOR3* At, D3DXVECTOR4* ShadowLightDir, D3DXVECTOR4* ShadowData, bool SkipTerrain) {
 	IDirect3DDevice9* Device = TheRenderManager->device;
 	NiDX9RenderState* RenderState = TheRenderManager->renderState;
 	ScopeTimer profile((ShadowPhase)(Phase_PassNear + ShadowMapType)); // enum order matches Near/Far/Ortho/Skin
@@ -1069,12 +1120,14 @@ void ShadowManager::RenderShadowMap(ShadowMapTypeEnum ShadowMapType, SettingsSha
 	RenderState->SetVertexShader(ShadowMapVertexShader, false);
 	RenderState->SetPixelShader(ShadowMapPixelShader, false);
 	Device->BeginScene();
-	gTerrainBucket = true;
-	for (UInt32 x = 0; x < *SettingGridsToLoad; x++)
-		for (UInt32 y = 0; y < *SettingGridsToLoad; y++)
-			if (TESObjectCELL* Cell = Tes->gridCellArray->GetCell(x, y))
-				RenderShadowMapCellTerrain(Cell, ShadowMapType, ShadowData);
-	gTerrainBucket = false;
+	if (!SkipTerrain) {
+		gTerrainBucket = true;
+		for (UInt32 x = 0; x < *SettingGridsToLoad; x++)
+			for (UInt32 y = 0; y < *SettingGridsToLoad; y++)
+				if (TESObjectCELL* Cell = Tes->gridCellArray->GetCell(x, y))
+					RenderShadowMapCellTerrain(Cell, ShadowMapType, ShadowData);
+		gTerrainBucket = false;
+	}
 	bool UseInstancing = ShadowsExteriors->UseInstancing && ShadowMapInstancedVertexShader;
 	if (UseInstancing) { InstanceGroupIndex.clear(); InstanceGroupCount = 0; }
 
@@ -1169,16 +1222,16 @@ void ShadowManager::RenderExteriorShadows() {
 	}
 
 	if (DoSun) {
-		D3DXVECTOR4* ShadowLightDir = &TheShaderManager->ShaderConst.ShadowMap.ShadowLightDir;
-		// Near then Far: each map sets up its own matrices/frustum, then collects a pool culled to
-		// that frustum, then draws it (RenderShadowMap draws the flat pool with no further culling).
-		SetupShadowMapMatrices(MapNear, ShadowsExteriors, &At, ShadowLightDir);
-		BuildExteriorGeoItems(ShadowsExteriors, MapNear);
-		RenderShadowMap(MapNear, ShadowsExteriors, &At, ShadowLightDir, ShadowData);
+		D3DXVECTOR4* SunDir = &TheShaderManager->ShaderConst.ShadowMap.ShadowLightDir;
+		// Round-robin: rebake near if due; else far if due; never both in one frame.
+		if (RegionNeedsRebake(MapNear))      BakeStaticRegion(MapNear, ShadowsExteriors, SunDir);
+		else if (RegionNeedsRebake(MapFar))  BakeStaticRegion(MapFar,  ShadowsExteriors, SunDir);
 
-		SetupShadowMapMatrices(MapFar, ShadowsExteriors, &At, ShadowLightDir);
-		BuildExteriorGeoItems(ShadowsExteriors, MapFar);
-		RenderShadowMap(MapFar, ShadowsExteriors, &At, ShadowLightDir, ShadowData);
+		RenderActorOverlay(ShadowsExteriors, SunDir);
+
+		// Per-frame sample matrices from the CURRENT camera (the cached maps may be stale/world-anchored).
+		PublishCachedRegionSampleMatrix(MapNear);
+		PublishCachedRegionSampleMatrix(MapFar);
 
 		ShadowData->y = ShadowsExteriors->Darkness;
 		ShadowData->z = 1.0f / (float)ShadowsExteriors->ShadowMapSize[MapNear];

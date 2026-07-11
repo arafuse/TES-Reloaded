@@ -40,6 +40,7 @@ public:
 	};
 
 	void					CreateD3DMatrix(D3DMATRIX* Matrix, NiTransform* Transform);
+	void					CreateD3DMatrixWorld(D3DMATRIX* Matrix, NiTransform* Transform);
 	void					GetShadowFrustum(ShadowMapTypeEnum ShadowMapType, D3DMATRIX* Matrix);
 	bool					InShadowFrustum(ShadowMapTypeEnum ShadowMapType, NiAVObject* Object);
 	// Camera-relative frustum tests using a precomputed bound center+radius (no GetWorldBound /
@@ -62,7 +63,7 @@ public:
 	void					RenderTerrain(NiAVObject* Object, ShadowMapTypeEnum ShadowMapType, D3DXVECTOR4* ShadowData);
 	void					Render(NiGeometry* Geo, D3DXVECTOR4* ShadowData, const D3DMATRIX* PrecomputedWorld = NULL);
 	void					RenderActor(NiGeometry* Geo, D3DXVECTOR4* ShadowData, int lightIndex);
-	void					RenderShadowMap(ShadowMapTypeEnum ShadowMapType, SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors, D3DXVECTOR3* At, D3DXVECTOR4* SunDir, D3DXVECTOR4* ShadowData);
+	void					RenderShadowMap(ShadowMapTypeEnum ShadowMapType, SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors, D3DXVECTOR3* At, D3DXVECTOR4* SunDir, D3DXVECTOR4* ShadowData, bool SkipTerrain = false);
 	void					RenderShadowCubeMapExt(NiPointLight** Lights, int LightIndex, float radiusLimit, SettingsShadowStruct::InteriorsStruct* ShadowsExteriors, D3DXVECTOR4* ShadowData);
 	void					RenderShadowCubeMapInt(NiPointLight** Lights, int LightIndex, float radiusLimit, SettingsShadowStruct::InteriorsStruct* ShadowsInteriors, D3DXVECTOR4* ShadowData);
 	void                    RenderShadowCubeMapFakeInt(int LightIndex, SettingsShadowStruct::InteriorsStruct* ShadowsInteriors, D3DXVECTOR4* ShadowData);
@@ -105,6 +106,8 @@ public:
 	void					SetupCachedRegionMatrices(ShadowMapTypeEnum ShadowMapType, SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors, D3DXVECTOR4* SunDir);
 	void					PublishCachedRegionSampleMatrix(ShadowMapTypeEnum ShadowMapType);
 	bool					RegionNeedsRebake(ShadowMapTypeEnum ShadowMapType);
+	void					BakeStaticRegion(ShadowMapTypeEnum ShadowMapType, SettingsShadowStruct::ExteriorsStruct* S, D3DXVECTOR4* SunDir);
+	void					RenderActorOverlay(SettingsShadowStruct::ExteriorsStruct* S, D3DXVECTOR4* SunDir);
 	void					RenderShadowMapCellTerrain(TESObjectCELL* Cell, ShadowMapTypeEnum ShadowMapType, D3DXVECTOR4* ShadowData);
 	void					BuildExteriorGeoItems(SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors, ShadowMapTypeEnum ShadowMapType);
 	void					CollectExteriorGeo(NiAVObject* Object, bool HasWater, ShadowMapTypeEnum ShadowMapType, bool IsActorRef);
@@ -252,6 +255,11 @@ public:
 	// Pooled across frames; only the *Count fields reset each frame so capacity is retained.
 	std::vector<ShadowGeoItem>  ShadowGeoPool;
 	int                         ShadowGeoCount;
+	// When true, BuildExteriorGeoItems/CollectExteriorGeo collect world-space centers/matrices (no
+	// camera subtraction) for a cached static bake against a world-anchored ShadowViewProj; set/cleared
+	// around each bake (BakeStaticRegion, RenderActorOverlay). False (default) keeps the normal
+	// camera-relative per-frame collection.
+	bool                        CollectWorldSpace;
 };
 
 void CreateShadowsHook();
