@@ -264,7 +264,7 @@ ShadowManager::ShadowManager() {
 	CollectWorldSpace = false;
 	CollectAnchor = D3DXVECTOR3(0.0f, 0.0f, 0.0f);
 
-	for (int i = 0; i < 2; i++) { Regions[i].Valid = false; D3DXMatrixIdentity(&Regions[i].BakedViewProj); }
+	for (int i = 0; i < 2; i++) { Regions[i].Valid = false; D3DXMatrixIdentity(&Regions[i].BakedViewProj); Regions[i].AnchorPos = D3DXVECTOR3(0.0f, 0.0f, 0.0f); Regions[i].BakedSunDir = D3DXVECTOR4(0.0f, 0.0f, 0.0f, 0.0f); }
 
 	LoadShadowShaders(Device);
 	CreateShadowMapSurfaces(Device, ShadowsExteriors);
@@ -823,8 +823,11 @@ void ShadowManager::BakeStaticRegion(ShadowMapTypeEnum ShadowMapType, SettingsSh
 	SetupCachedRegionMatrices(ShadowMapType, S, SunDir);
 	CollectWorldSpace = true;
 	BuildExteriorGeoItems(S, ShadowMapType);
-	int w = 0; // statics only (actors draw in the per-frame overlay)
-	for (int i = 0; i < ShadowGeoCount; i++) if (!ShadowGeoPool[i].IsActor) ShadowGeoPool[w++] = ShadowGeoPool[i];
+	// RIGID statics only. Skinned geometry (GeoData==NULL, drawn via RenderSkinnedGeo) is camera-relative
+	// and would land in the wrong space in this anchor-relative bake, so it's routed to the per-frame
+	// camera-relative overlay instead (along with actors).
+	int w = 0;
+	for (int i = 0; i < ShadowGeoCount; i++) if (!ShadowGeoPool[i].IsActor && ShadowGeoPool[i].GeoData != NULL) ShadowGeoPool[w++] = ShadowGeoPool[i];
 	ShadowGeoCount = w;
 	RenderShadowMap(ShadowMapType, S, &LookAtPosition, SunDir, &TheShaderManager->ShaderConst.Shadow.Data);
 	CollectWorldSpace = false;
@@ -845,8 +848,10 @@ void ShadowManager::RenderActorOverlay(SettingsShadowStruct::ExteriorsStruct* S,
 	At.z = LookAtPosition.z - TheRenderManager->CameraPosition.z;
 	SetupShadowMapMatrices(MapSkin, S, &At, SunDir); // camera-relative; publishes ShadowCameraToLight[MapSkin] + frustum + ShadowViewProj
 	BuildExteriorGeoItems(S, MapSkin);
-	int w = 0; // actors only
-	for (int i = 0; i < ShadowGeoCount; i++) if (ShadowGeoPool[i].IsActor) ShadowGeoPool[w++] = ShadowGeoPool[i];
+	// Actors AND any skinned geometry (GeoData==NULL): both are camera-relative (RenderSkinnedGeo) so they
+	// belong in this camera-relative overlay, not the anchor-relative static bakes.
+	int w = 0;
+	for (int i = 0; i < ShadowGeoCount; i++) if (ShadowGeoPool[i].IsActor || ShadowGeoPool[i].GeoData == NULL) ShadowGeoPool[w++] = ShadowGeoPool[i];
 	ShadowGeoCount = w;
 	RenderShadowMap(MapSkin, S, &At, SunDir, &TheShaderManager->ShaderConst.Shadow.Data, /*SkipTerrain=*/true);
 }
@@ -1242,9 +1247,16 @@ void ShadowManager::RenderExteriorShadows() {
 
 	if (DoSun) {
 		D3DXVECTOR4* SunDir = &TheShaderManager->ShaderConst.ShadowMap.ShadowLightDir;
-		// Round-robin: rebake near if due; else far if due; never both in one frame.
-		if (RegionNeedsRebake(MapNear))      BakeStaticRegion(MapNear, ShadowsExteriors, SunDir);
-		else if (RegionNeedsRebake(MapFar))  BakeStaticRegion(MapFar,  ShadowsExteriors, SunDir);
+		// A never-baked region (first frame / cell change) bakes immediately so it is never sampled unbaked
+		// (its AnchorPos + surface would be garbage). Both may bake on a cell-change frame — a one-time cost
+		// during an already-hitchy load. Once both are valid, round-robin steady-state refreshes (rebake near
+		// if due, else far; never two refreshes in one frame).
+		if (!Regions[0].Valid) BakeStaticRegion(MapNear, ShadowsExteriors, SunDir);
+		if (!Regions[1].Valid) BakeStaticRegion(MapFar,  ShadowsExteriors, SunDir);
+		if (Regions[0].Valid && Regions[1].Valid) {
+			if (RegionNeedsRebake(MapNear))      BakeStaticRegion(MapNear, ShadowsExteriors, SunDir);
+			else if (RegionNeedsRebake(MapFar))  BakeStaticRegion(MapFar,  ShadowsExteriors, SunDir);
+		}
 
 		RenderActorOverlay(ShadowsExteriors, SunDir);
 
