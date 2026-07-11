@@ -262,6 +262,7 @@ ShadowManager::ShadowManager() {
 	InstanceGroupCount = 0;
 	ShadowGeoCount = 0;
 	CollectWorldSpace = false;
+	CollectAnchor = D3DXVECTOR3(0.0f, 0.0f, 0.0f);
 
 	for (int i = 0; i < 2; i++) { Regions[i].Valid = false; D3DXMatrixIdentity(&Regions[i].BakedViewProj); }
 
@@ -309,7 +310,8 @@ void ShadowManager::CreateD3DMatrixWorld(D3DMATRIX* Matrix, NiTransform* Transfo
 	Matrix->_11 = Rot->data[0][0] * Scale; Matrix->_12 = Rot->data[1][0] * Scale; Matrix->_13 = Rot->data[2][0] * Scale; Matrix->_14 = 0.0f;
 	Matrix->_21 = Rot->data[0][1] * Scale; Matrix->_22 = Rot->data[1][1] * Scale; Matrix->_23 = Rot->data[2][1] * Scale; Matrix->_24 = 0.0f;
 	Matrix->_31 = Rot->data[0][2] * Scale; Matrix->_32 = Rot->data[1][2] * Scale; Matrix->_33 = Rot->data[2][2] * Scale; Matrix->_34 = 0.0f;
-	Matrix->_41 = Pos->x; Matrix->_42 = Pos->y; Matrix->_43 = Pos->z; Matrix->_44 = 1.0f;
+	// Anchor-relative translation (not absolute world) so cached-bake geometry stays near the origin.
+	Matrix->_41 = Pos->x - CollectAnchor.x; Matrix->_42 = Pos->y - CollectAnchor.y; Matrix->_43 = Pos->z - CollectAnchor.z; Matrix->_44 = 1.0f;
 }
 
 void ShadowManager::GetShadowFrustum(ShadowMapTypeEnum ShadowMapType, D3DMATRIX* Matrix) {
@@ -737,9 +739,10 @@ void ShadowManager::SetupShadowMapMatrices(ShadowMapTypeEnum ShadowMapType, Sett
 	GetShadowFrustum(ShadowMapType, &TheShaderManager->ShaderConst.ShadowMap.ShadowViewProj);
 }
 
-// World-space (anchored) variant of SetupShadowMapMatrices for the cached directional regions.
-// Eye/At are absolute world coords (NOT camera-relative). The anchor is snapped to the shadow-map
-// texel grid so reused/rebaked maps don't shimmer.
+// Anchor-relative variant of SetupShadowMapMatrices for the cached directional regions. The light matrix
+// is built with the snapped anchor at the ORIGIN (not absolute world coords) so all bake/sample math stays
+// near zero — using absolute world coords (~1e5) here destroys float32 precision and flickers shadow edges.
+// The anchor is snapped to the shadow-map texel grid so reused/rebaked maps don't shimmer.
 void ShadowManager::SetupCachedRegionMatrices(ShadowMapTypeEnum ShadowMapType, SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors, D3DXVECTOR4* SunDir) {
 	float FarPlane = ShadowsExteriors->ShadowMapFarPlane;
 	float Radius   = ShadowsExteriors->ShadowMapRadius[ShadowMapType];
@@ -751,10 +754,13 @@ void ShadowManager::SetupCachedRegionMatrices(ShadowMapTypeEnum ShadowMapType, S
 	Anchor.y = floorf(Anchor.y / TexelWorld) * TexelWorld;
 	Anchor.z = floorf(Anchor.z / TexelWorld) * TexelWorld;
 
+	// Anchor-relative: look-at at the origin, eye up the sun direction. Geometry is drawn relative to Anchor
+	// (CollectAnchor below), and the apply re-bases the receiver to Anchor-relative before this matrix.
 	D3DXVECTOR3 Up(0.0f, 0.0f, 1.0f);
-	D3DXVECTOR3 Eye(Anchor.x + FarPlane * SunDir->x, Anchor.y + FarPlane * SunDir->y, Anchor.z + FarPlane * SunDir->z);
+	D3DXVECTOR3 AtRel(0.0f, 0.0f, 0.0f);
+	D3DXVECTOR3 Eye(FarPlane * SunDir->x, FarPlane * SunDir->y, FarPlane * SunDir->z);
 	D3DXMATRIX View, Proj;
-	D3DXMatrixLookAtRH(&View, &Eye, &Anchor, &Up);
+	D3DXMatrixLookAtRH(&View, &Eye, &AtRel, &Up);
 	D3DXMatrixOrthoRH(&Proj, 2.0f * Radius, (1 + SunDir->z) * Radius, 0.0f, 2.0f * FarPlane);
 	D3DXMATRIX ViewProj = View * Proj;
 
@@ -763,9 +769,10 @@ void ShadowManager::SetupCachedRegionMatrices(ShadowMapTypeEnum ShadowMapType, S
 	Regions[r].AnchorPos     = Anchor;
 	Regions[r].BakedSunDir   = *SunDir;
 	Regions[r].Valid         = true;
+	CollectAnchor = Anchor; // this bake's geometry + cull centers are drawn relative to the anchor
 
-	// The bake renders geometry with WORLD matrices against this ViewProj (Task 9). Publish it as the
-	// current pass's ShadowViewProj so RenderShadowMap's vertex path uses it; set the culling frustum
+	// The bake renders geometry with anchor-relative matrices against this ViewProj (Task 9). Publish it as
+	// the current pass's ShadowViewProj so RenderShadowMap's vertex path uses it; set the culling frustum
 	// + billboard vectors as SetupShadowMapMatrices does.
 	TheShaderManager->ShaderConst.ShadowMap.ShadowViewProj = ViewProj;
 	BillboardRight = { View._11, View._21, View._31, 0.0f };
@@ -778,11 +785,13 @@ void ShadowManager::SetupCachedRegionMatrices(ShadowMapTypeEnum ShadowMapType, S
 // into the cached (possibly stale) light space correctly.
 void ShadowManager::PublishCachedRegionSampleMatrix(ShadowMapTypeEnum ShadowMapType) {
 	int r = ShadowMapType - MapNear;
-	// InvViewProjMatrix maps current clip -> CAMERA-RELATIVE world (WorldViewProj bakes in T(-CameraPosition)).
-	// BakedViewProj is absolute-world -> light. Re-add the camera translation so the sample point is absolute
-	// before projecting into the cached light space.
+	// The map is baked ANCHOR-relative (origin at Regions[r].AnchorPos) to keep coordinates small.
+	// InvViewProjMatrix maps current clip -> camera-relative world (world - Camera). Translate by
+	// (Camera - Anchor) to reach anchor-relative world, then project with the baked matrix. Camera and Anchor
+	// are both near the player, so this stays small and precise.
+	D3DXVECTOR3& A = Regions[r].AnchorPos;
 	D3DXMATRIX Trans;
-	D3DXMatrixTranslation(&Trans, TheRenderManager->CameraPosition.x, TheRenderManager->CameraPosition.y, TheRenderManager->CameraPosition.z);
+	D3DXMatrixTranslation(&Trans, TheRenderManager->CameraPosition.x - A.x, TheRenderManager->CameraPosition.y - A.y, TheRenderManager->CameraPosition.z - A.z);
 	TheShaderManager->ShaderConst.ShadowMap.ShadowCameraToLight[ShadowMapType] = TheRenderManager->InvViewProjMatrix * Trans * Regions[r].BakedViewProj;
 }
 
@@ -831,6 +840,7 @@ void ShadowManager::RenderActorOverlay(SettingsShadowStruct::ExteriorsStruct* S,
 	TheShaderManager->ShaderConst.ShadowMap.ShadowViewProj = Regions[0].BakedViewProj;
 	GetShadowFrustum(MapSkin, &TheShaderManager->ShaderConst.ShadowMap.ShadowViewProj);
 	CollectWorldSpace = true;
+	CollectAnchor = Regions[0].AnchorPos; // actors drawn relative to the NEAR region's anchor (shares its baked projection)
 	BuildExteriorGeoItems(S, MapSkin);
 	int w = 0; // actors only
 	for (int i = 0; i < ShadowGeoCount; i++) if (ShadowGeoPool[i].IsActor) ShadowGeoPool[w++] = ShadowGeoPool[i];
@@ -876,7 +886,7 @@ void ShadowManager::BuildExteriorGeoItems(SettingsShadowStruct::ExteriorsStruct*
 				NiBound* RootBound = Node->GetWorldBound();
 				if (!RootBound) continue;
 				D3DXVECTOR3 RootCenter;
-				if (CollectWorldSpace) { RootCenter.x = RootBound->Center.x; RootCenter.y = RootBound->Center.y; RootCenter.z = RootBound->Center.z; }
+				if (CollectWorldSpace) { RootCenter.x = RootBound->Center.x - CollectAnchor.x; RootCenter.y = RootBound->Center.y - CollectAnchor.y; RootCenter.z = RootBound->Center.z - CollectAnchor.z; }
 				else { RootCenter.x = RootBound->Center.x - TheRenderManager->CameraPosition.x; RootCenter.y = RootBound->Center.y - TheRenderManager->CameraPosition.y; RootCenter.z = RootBound->Center.z - TheRenderManager->CameraPosition.z; }
 				if (!RootInShadowFrustum(ShadowMapType, RootCenter, RootBound->Radius)) continue; // whole-subtree cull
 				bool IsActorRef = (TypeID >= TESForm::FormType::kFormType_NPC && TypeID <= TESForm::FormType::kFormType_LeveledCreature); // used by the Stage 2 static/dynamic split
@@ -917,7 +927,7 @@ void ShadowManager::CollectExteriorGeo(NiAVObject* Object, bool HasWater, Shadow
 	// frustum. Center is reused for the stored item below.
 	if (Bound->Radius < MinRadii[ShadowMapType]) return;
 	D3DXVECTOR3 Center;
-	if (CollectWorldSpace) { Center.x = Bound->Center.x; Center.y = Bound->Center.y; Center.z = Bound->Center.z; }
+	if (CollectWorldSpace) { Center.x = Bound->Center.x - CollectAnchor.x; Center.y = Bound->Center.y - CollectAnchor.y; Center.z = Bound->Center.z - CollectAnchor.z; }
 	else { Center.x = Bound->Center.x - TheRenderManager->CameraPosition.x; Center.y = Bound->Center.y - TheRenderManager->CameraPosition.y; Center.z = Bound->Center.z - TheRenderManager->CameraPosition.z; }
 	if (!LeafInShadowFrustum(ShadowMapType, Center, Bound->Radius)) return;
 
