@@ -720,6 +720,50 @@ void ShadowManager::SetupShadowMapMatrices(ShadowMapTypeEnum ShadowMapType, Sett
 	GetShadowFrustum(ShadowMapType, &TheShaderManager->ShaderConst.ShadowMap.ShadowViewProj);
 }
 
+// World-space (anchored) variant of SetupShadowMapMatrices for the cached directional regions.
+// Eye/At are absolute world coords (NOT camera-relative). The anchor is snapped to the shadow-map
+// texel grid so reused/rebaked maps don't shimmer.
+void ShadowManager::SetupCachedRegionMatrices(ShadowMapTypeEnum ShadowMapType, SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors, D3DXVECTOR4* SunDir) {
+	float FarPlane = ShadowsExteriors->ShadowMapFarPlane;
+	float Radius   = ShadowsExteriors->ShadowMapRadius[ShadowMapType];
+	int   Size     = ShadowsExteriors->ShadowMapSize[ShadowMapType];
+	float TexelWorld = (2.0f * Radius) / (float)Size;
+
+	D3DXVECTOR3 Anchor = LookAtPosition; // world-space; maintained by ComputeExteriorLookAt
+	Anchor.x = floorf(Anchor.x / TexelWorld) * TexelWorld;
+	Anchor.y = floorf(Anchor.y / TexelWorld) * TexelWorld;
+	Anchor.z = floorf(Anchor.z / TexelWorld) * TexelWorld;
+
+	D3DXVECTOR3 Up(0.0f, 0.0f, 1.0f);
+	D3DXVECTOR3 Eye(Anchor.x + FarPlane * SunDir->x, Anchor.y + FarPlane * SunDir->y, Anchor.z + FarPlane * SunDir->z);
+	D3DXMATRIX View, Proj;
+	D3DXMatrixLookAtRH(&View, &Eye, &Anchor, &Up);
+	D3DXMatrixOrthoRH(&Proj, 2.0f * Radius, (1 + SunDir->z) * Radius, 0.0f, 2.0f * FarPlane);
+	D3DXMATRIX ViewProj = View * Proj;
+
+	int r = ShadowMapType - MapNear;
+	Regions[r].BakedViewProj = ViewProj;
+	Regions[r].AnchorPos     = Anchor;
+	Regions[r].BakedSunDir   = *SunDir;
+	Regions[r].Valid         = true;
+
+	// The bake renders geometry with WORLD matrices against this ViewProj (Task 9). Publish it as the
+	// current pass's ShadowViewProj so RenderShadowMap's vertex path uses it; set the culling frustum
+	// + billboard vectors as SetupShadowMapMatrices does.
+	TheShaderManager->ShaderConst.ShadowMap.ShadowViewProj = ViewProj;
+	BillboardRight = { View._11, View._21, View._31, 0.0f };
+	BillboardUp    = { View._12, View._22, View._32, 0.0f };
+	GetShadowFrustum(ShadowMapType, &TheShaderManager->ShaderConst.ShadowMap.ShadowViewProj);
+}
+
+// Recompute the apply-pass sample matrix from the CURRENT camera each frame. BakedViewProj is
+// world->light and InvViewProjMatrix is current-clip->world, so the product maps current screen depth
+// into the cached (possibly stale) light space correctly.
+void ShadowManager::PublishCachedRegionSampleMatrix(ShadowMapTypeEnum ShadowMapType) {
+	int r = ShadowMapType - MapNear;
+	TheShaderManager->ShaderConst.ShadowMap.ShadowCameraToLight[ShadowMapType] = TheRenderManager->InvViewProjMatrix * Regions[r].BakedViewProj;
+}
+
 static const float MinRadii[4] = { 9.0f, 100.0f, 100.0f, 0.0f }; // Near, Far, Ortho, Skin
 
 void ShadowManager::RenderShadowMapCellTerrain(TESObjectCELL* Cell, ShadowMapTypeEnum ShadowMapType, D3DXVECTOR4* ShadowData) {
