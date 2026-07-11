@@ -61,7 +61,6 @@ public:
 	void					RenderObjectPointActor(NiAVObject* Node, D3DXVECTOR4* ShadowData, bool HasWater, int lightIndex);
 	void					RenderTerrain(NiAVObject* Object, ShadowMapTypeEnum ShadowMapType, D3DXVECTOR4* ShadowData);
 	void					Render(NiGeometry* Geo, D3DXVECTOR4* ShadowData, const D3DMATRIX* PrecomputedWorld = NULL);
-	void					RenderSoftwareGeo(NiGeometry* Geo, D3DXVECTOR4* ShadowData);
 	void					RenderActor(NiGeometry* Geo, D3DXVECTOR4* ShadowData, int lightIndex);
 	void					RenderShadowMap(ShadowMapTypeEnum ShadowMapType, SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors, D3DXVECTOR3* At, D3DXVECTOR4* SunDir, D3DXVECTOR4* ShadowData);
 	void					RenderShadowCubeMapExt(NiPointLight** Lights, int LightIndex, float radiusLimit, SettingsShadowStruct::InteriorsStruct* ShadowsExteriors, D3DXVECTOR4* ShadowData);
@@ -235,7 +234,6 @@ public:
 		bool                   HasAlphaMask;     // alpha blend/test present (blocks instancing when AlphaEnabled)
 		bool                   PassesWater;      // skinInstance || !HasWater || center.z > 0
 		bool                   IsActor;          // ref is an actor/creature => dynamic caster (Stage 2 split)
-		bool                   SoftwareDraw;     // no GPU buffer: draw from software verts via DrawIndexedPrimitiveUP
 	};
 	// Pooled across frames; only the *Count fields reset each frame so capacity is retained.
 	std::vector<ShadowGeoItem>  ShadowGeoPool;
