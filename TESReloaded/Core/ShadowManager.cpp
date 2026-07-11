@@ -830,23 +830,25 @@ void ShadowManager::BakeStaticRegion(ShadowMapTypeEnum ShadowMapType, SettingsSh
 	CollectWorldSpace = false;
 }
 
-// Per-frame actor overlay (MapSkin): reuses the near region's baked world->light projection so it
-// aligns texel-for-texel with the cached near-static map (both sampled via
-// TESR_ShadowCameraToLightTransformNear in the shader). World-space collection, actors only, terrain
-// skipped (statics/terrain are already covered by the cached near/far bakes).
+// Per-frame actor overlay (MapSkin): actors only, terrain skipped (statics/terrain are already covered by
+// the cached near/far bakes). Camera-relative (matches RenderSkinnedGeo), with its own sample matrix
+// (TESR_ShadowCameraToLightTransformSkin) min-combined with the cached static term in the apply shader.
 void ShadowManager::RenderActorOverlay(SettingsShadowStruct::ExteriorsStruct* S, D3DXVECTOR4* SunDir) {
-	// Reuse the near region's baked world->light projection so the overlay aligns texel-for-texel with the
-	// cached near-static map (both sampled via TESR_ShadowCameraToLightTransformNear).
-	TheShaderManager->ShaderConst.ShadowMap.ShadowViewProj = Regions[0].BakedViewProj;
-	GetShadowFrustum(MapSkin, &TheShaderManager->ShaderConst.ShadowMap.ShadowViewProj);
-	CollectWorldSpace = true;
-	CollectAnchor = Regions[0].AnchorPos; // actors drawn relative to the NEAR region's anchor (shares its baked projection)
+	// The overlay is redrawn every frame (not cached), so draw it CAMERA-RELATIVE — matching the space
+	// RenderSkinnedGeo produces for skinned actors (and the Stage-1 directional path, which cast actors
+	// correctly). It gets its OWN sample matrix (ShadowCameraToLight[MapSkin] ->
+	// TESR_ShadowCameraToLightTransformSkin), which the apply shader min-combines with the cached
+	// anchor-relative near-static map. CollectWorldSpace stays FALSE (camera-relative collect + draw).
+	D3DXVECTOR3 At;
+	At.x = LookAtPosition.x - TheRenderManager->CameraPosition.x;
+	At.y = LookAtPosition.y - TheRenderManager->CameraPosition.y;
+	At.z = LookAtPosition.z - TheRenderManager->CameraPosition.z;
+	SetupShadowMapMatrices(MapSkin, S, &At, SunDir); // camera-relative; publishes ShadowCameraToLight[MapSkin] + frustum + ShadowViewProj
 	BuildExteriorGeoItems(S, MapSkin);
 	int w = 0; // actors only
 	for (int i = 0; i < ShadowGeoCount; i++) if (ShadowGeoPool[i].IsActor) ShadowGeoPool[w++] = ShadowGeoPool[i];
 	ShadowGeoCount = w;
-	RenderShadowMap(MapSkin, S, &LookAtPosition, SunDir, &TheShaderManager->ShaderConst.Shadow.Data, /*SkipTerrain=*/true);
-	CollectWorldSpace = false;
+	RenderShadowMap(MapSkin, S, &At, SunDir, &TheShaderManager->ShaderConst.Shadow.Data, /*SkipTerrain=*/true);
 }
 
 static const float MinRadii[4] = { 9.0f, 100.0f, 100.0f, 0.0f }; // Near, Far, Ortho, Skin
