@@ -6,6 +6,7 @@ float4x4 TESR_ViewTransform;
 float4x4 TESR_ProjectionTransform;
 float4x4 TESR_ShadowCameraToLightTransformNear;
 float4x4 TESR_ShadowCameraToLightTransformFar;
+float4x4 TESR_ShadowCameraToLightTransformSkin;
 float4 TESR_CameraPosition;
 float4 TESR_WaterSettings;
 float4 TESR_ShadowData;
@@ -166,7 +167,29 @@ float AddProximityLight(float4 WorldPos, float4 ExternalLightPos) {
 }
 
 
-float GetLightAmount(float4 WorldPos, float4 ShadowPos, float4 ShadowPosFar, float bias) {
+// Actor overlay: project the receiver into the SKIN map's OWN (camera-relative) light space and PCF it,
+// then return the shadow term (1 = lit) so it can be min-combined with the static term. Receivers outside
+// the skin coverage return lit (no actor overlay there). Called only on the near-in-bounds path.
+float GetLightAmountSkin(float4 ShadowPosSkin, float bias) {
+	ShadowPosSkin.xyz /= ShadowPosSkin.w;
+	if (ShadowPosSkin.x < -1.0f || ShadowPosSkin.x > 1.0f ||
+		ShadowPosSkin.y < -1.0f || ShadowPosSkin.y > 1.0f ||
+		ShadowPosSkin.z < 0.0f || ShadowPosSkin.z > 1.0f)
+		return 1.0f;
+	ShadowPosSkin.x = ShadowPosSkin.x * 0.5f + 0.5f;
+	ShadowPosSkin.y = ShadowPosSkin.y * -0.5f + 0.5f;
+	float Shadow = 0.0f;
+	float x;
+	float y;
+	for (y = -1.5f; y <= 1.5f; y += 1.0f)
+		for (x = -1.5f; x <= 1.5f; x += 1.0f) {
+			float s = tex2D(TESR_ShadowMapBufferSkin, ShadowPosSkin.xy + float2(x, y) * TESR_ShadowData.z).r;
+			Shadow += (s < ShadowPosSkin.z - bias) ? darkness : 1.0f;
+		}
+	return Shadow / 16.0f;
+}
+
+float GetLightAmount(float4 WorldPos, float4 ShadowPos, float4 ShadowPosFar, float4 ShadowPosSkin, float bias) {
 
 	float Shadow = 0.0f;
 	float x;
@@ -190,17 +213,9 @@ float GetLightAmount(float4 WorldPos, float4 ShadowPos, float4 ShadowPosFar, flo
 	}
 	Shadow /= 16.0f;
 
-	// Per-frame actor overlay (Task 9): actors are drawn dynamically into MapSkin each frame, aligned
-	// texel-for-texel with the cached near-static map (both sampled via the near ViewProj), so it can be
-	// looked up in the same near UV/space and min-combined with the static shadow term.
-	float ActorShadow = 0.0f;
-	for (y = -1.5f; y <= 1.5f; y += 1.0f)
-		for (x = -1.5f; x <= 1.5f; x += 1.0f) {
-			float s = tex2D(TESR_ShadowMapBufferSkin, ShadowPos.xy + float2(x, y) * TESR_ShadowData.z).r;
-			ActorShadow += (s < ShadowPos.z - bias) ? darkness : 1.0f;
-		}
-	ActorShadow /= 16.0f;
-	Shadow = min(Shadow, ActorShadow);
+	// Per-frame actor overlay: MapSkin is drawn dynamically each frame in its own camera-relative light
+	// space; min-combine its shadow term with the cached static near term.
+	Shadow = min(Shadow, GetLightAmountSkin(ShadowPosSkin, bias));
 
 	return saturate(Shadow);
 
@@ -234,7 +249,8 @@ float4 Shadow(VSOUT IN) : COLOR0{
 		farPos.xyz = farPos.xyz + (normal.xyz * TESR_ShadowBiasDeferred.y);
 		float4 ShadowNear = mul(pos, TESR_ShadowCameraToLightTransformNear);
 		float4 ShadowFar = mul(farPos, TESR_ShadowCameraToLightTransformFar);
-		float Shadow = GetLightAmount(world_pos_trans, ShadowNear, ShadowFar, bias);
+		float4 ShadowSkin = mul(pos, TESR_ShadowCameraToLightTransformSkin);
+		float Shadow = GetLightAmount(world_pos_trans, ShadowNear, ShadowFar, ShadowSkin, bias);
 		color.rgb *= saturate(Shadow*fogCoeff) * float3(1.0f, 1.0f, 1.0f);
 	}
 	return float4(color, 1.0f);
