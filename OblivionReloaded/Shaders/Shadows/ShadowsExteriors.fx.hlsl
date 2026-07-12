@@ -183,6 +183,8 @@ float GetLightAmountSkin(float4 ShadowPosSkin, float bias) {
 	float y;
 	for (y = -1.5f; y <= 1.5f; y += 1.0f)
 		for (x = -1.5f; x <= 1.5f; x += 1.0f) {
+			// TESR_ShadowData.z is the near map's texel size; the skin overlay map is allocated at the same
+			// (near) resolution (see CreateShadowMapSurfaces), so it is the correct PCF step here too.
 			float s = tex2D(TESR_ShadowMapBufferSkin, ShadowPosSkin.xy + float2(x, y) * TESR_ShadowData.z).r;
 			Shadow += (s < ShadowPosSkin.z - bias) ? darkness : 1.0f;
 		}
