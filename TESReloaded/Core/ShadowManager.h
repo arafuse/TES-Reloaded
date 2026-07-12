@@ -262,6 +262,9 @@ public:
 	// float32 shadow-map precision is preserved (absolute world coords ~1e5 make shadow edges flicker).
 	bool                        CollectWorldSpace;
 	D3DXVECTOR3                 CollectAnchor; // world origin the current cached bake draws relative to
+	// When true (the per-frame actor overlay), CollectExteriorGeo skips rigid non-actor geometry during
+	// collection so the walk doesn't build+store matrices for statics that the overlay would only discard.
+	bool                        CollectSkinnedOnly;
 };
 
 void CreateShadowsHook();
