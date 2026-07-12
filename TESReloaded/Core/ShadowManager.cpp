@@ -208,7 +208,11 @@ void ShadowManager::CreateShadowMapSurfaces(IDirect3DDevice9* Device, SettingsSh
 	// + D24S8 depth, matching the ortho map's formats.
 	for (int m = ShadowMapTypeEnum::MapNear; m <= ShadowMapTypeEnum::MapSkin; m++) {
 		if (m == ShadowMapTypeEnum::MapOrtho) continue; // allocated separately above
-		UINT Size = ShadowsExteriors->ShadowMapSize[m];
+		// The skin overlay is min-combined with the near map in the apply, which reuses the near texel size
+		// (TESR_ShadowData.z) for the skin PCF kernel — so allocate skin at the NEAR resolution to keep the
+		// kernel correctly scaled regardless of any [ExteriorsSkin] ShadowMapSize override. Texture (below) and
+		// stored viewport share this Size, so they stay consistent.
+		UINT Size = ShadowsExteriors->ShadowMapSize[m == ShadowMapTypeEnum::MapSkin ? ShadowMapTypeEnum::MapNear : m];
 		if (!Size) continue;
 		Device->CreateTexture(Size, Size, 1, D3DUSAGE_RENDERTARGET, D3DFMT_R32F, D3DPOOL_DEFAULT, &ShadowMapTexture[m], NULL);
 		ShadowMapTexture[m]->GetSurfaceLevel(0, &ShadowMapSurface[m]);
@@ -262,6 +266,7 @@ ShadowManager::ShadowManager() {
 	InstanceGroupCount = 0;
 	ShadowGeoCount = 0;
 	CollectWorldSpace = false;
+	CollectSkinnedOnly = false;
 	CollectAnchor = D3DXVECTOR3(0.0f, 0.0f, 0.0f);
 
 	for (int i = 0; i < 2; i++) { Regions[i].Valid = false; D3DXMatrixIdentity(&Regions[i].BakedViewProj); Regions[i].AnchorPos = D3DXVECTOR3(0.0f, 0.0f, 0.0f); Regions[i].BakedSunDir = D3DXVECTOR4(0.0f, 0.0f, 0.0f, 0.0f); }
@@ -847,12 +852,12 @@ void ShadowManager::RenderActorOverlay(SettingsShadowStruct::ExteriorsStruct* S,
 	At.y = LookAtPosition.y - TheRenderManager->CameraPosition.y;
 	At.z = LookAtPosition.z - TheRenderManager->CameraPosition.z;
 	SetupShadowMapMatrices(MapSkin, S, &At, SunDir); // camera-relative; publishes ShadowCameraToLight[MapSkin] + frustum + ShadowViewProj
+	// Actors AND any skinned geometry (GeoData==NULL) are camera-relative (RenderSkinnedGeo) so they belong in
+	// this camera-relative overlay, not the anchor-relative static bakes. CollectSkinnedOnly drops rigid
+	// non-actor statics during the walk, so the pool comes back already limited to skinned + actor casters.
+	CollectSkinnedOnly = true;
 	BuildExteriorGeoItems(S, MapSkin);
-	// Actors AND any skinned geometry (GeoData==NULL): both are camera-relative (RenderSkinnedGeo) so they
-	// belong in this camera-relative overlay, not the anchor-relative static bakes.
-	int w = 0;
-	for (int i = 0; i < ShadowGeoCount; i++) if (ShadowGeoPool[i].IsActor || ShadowGeoPool[i].GeoData == NULL) ShadowGeoPool[w++] = ShadowGeoPool[i];
-	ShadowGeoCount = w;
+	CollectSkinnedOnly = false;
 	RenderShadowMap(MapSkin, S, &At, SunDir, &TheShaderManager->ShaderConst.Shadow.Data, /*SkipTerrain=*/true);
 }
 
@@ -947,6 +952,10 @@ void ShadowManager::CollectExteriorGeo(NiAVObject* Object, bool HasWater, Shadow
 			&& Geo->skinInstance->SkinPartition->Partitions[0].BuffData)) return; // not drawable
 		DrawViaSkin = true;
 	}
+
+	// Overlay pass: only skinned geo (DrawViaSkin) and actors are drawn camera-relative here; skip rigid
+	// non-actor statics now, before their bounds/matrix/instancing work, instead of collecting then discarding.
+	if (CollectSkinnedOnly && !DrawViaSkin && !IsActorRef) return;
 
 	bool BaseInstanceable = false;
 	bool HasAlphaMask = false;
