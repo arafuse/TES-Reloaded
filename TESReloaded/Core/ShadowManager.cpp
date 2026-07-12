@@ -24,6 +24,7 @@ static const void* VFTBSFaceGenNiNode = (void*)0x010660DC;
 static const void* VFTBSTreeNode = (void*)0x010668E4;
 static const void* VFTNiTriShape = (void*)0x0109D454;
 static const void* VFTNiTriStrips = (void*)0x0109CD44;
+static const void* VFTNiLODNode = (void*)0x00000000; // TODO: NewVegas/Skyrim NiLODNode vtable unknown; this fork builds OBLIVION only
 #elif defined(OBLIVION)
 #define RenderStateArgs 0
 #define kRockParams 0x00B46778
@@ -42,6 +43,7 @@ static const void* VFTBSFaceGenNiNode = (void*)0x00A64F5C;
 static const void* VFTBSTreeNode = (void*)0x00A65854;
 static const void* VFTNiTriShape = (void*)0x00A7ED5C;
 static const void* VFTNiTriStrips = (void*)0x00A7F27C;
+static const void* VFTNiLODNode = (void*)0x00A7F97C; // NiLODNode (NiSwitchNode/NiNode subclass) — holds LOD levels; must be recursed so LOD meshes cast shadows
 #endif
 #define ShadowMapObjectMinBound 10.0f
 #define ShadowInstanceStride   48 // 3 float4 columns of the world matrix per instance
@@ -735,7 +737,7 @@ void ShadowManager::BuildExteriorGeoItems(SettingsShadowStruct::ExteriorsStruct*
 void ShadowManager::CollectExteriorGeo(NiAVObject* Object, bool HasWater) {
 	if (!Object || (Object->m_flags & NiAVObject::kFlag_AppCulled)) return;
 	void* VFT = *(void**)Object;
-	if (VFT == VFTNiNode || VFT == VFTBSFadeNode || VFT == VFTBSFaceGenNiNode || VFT == VFTBSTreeNode) {
+	if (VFT == VFTNiNode || VFT == VFTBSFadeNode || VFT == VFTBSFaceGenNiNode || VFT == VFTBSTreeNode || VFT == VFTNiLODNode) {
 		NiNode* Node = (NiNode*)Object;
 		for (int i = 0; i < Node->m_children.end; i++)
 			CollectExteriorGeo(Node->m_children.data[i], HasWater);
