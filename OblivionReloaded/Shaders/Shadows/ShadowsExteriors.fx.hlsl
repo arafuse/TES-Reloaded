@@ -83,7 +83,7 @@ VSOUT FrameVS(VSIN IN)
 
 float readDepth(in float2 coord : TEXCOORD0)
 {
-	float posZ = tex2D(TESR_DepthBufferPreWater, coord).x;
+	float posZ = tex2D(TESR_DepthBuffer, coord).x; // DIAGNOSTIC: main depth (has grass) instead of pre-water, to confirm grass-vs-water render order. REVERT after test.
 	posZ = Zmul / ((posZ * Zdiff) - farZ);
 	return posZ;
 }
