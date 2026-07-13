@@ -81,19 +81,31 @@ VSOUT FrameVS(VSIN IN)
 	return OUT;
 }
 
-float readDepth(in float2 coord : TEXCOORD0)
-{
-	float posZ = tex2D(TESR_DepthBuffer, coord).x; // DIAGNOSTIC: main depth (has grass) instead of pre-water, to confirm grass-vs-water render order. REVERT after test.
-	posZ = Zmul / ((posZ * Zdiff) - farZ);
-	return posZ;
-}
-
 float3 toWorld(float2 tex)
 {
 	float3 v = float3(TESR_ViewTransform[0][2], TESR_ViewTransform[1][2], TESR_ViewTransform[2][2]);
 	v += (1 / TESR_ProjectionTransform[0][0] * (2 * tex.x - 1)).xxx * float3(TESR_ViewTransform[0][0], TESR_ViewTransform[1][0], TESR_ViewTransform[2][0]);
 	v += (-1 / TESR_ProjectionTransform[1][1] * (2 * tex.y - 1)).xxx * float3(TESR_ViewTransform[0][1], TESR_ViewTransform[1][1], TESR_ViewTransform[2][1]);
 	return v;
+}
+
+float readDepth(in float2 coord : TEXCOORD0)
+{
+	// The receiver depth must exclude the water SURFACE (so underwater shadows land on the submerged floor)
+	// but include GRASS (so shadows sit on the blades). No single snapshot has both: grass draws AFTER water,
+	// so the pre-water snapshot lacks grass, and the main depth includes the water surface. So pick per pixel:
+	// use the main depth (grass + land) normally, and fall back to the pre-water depth (the submerged floor,
+	// captured before water) only where the visible surface is at/below the waterline. Grass at/below the
+	// waterline therefore reads as water and uses the floor — accepted, since water renders over it anyway.
+	// In waterless cells GetWaterHeight is a large negative sentinel, so the fallback never fires (grass wins).
+	// Sample BOTH depths unconditionally (a tex2D inside dynamic flow control can't compute gradients -> X3528),
+	// then select: main (grass/land) when the visible surface is above the waterline, else pre-water (floor).
+	float zMain = tex2D(TESR_DepthBuffer, coord).x;
+	zMain = Zmul / ((zMain * Zdiff) - farZ);
+	float zPre = tex2D(TESR_DepthBufferPreWater, coord).x;
+	zPre = Zmul / ((zPre * Zdiff) - farZ);
+	float worldZ = TESR_CameraPosition.z + toWorld(coord).z * zMain;
+	return (worldZ <= TESR_WaterSettings.x + 1.0f) ? zPre : zMain;
 }
 
 float3 getPosition(in float2 tex, in float depth)
