@@ -91,21 +91,12 @@ float3 toWorld(float2 tex)
 
 float readDepth(in float2 coord : TEXCOORD0)
 {
-	// The receiver depth must exclude the water SURFACE (so underwater shadows land on the submerged floor)
-	// but include GRASS (so shadows sit on the blades). No single snapshot has both: grass draws AFTER water,
-	// so the pre-water snapshot lacks grass, and the main depth includes the water surface. So pick per pixel:
-	// use the main depth (grass + land) normally, and fall back to the pre-water depth (the submerged floor,
-	// captured before water) only where the visible surface is at/below the waterline. Grass at/below the
-	// waterline therefore reads as water and uses the floor — accepted, since water renders over it anyway.
-	// In waterless cells GetWaterHeight is a large negative sentinel, so the fallback never fires (grass wins).
-	// Sample BOTH depths unconditionally (a tex2D inside dynamic flow control can't compute gradients -> X3528),
-	// then select: main (grass/land) when the visible surface is above the waterline, else pre-water (floor).
-	float zMain = tex2D(TESR_DepthBuffer, coord).x;
-	zMain = Zmul / ((zMain * Zdiff) - farZ);
-	float zPre = tex2D(TESR_DepthBufferPreWater, coord).x;
-	zPre = Zmul / ((zPre * Zdiff) - farZ);
-	float worldZ = TESR_CameraPosition.z + toWorld(coord).z * zMain;
-	return (worldZ <= TESR_WaterSettings.x + 1.0f) ? zPre : zMain;
+	// The apply now runs MID-SCENE, right before the first near-water surface draw (engine order:
+	// opaque -> LOD water -> sky -> LOD terrain -> grass -> near water). TESR_DepthBufferPreWater is
+	// resolved at that same moment, so this single snapshot holds every shadow receiver — land, grass,
+	// and the submerged floor — with no near-water surface in it. No per-pixel waterline select needed.
+	float posZ = tex2D(TESR_DepthBufferPreWater, coord).x;
+	return Zmul / ((posZ * Zdiff) - farZ);
 }
 
 float3 getPosition(in float2 tex, in float depth)
