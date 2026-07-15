@@ -220,6 +220,7 @@ namespace {
 			// Collect any slot pending from a previous frame (not the one just issued).
 			for (int i = 0; i < 2; i++)
 				if (i != gGpuActiveSlot) EffGpuTryCollect(gGpuSlot[i]);
+			gGpuActiveSlot = -1; // chain over: EffMark from outside the chain (e.g. the mid-scene shadow apply) must not mark a pending slot
 		}
 
 		if (++gEffFrames < gEffReportFrames) return;
@@ -3234,12 +3235,10 @@ void ShaderManager::RenderEffects(IDirect3DSurface9* RenderTarget) {
 		SnowAccumulationEffect->SetCT();
 		SnowAccumulationEffect->Render(Device, RenderTarget, RenderedSurface, false);
 	}
-	// Exterior sun-shadow apply pass (reimplemented). Darkens the scene from the Near/Far depth maps.
+	// Exterior sun-shadow apply: no longer part of this post chain — it runs MID-SCENE via
+	// RenderSunShadowsMidScene() (before the first near-water draw) so water and the Underwater
+	// effect composite over the shadows instead of being painted over by them.
 	// The point-light and interior image-space apply passes below remain dummied out pending rewrite.
-	if (TheSettingManager->SettingsShadows.Exteriors.UsePostProcessing && currentWorldSpace) {
-		ShadowsExteriorsEffect->SetCT();
-		ShadowsExteriorsEffect->Render(Device, RenderTarget, RenderedSurface, false);
-	}
 #if 0 // SHADOWS DISABLED: point-light + interior image-space apply passes skipped — their maps are not generated yet. Dead reference.
 	if (TheSettingManager->SettingsShadows.ExteriorsPoint.Enabled && TheSettingManager->SettingsShadows.ExteriorsPoint.UsePostProcessing && currentWorldSpace) {
 
@@ -3422,6 +3421,48 @@ void ShaderManager::RenderEffectsPostHdr(IDirect3DSurface9* RenderTargetParam) {
 	Device->StretchRect(RenderTargetParam, NULL, RenderedSurface, NULL, D3DTEXF_NONE);
 	RenderEffects(RenderTargetParam);
 	TheShaderManager->PrevWorldViewProjMatrix = TheRenderManager->WorldViewProjMatrix;
+}
+
+// Exterior sun-shadow apply, run MID-SCENE: invoked from the render hook right before the first
+// near-water surface draw of the main pass (grass and LOD water are already drawn), or at the end
+// of the WorldSceneGraph render when no near water binds this frame. Rendering the darkening quad
+// before the water surface lets water (and the Underwater post-effect) composite OVER the shadows,
+// so shadows are never painted onto the water surface or over the underwater look.
+// The engine is mid-accumulation here, so all device changes go through raw Device calls (NOT
+// NiDX9RenderState, whose cache must keep matching the device) and are bracketed by a full state
+// block, restoring the exact device state the engine's state caches believe is current.
+void ShaderManager::RenderSunShadowsMidScene() {
+
+	if (!TheSettingManager->SettingsShadows.Exteriors.UsePostProcessing || !ShadowsExteriorsEffect) return;
+	if (!Player->GetWorldSpace()) return;
+
+	IDirect3DDevice9* Device = TheRenderManager->device;
+	IDirect3DSurface9* SceneRT = NULL;
+	IDirect3DStateBlock9* StateBlock = NULL;
+
+	if (!RenderedSurface || !EffectVertex) return;
+	if (FAILED(Device->GetRenderTarget(0, &SceneRT)) || !SceneRT) return;
+	if (FAILED(Device->CreateStateBlock(D3DSBT_ALL, &StateBlock))) { SceneRT->Release(); return; }
+
+	TheRenderManager->SetupSceneCamera(); // CPU-side matrices only; refreshes WorldViewProj/InvViewProj for SetCT
+	Device->SetRenderState(D3DRS_ZENABLE, FALSE);
+	Device->SetRenderState(D3DRS_ZWRITEENABLE, FALSE);
+	Device->SetRenderState(D3DRS_ALPHABLENDENABLE, FALSE);
+	Device->SetRenderState(D3DRS_ALPHATESTENABLE, FALSE);
+	Device->SetRenderState(D3DRS_COLORWRITEENABLE, 15);
+	Device->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE);
+	Device->SetRenderState(D3DRS_FOGENABLE, FALSE);
+	Device->SetRenderState(D3DRS_STENCILENABLE, FALSE);
+	Device->SetStreamSource(0, EffectVertex, 0, sizeof(EffectQuad));
+	Device->SetFVF(EFFECTQUADFORMAT);
+	Device->StretchRect(SceneRT, NULL, RenderedSurface, NULL, D3DTEXF_NONE); // scene color -> TESR_RenderedBuffer
+	ShadowsExteriorsEffect->SetCT();
+	ShadowsExteriorsEffect->Render(Device, SceneRT, RenderedSurface, false);
+
+	StateBlock->Apply();
+	StateBlock->Release();
+	SceneRT->Release();
+
 }
 
 void ShaderManager::LoadEffectSettings() {
