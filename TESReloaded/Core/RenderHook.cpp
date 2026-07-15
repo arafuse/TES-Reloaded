@@ -1,4 +1,5 @@
 #include <CommCtrl.h>
+#include <intrin.h>
 #include "RenderHook.h"
 
 #if defined(NEWVEGAS)
@@ -296,6 +297,55 @@ float RenderHook::TrackFarPlane() {
 
 }
 
+// [GrassOrderDbg] TEMPORARY spike instrumentation (grass/water draw-order research).
+// Armed for one WorldSceneGraph render by the Develop.LogShaders key: logs every shader pass in
+// draw order, plus engine call-site addresses for the first few GRASS and WATER passes so the
+// engine function that schedules grass after water can be located. Remove when the spike concludes.
+static bool	GrassOrderCapture = false;
+static int	GrassOrderSeq = 0;
+static int	GrassOrderGrassTraces = 0;
+static int	GrassOrderWaterTraces = 0;
+
+static void GrassOrderLogTrace(const char* Tag, void* Ra, NiPropertyState* PropertyState) {
+
+	NiAlphaProperty* Alpha = PropertyState ? (NiAlphaProperty*)PropertyState->prop[0] : NULL;
+	NiProperty* ZBuf = PropertyState ? PropertyState->prop[9] : NULL;
+	Logger::Log("[GrassOrderDbg] TRACE %s ra=%08X alphaFlags=%04X alphaRef=%d zFlags=%04X", Tag, (UInt32)Ra,
+		Alpha ? Alpha->flags : 0xFFFF, Alpha ? (int)Alpha->alphaTestRef : -1, ZBuf ? *(UInt16*)((UInt8*)ZBuf + 0x18) : 0xFFFF);
+
+	void* Frames[24];
+	USHORT Count = CaptureStackBackTrace(0, 24, Frames, NULL);
+	char Line[512];
+	strcpy(Line, "[GrassOrderDbg]   bt:");
+	for (USHORT i = 0; i < Count; i++) {
+		char T[16];
+		sprintf(T, " %08X", (UInt32)Frames[i]);
+		strcat(Line, T);
+	}
+	Logger::Log(Line);
+
+	// EBP-chain backtraces stop at the first FPO-compiled engine frame, so also dump every stack
+	// value that lands in Oblivion.exe's code range - a superset of the true call chain.
+	UInt32* Stack = (UInt32*)&Tag;
+	int Hits = 0;
+	strcpy(Line, "[GrassOrderDbg]   scan:");
+	for (int i = 0; i < 768 && Hits < 64; i++) {
+		UInt32 V = Stack[i];
+		if (V >= 0x00401000 && V < 0x00A00000) {
+			char T[16];
+			sprintf(T, " %08X", V);
+			strcat(Line, T);
+			Hits++;
+			if (strlen(Line) > 460) {
+				Logger::Log(Line);
+				strcpy(Line, "[GrassOrderDbg]   scan:");
+			}
+		}
+	}
+	Logger::Log(Line);
+
+}
+
 UInt32 (__thiscall RenderHook::* SetupShaderPrograms)(NiGeometry*, NiSkinInstance*, NiSkinPartition::Partition*, NiGeometryBufferData*, NiPropertyState*, NiDynamicEffectState*, NiTransform*, UInt32);
 UInt32 (__thiscall RenderHook::* TrackSetupShaderPrograms)(NiGeometry*, NiSkinInstance*, NiSkinPartition::Partition*, NiGeometryBufferData*, NiPropertyState*, NiDynamicEffectState*, NiTransform*, UInt32);
 UInt32 RenderHook::TrackSetupShaderPrograms(NiGeometry* Geometry, NiSkinInstance* SkinInstance, NiSkinPartition::Partition* SkinPartition, NiGeometryBufferData* GeometryBufferData, NiPropertyState* PropertyState, NiDynamicEffectState* EffectState, NiTransform* WorldTransform, UInt32 WorldBound) {
@@ -319,6 +369,27 @@ UInt32 RenderHook::TrackSetupShaderPrograms(NiGeometry* Geometry, NiSkinInstance
 	NiNode* RenderWindowRootNode = *RenderWindowNode;
 
 	if (VertexShader && PixelShader) {
+		if (GrassOrderCapture) { // [GrassOrderDbg]
+			void* Ra = _ReturnAddress();
+			GrassOrderSeq++;
+			Logger::Log("[GrassOrderDbg] %04d ra=%08X pw=%d VS=%s PS=%s Geo=%s pos=(%.0f %.0f %.0f) s=%.1f", GrassOrderSeq, (UInt32)Ra,
+				TheShaderManager->PreWaterDepthBufferFilled ? 1 : 0,
+				VertexShader->ShaderName ? VertexShader->ShaderName : "-",
+				PixelShader->ShaderName ? PixelShader->ShaderName : "-",
+				Geometry && Geometry->m_pcName ? Geometry->m_pcName : "-",
+				WorldTransform ? WorldTransform->pos.x : 0.0f,
+				WorldTransform ? WorldTransform->pos.y : 0.0f,
+				WorldTransform ? WorldTransform->pos.z : 0.0f,
+				WorldTransform ? WorldTransform->scale : 0.0f);
+			if (VertexShader->isGrass && GrassOrderGrassTraces < 4) {
+				GrassOrderGrassTraces++;
+				GrassOrderLogTrace("GRASS", Ra, PropertyState);
+			}
+			if (PixelShader->ShaderName && !memcmp(PixelShader->ShaderName, "WATER", 5) && GrassOrderWaterTraces < 16) {
+				GrassOrderWaterTraces++;
+				GrassOrderLogTrace("WATER", Ra, PropertyState);
+			}
+		}
 		if (PixelShader->ShaderProg && Pass->Stages.numObjs && Pass->Stages.data[0]->Texture) {
 			TheShaderManager->ShaderConst.TextureData.x = Pass->Stages.data[0]->Texture->GetWidth();
 			TheShaderManager->ShaderConst.TextureData.y = Pass->Stages.data[0]->Texture->GetHeight();
@@ -355,17 +426,26 @@ UInt32 RenderHook::TrackSetupShaderPrograms(NiGeometry* Geometry, NiSkinInstance
 			RenderState->SetRenderState(D3DRS_ZWRITEENABLE, FALSE, 0);
 		}
 
-		// Pre-water depth for the sun-shadow apply: the first water draw of the main pass means the
-		// opaque scene (incl. submerged geometry) is complete but water has not written depth yet.
-		// Resolve the current depth-stencil into DepthTexturePreWater. Reflections render before the
-		// main pass and the flag is reset just before the main WorldSceneGraph render (TrackRenderObject),
-		// so the main-pass water bind is the one that populates it.
-		// Match only the numbered water SURFACE shaders (WATER000-012); exclude the water height-map
-		// pre-pass shaders (WATERHMAP*/WATERHEIGHTMAP*, which have 'H' at index 5) — those run earlier
-		// and would capture the wrong depth / consume the once-per-frame flag before the real water draw.
+		// Sun-shadow apply + pre-water depth, fired at the first NEAR-water surface draw of the main
+		// pass. Engine pass order is: opaque -> LOD water -> sky -> LOD terrain -> grass -> NEAR water
+		// ([GrassOrderDbg] captures, 2026-07-15), so at this moment everything that should receive
+		// shadows (land, grass, submerged floor) is in the color and depth buffers, and the near water
+		// surface then composites OVER the shadowed scene. Resolve the depth-stencil into
+		// DepthTexturePreWater (the apply's receiver depth) and render the darkening quad.
+		// Near water is distinguished from the earlier LOD water planes by the pixel-shader NUMBER:
+		// the pre-sky LOD group always binds WATER012+, the post-grass near group always WATER000-011
+		// (confirmed by [GrassOrderDbg] captures incl. the close-camera water mode, where the near
+		// surface switches to WATER007 and its NiAlphaProperty flips to opaque — so alpha flags are
+		// NOT a usable discriminator). Match only the numbered water SURFACE shaders; exclude the
+		// height-map pre-pass shaders (WATERHMAP*, 'H' at index 5).
+		// Reflections render before the main pass and the flag is reset just before the main
+		// WorldSceneGraph render (TrackRenderObject), so only main-pass water binds can fire.
 		if (!TheShaderManager->PreWaterDepthBufferFilled && !memcmp(PixelShader->ShaderName, "WATER", 5) && PixelShader->ShaderName[5] >= '0' && PixelShader->ShaderName[5] <= '9') {
-			TheRenderManager->ResolvePreWaterDepthBuffer();
-			TheShaderManager->PreWaterDepthBufferFilled = true;
+			if (atoi(PixelShader->ShaderName + 5) < 12) {
+				TheRenderManager->ResolvePreWaterDepthBuffer();
+				TheShaderManager->RenderSunShadowsMidScene();
+				TheShaderManager->PreWaterDepthBufferFilled = true;
+			}
 		}
 
 		if (PixelShader->ShaderProg && TheRenderManager->renderState->GetPixelShader() != PixelShader->ShaderHandle) PixelShader->ShaderProg->SetCT();
@@ -464,11 +544,28 @@ void __cdecl TrackSetShaderPackage(int Arg1, int Arg2, UInt8 Force1XShaders, int
 void (__cdecl * RenderObject)(NiCamera*, NiNode*, NiCullingProcess*, NiVisibleArray*) = (void (__cdecl *)(NiCamera*, NiNode*, NiCullingProcess*, NiVisibleArray*))0x0070C0B0;
 void __cdecl TrackRenderObject(NiCamera* Camera, NiNode* Object, NiCullingProcess* CullingProcess, NiVisibleArray* VisibleArray) {
 
-	if (Object == WorldSceneGraph) TheShaderManager->PreWaterDepthBufferFilled = false; // reset before the main pass so only main-pass water binds populate the pre-water depth
-	RenderObject(Camera, Object, CullingProcess, VisibleArray);
 	if (Object == WorldSceneGraph) {
+		TheShaderManager->PreWaterDepthBufferFilled = false; // reset before the main pass so only main-pass water binds populate the pre-water depth
+		if (TheSettingManager->SettingsMain.Develop.LogShaders && TheKeyboardManager->OnKeyDown(TheSettingManager->SettingsMain.Develop.LogShaders)) { // [GrassOrderDbg]
+			GrassOrderCapture = true;
+			GrassOrderSeq = GrassOrderGrassTraces = GrassOrderWaterTraces = 0;
+			Logger::Log("[GrassOrderDbg] ==== capture start (WorldSceneGraph render) ====");
+		}
+	}
+	RenderObject(Camera, Object, CullingProcess, VisibleArray);
+	if (Object == WorldSceneGraph && GrassOrderCapture) { // [GrassOrderDbg]
+		GrassOrderCapture = false;
+		Logger::Log("[GrassOrderDbg] ==== capture end (%d passes) ====", GrassOrderSeq);
+	}
+	if (Object == WorldSceneGraph) {
+		if (!TheShaderManager->PreWaterDepthBufferFilled) {
+			// No near-water draw this frame: resolve the receiver depth (== full scene depth) and run
+			// the sun-shadow apply now, at the end of the main scene render.
+			TheRenderManager->ResolvePreWaterDepthBuffer();
+			TheShaderManager->RenderSunShadowsMidScene();
+			TheShaderManager->PreWaterDepthBufferFilled = true;
+		}
 		TheRenderManager->ResolveDepthBuffer();
-		if (!TheShaderManager->PreWaterDepthBufferFilled) TheRenderManager->ResolvePreWaterDepthBuffer(); // no water this frame -> pre-water depth == post-water depth
 	}
 	else if (Object == Player->firstPersonNiNode) {
 		TheRenderManager->ResolveDepthBuffer();
