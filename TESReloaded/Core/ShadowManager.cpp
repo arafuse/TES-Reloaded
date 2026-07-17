@@ -834,7 +834,10 @@ void ShadowManager::BakeStaticRegion(ShadowMapTypeEnum ShadowMapType, SettingsSh
 	int w = 0;
 	for (int i = 0; i < ShadowGeoCount; i++) if (!ShadowGeoPool[i].IsActor && ShadowGeoPool[i].GeoData != NULL) ShadowGeoPool[w++] = ShadowGeoPool[i];
 	ShadowGeoCount = w;
-	RenderShadowMap(ShadowMapType, S, &LookAtPosition, SunDir, &TheShaderManager->ShaderConst.Shadow.Data);
+	// EXPERIMENT: skip far terrain in the MapFar bake to test whether far-terrain self-occlusion is the
+	// source of the caster-less "cloud shadow" blobs over terrain. Near-region terrain still renders.
+	bool SkipTerrain = (ShadowMapType == MapFar);
+	RenderShadowMap(ShadowMapType, S, &LookAtPosition, SunDir, &TheShaderManager->ShaderConst.Shadow.Data, SkipTerrain);
 	CollectWorldSpace = false;
 }
 
