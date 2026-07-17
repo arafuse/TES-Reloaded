@@ -1260,11 +1260,20 @@ void ShadowManager::RenderExteriorShadows() {
 		// (its AnchorPos + surface would be garbage). Both may bake on a cell-change frame — a one-time cost
 		// during an already-hitchy load. Once both are valid, round-robin steady-state refreshes (rebake near
 		// if due, else far; never two refreshes in one frame).
-		if (!Regions[0].Valid) BakeStaticRegion(MapNear, ShadowsExteriors, SunDir);
-		if (!Regions[1].Valid) BakeStaticRegion(MapFar,  ShadowsExteriors, SunDir);
-		if (Regions[0].Valid && Regions[1].Valid) {
-			if (RegionNeedsRebake(MapNear))      BakeStaticRegion(MapNear, ShadowsExteriors, SunDir);
-			else if (RegionNeedsRebake(MapFar))  BakeStaticRegion(MapFar,  ShadowsExteriors, SunDir);
+		if (!ShadowsExteriors->CacheStaticShadows) {
+			// Caching disabled (INI opt-out): rebake BOTH static regions every frame. Slower — the full
+			// scene walk + static draws happen every frame instead of on invalidation — but the shadow is
+			// always fresh (no round-robin lag, no guard-band/sun-interval staleness).
+			BakeStaticRegion(MapNear, ShadowsExteriors, SunDir);
+			BakeStaticRegion(MapFar,  ShadowsExteriors, SunDir);
+		}
+		else {
+			if (!Regions[0].Valid) BakeStaticRegion(MapNear, ShadowsExteriors, SunDir);
+			if (!Regions[1].Valid) BakeStaticRegion(MapFar,  ShadowsExteriors, SunDir);
+			if (Regions[0].Valid && Regions[1].Valid) {
+				if (RegionNeedsRebake(MapNear))      BakeStaticRegion(MapNear, ShadowsExteriors, SunDir);
+				else if (RegionNeedsRebake(MapFar))  BakeStaticRegion(MapFar,  ShadowsExteriors, SunDir);
+			}
 		}
 
 		RenderActorOverlay(ShadowsExteriors, SunDir);
