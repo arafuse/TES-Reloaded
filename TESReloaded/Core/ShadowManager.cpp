@@ -1561,9 +1561,7 @@ void ShadowManager::RenderInteriorShadows() {
 
 #endif // SHADOWS DISABLED
 
-extern int ReflDbgCount; // [ReflDbg] temporary, defined in RenderHook.cpp
 void ShadowManager::RenderShadowMaps() {
-	if (ReflDbgCount < 1500) { Logger::Log("[ReflDbg] ---- ShadowMaps hook (frame boundary marker) ----"); ReflDbgCount++; } // [ReflDbg]
 	Global->RenderShadowMaps(); //Window reflections seem to be rendered here
 
 	IDirect3DDevice9* Device = TheRenderManager->device;

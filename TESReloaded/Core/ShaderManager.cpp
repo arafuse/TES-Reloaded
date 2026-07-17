@@ -3431,7 +3431,6 @@ void ShaderManager::RenderEffectsPostHdr(IDirect3DSurface9* RenderTargetParam) {
 // The engine is mid-accumulation here, so all device changes go through raw Device calls (NOT
 // NiDX9RenderState, whose cache must keep matching the device) and are bracketed by a full state
 // block, restoring the exact device state the engine's state caches believe is current.
-extern int ReflDbgCount; // [ReflDbg] temporary, defined in RenderHook.cpp
 void ShaderManager::RenderSunShadowsMidScene() {
 
 	if (!TheSettingManager->SettingsShadows.Exteriors.UsePostProcessing || !ShadowsExteriorsEffect) return;
@@ -3443,12 +3442,6 @@ void ShaderManager::RenderSunShadowsMidScene() {
 
 	if (!RenderedSurface || !EffectVertex) return;
 	if (FAILED(Device->GetRenderTarget(0, &SceneRT)) || !SceneRT) return;
-	if (ReflDbgCount < 1500) { // [ReflDbg]
-		D3DSURFACE_DESC DbgDesc = { };
-		SceneRT->GetDesc(&DbgDesc);
-		Logger::Log("[ReflDbg] MidScene APPLY executing: RT=%ux%u", DbgDesc.Width, DbgDesc.Height);
-		ReflDbgCount++;
-	}
 	if (FAILED(Device->CreateStateBlock(D3DSBT_ALL, &StateBlock))) { SceneRT->Release(); return; }
 
 	TheRenderManager->SetupSceneCamera(); // CPU-side matrices only; refreshes WorldViewProj/InvViewProj for SetCT
