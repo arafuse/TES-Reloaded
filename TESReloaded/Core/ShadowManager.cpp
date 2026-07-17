@@ -1561,7 +1561,9 @@ void ShadowManager::RenderInteriorShadows() {
 
 #endif // SHADOWS DISABLED
 
+extern int ReflDbgCount; // [ReflDbg] temporary, defined in RenderHook.cpp
 void ShadowManager::RenderShadowMaps() {
+	if (ReflDbgCount < 1500) { Logger::Log("[ReflDbg] ---- ShadowMaps hook (frame boundary marker) ----"); ReflDbgCount++; } // [ReflDbg]
 	Global->RenderShadowMaps(); //Window reflections seem to be rendered here
 
 	IDirect3DDevice9* Device = TheRenderManager->device;
@@ -1872,6 +1874,10 @@ void ShadowManager::RenderSkinnedGeo(NiGeometry* Geo, D3DXVECTOR4* ShadowData) {
 		CurrentPixel->SetCT();
 		DrawGeoArrays(GeoData, PrimitiveType, Partition->Vertices);
 	}
+	// CalculateBoneMatrixes stamped SkinInstance->FrameID, and the game's per-frame cache would make
+	// the later water-reflection pass reuse these shadow-pass bone matrices (floating actor
+	// reflections). Invalidate the stamp so the game recomputes with its own transform.
+	SkinInstance->FrameID = 0xFFFFFFFF;
 }
 
 #if 0 // SHADOWS DISABLED: dead reference — cube actor frusta/draw + interior light classification & selection (unused by ortho path)
@@ -1933,6 +1939,8 @@ void ShadowManager::RenderActorSkinnedGeo(NiGeometry* Geo, D3DXVECTOR4* ShadowDa
 		SetupGeoStreams(GeoData);
 		RenderActorFaces(GeoData, PrimitiveType, Partition->Vertices, lightIndex);
 	}
+	// Same cache invalidation as RenderSkinnedGeo — see comment there.
+	SkinInstance->FrameID = 0xFFFFFFFF;
 }
 
 void ShadowManager::SetupCubeMapRenderState() {

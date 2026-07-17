@@ -38,6 +38,9 @@ static const UInt32 kDetectorWindowCreateTreeView = 0x00495E1F;
 static const UInt32 kDetectorWindowCreateTreeViewReturn = 0x00495E27;
 static const UInt32 kDetectorWindowDumpAttributes = 0x004967C7;
 static const UInt32 kDetectorWindowDumpAttributesReturn = 0x004967CD;
+// Engine global set to 1 around the water-reflection WorldSceneGraph render (0x004D0404/0x004D0413)
+// and read by the game's shader setup to alter behavior during that pass.
+static UInt8* const kIsRenderingWaterReflections = (UInt8*)0x00B42E86;
 #elif defined(SKYRIM)
 #define kRender 0x0069BDF0
 #define kProcessImageSpaceShaders 0x00C70DA0
@@ -302,6 +305,15 @@ float RenderHook::TrackFarPlane() {
 // draw order, plus engine call-site addresses for the first few GRASS and WATER passes so the
 // engine function that schedules grass after water can be located. Remove when the spike concludes.
 static bool	GrassOrderCapture = false;
+int			ReflDbgCount = 0; // [ReflDbg] temporary shared log cap (also used by ShaderManager/ShadowManager)
+// True only while the MAIN WorldSceneGraph render is on the stack (set in TrackRenderObject). The
+// game calls BeginScene again for off-screen renders after the main pass — the water REFLECTION
+// map among them (confirmed by [ReflDbg] log: reflection renders AFTER the main pass, at 1024x1024,
+// NOT through RenderObject(WorldSceneGraph)) — and ShaderManager::BeginScene resets
+// PreWaterDepthBufferFilled each time. Without this guard, a water shader binding during the
+// reflection render re-fired the mid-scene sun-shadow apply INTO the reflection map, leaving
+// camera-tracking caster silhouettes floating in the water.
+static bool	InMainScenePass = false;
 static int	GrassOrderSeq = 0;
 static int	GrassOrderGrassTraces = 0;
 static int	GrassOrderWaterTraces = 0;
@@ -440,8 +452,11 @@ UInt32 RenderHook::TrackSetupShaderPrograms(NiGeometry* Geometry, NiSkinInstance
 		// height-map pre-pass shaders (WATERHMAP*, 'H' at index 5).
 		// Reflections render before the main pass and the flag is reset just before the main
 		// WorldSceneGraph render (TrackRenderObject), so only main-pass water binds can fire.
-		if (!TheShaderManager->PreWaterDepthBufferFilled && !memcmp(PixelShader->ShaderName, "WATER", 5) && PixelShader->ShaderName[5] >= '0' && PixelShader->ShaderName[5] <= '9') {
+		// kIsRenderingWaterReflections additionally excludes the water-reflection render, which goes
+		// through the same RenderObject/shader path with the engine's reflection flag set.
+		if (InMainScenePass && !TheShaderManager->PreWaterDepthBufferFilled && !memcmp(PixelShader->ShaderName, "WATER", 5) && PixelShader->ShaderName[5] >= '0' && PixelShader->ShaderName[5] <= '9') {
 			if (atoi(PixelShader->ShaderName + 5) < 12) {
+				if (ReflDbgCount < 1500) { Logger::Log("[ReflDbg] water bind trigger: %s -> resolve+apply", PixelShader->ShaderName); ReflDbgCount++; } // [ReflDbg]
 				TheRenderManager->ResolvePreWaterDepthBuffer();
 				TheShaderManager->RenderSunShadowsMidScene();
 				TheShaderManager->PreWaterDepthBufferFilled = true;
@@ -544,7 +559,25 @@ void __cdecl TrackSetShaderPackage(int Arg1, int Arg2, UInt8 Force1XShaders, int
 void (__cdecl * RenderObject)(NiCamera*, NiNode*, NiCullingProcess*, NiVisibleArray*) = (void (__cdecl *)(NiCamera*, NiNode*, NiCullingProcess*, NiVisibleArray*))0x0070C0B0;
 void __cdecl TrackRenderObject(NiCamera* Camera, NiNode* Object, NiCullingProcess* CullingProcess, NiVisibleArray* VisibleArray) {
 
-	if (Object == WorldSceneGraph) {
+	// The water-reflection pass renders the SAME WorldSceneGraph root through this hook, so
+	// Object==WorldSceneGraph alone also matches it — and the end-of-render branch below then fired
+	// at the end of the REFLECTION render, painting the sun-shadow apply quad into the reflection
+	// map with main-camera matrices over reflection-pass depth (dark caster silhouettes floating in
+	// the water, tracking camera height). Discriminate by CAMERA: the engine's main-pass call sites
+	// (0x40CCD3, 0x57F2C3) pass SceneGraph+0xDC (== WorldSceneGraph->camera), while the water
+	// function (0x4D040B/0x4D04A8) passes its own reflection camera. The 0xB42E86 flag alone is NOT
+	// sufficient: the water function's second RenderObject call (0x4D04A8) runs after the flag is
+	// restored (0x4D0413), so only the first of its two reflection sub-passes carries the flag.
+	bool MainScenePass = (Object == WorldSceneGraph) && (Camera == WorldSceneGraph->camera) && !*kIsRenderingWaterReflections;
+	// [ReflDbg] temporary: capture the real pass structure around the floating-silhouette bug.
+	if (ReflDbgCount < 1500 && Object == WorldSceneGraph) {
+		IDirect3DSurface9* DbgRT = NULL; D3DSURFACE_DESC DbgDesc = { };
+		if (SUCCEEDED(TheRenderManager->device->GetRenderTarget(0, &DbgRT)) && DbgRT) { DbgRT->GetDesc(&DbgDesc); DbgRT->Release(); }
+		Logger::Log("[ReflDbg] WSG render begin: cam=%p wsgCam=%p reflFlag=%d RT=%ux%u main=%d", Camera, WorldSceneGraph->camera, (int)*kIsRenderingWaterReflections, DbgDesc.Width, DbgDesc.Height, (int)MainScenePass);
+		ReflDbgCount++;
+	}
+	if (MainScenePass) {
+		InMainScenePass = true;
 		TheShaderManager->PreWaterDepthBufferFilled = false; // reset before the main pass so only main-pass water binds populate the pre-water depth
 		if (TheSettingManager->SettingsMain.Develop.LogShaders && TheKeyboardManager->OnKeyDown(TheSettingManager->SettingsMain.Develop.LogShaders)) { // [GrassOrderDbg]
 			GrassOrderCapture = true;
@@ -553,11 +586,16 @@ void __cdecl TrackRenderObject(NiCamera* Camera, NiNode* Object, NiCullingProces
 		}
 	}
 	RenderObject(Camera, Object, CullingProcess, VisibleArray);
+	if (MainScenePass) InMainScenePass = false;
+	if (ReflDbgCount < 1500 && Object == WorldSceneGraph) { // [ReflDbg]
+		Logger::Log("[ReflDbg] WSG render end: cam=%p main=%d preWaterFilled=%d (apply fires here=%d)", Camera, (int)MainScenePass, (int)TheShaderManager->PreWaterDepthBufferFilled, (int)(MainScenePass && !TheShaderManager->PreWaterDepthBufferFilled));
+		ReflDbgCount++;
+	}
 	if (Object == WorldSceneGraph && GrassOrderCapture) { // [GrassOrderDbg]
 		GrassOrderCapture = false;
 		Logger::Log("[GrassOrderDbg] ==== capture end (%d passes) ====", GrassOrderSeq);
 	}
-	if (Object == WorldSceneGraph) {
+	if (MainScenePass) {
 		if (!TheShaderManager->PreWaterDepthBufferFilled) {
 			// No near-water draw this frame: resolve the receiver depth (== full scene depth) and run
 			// the sun-shadow apply now, at the end of the main scene render.
