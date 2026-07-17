@@ -2007,9 +2007,16 @@ void ShadowManager::UpdateStaticTrackers(int LightIndex, double* StaticValues, b
 
 #endif // SHADOWS DISABLED
 
+// Three weather-driven darkness tiers (INI [Exteriors] Darkness/DarknessCloudy/DarknessPrecipitation):
+// clear (Pleasant/None) is darkest, Cloudy is lighter, Rainy/Snow is lightest. weatherType is a bitmask
+// (see TESWeather::WeatherType), so test with & rather than equality; precipitation takes priority over
+// cloudy if a weather record somehow sets both bits.
 SettingsShadowStruct::ExteriorsStruct* ShadowManager::SelectExteriorShadowSettings() {
 	TESWeather* currentWeather = Tes->sky->firstWeather;
-	if (currentWeather->weatherType != TESWeather::WeatherType::kType_Pleasant && currentWeather->weatherType != TESWeather::WeatherType::kType_None)
+	UInt32 weatherType = currentWeather->weatherType;
+	if (weatherType & (TESWeather::WeatherType::kType_Rainy | TESWeather::WeatherType::kType_Snow))
+		return &TheSettingManager->SettingsShadows.ExteriorsPrecip;
+	if (weatherType & TESWeather::WeatherType::kType_Cloudy)
 		return &TheSettingManager->SettingsShadows.ExteriorsAlt;
 	return &TheSettingManager->SettingsShadows.Exteriors;
 }
