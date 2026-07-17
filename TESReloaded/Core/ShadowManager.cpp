@@ -480,7 +480,13 @@ bool ShadowManager::InShadowFrustum(ShadowMapTypeEnum ShadowMapType, NiAVObject*
 	NiBound* Bound = Object->GetWorldBound();
 
 	if (Bound) {
-		D3DXVECTOR3 Position = { Bound->Center.x - TheRenderManager->CameraPosition.x, Bound->Center.y - TheRenderManager->CameraPosition.y, Bound->Center.z - TheRenderManager->CameraPosition.z };
+		// Cull in the same space the map's frustum lives in: anchor-relative during a world-anchored
+		// bake (near/far cached maps), camera-relative otherwise (ortho). Must match the space the
+		// terrain is subsequently drawn in (see Render()), or terrain is culled against the wrong frustum.
+		float BaseX = CollectWorldSpace ? CollectAnchor.x : TheRenderManager->CameraPosition.x;
+		float BaseY = CollectWorldSpace ? CollectAnchor.y : TheRenderManager->CameraPosition.y;
+		float BaseZ = CollectWorldSpace ? CollectAnchor.z : TheRenderManager->CameraPosition.z;
+		D3DXVECTOR3 Position = { Bound->Center.x - BaseX, Bound->Center.y - BaseY, Bound->Center.z - BaseZ };
 
 		R = true;
 		for (int i = 0; i < 6; ++i) {
@@ -661,6 +667,13 @@ void ShadowManager::Render(NiGeometry* Geo, D3DXVECTOR4* ShadowData, const D3DMA
 		// Reuse the matrix computed once per light for cube faces; otherwise build it now.
 		if (PrecomputedWorld)
 			TheShaderManager->ShaderConst.ShadowMap.ShadowWorld = *PrecomputedWorld;
+		// Terrain is drawn through this path with no precomputed matrix. In a world-anchored bake (near/far
+		// cached maps) it must be placed anchor-relative like the statics (CreateD3DMatrixWorld), NOT
+		// camera-relative — otherwise it lands offset by (Camera - Anchor) and its shadow slides across the
+		// ground like a moving cloud as the camera drifts from the anchor. Ortho (CollectWorldSpace==false)
+		// stays camera-relative as before.
+		else if (CollectWorldSpace)
+			CreateD3DMatrixWorld(&TheShaderManager->ShaderConst.ShadowMap.ShadowWorld, &Geo->m_worldTransform);
 		else
 			CreateD3DMatrix(&TheShaderManager->ShaderConst.ShadowMap.ShadowWorld, &Geo->m_worldTransform);
 		if (Geo->m_parent->m_pcName && !memcmp(Geo->m_parent->m_pcName, "Leaves", 6)) {
@@ -834,10 +847,7 @@ void ShadowManager::BakeStaticRegion(ShadowMapTypeEnum ShadowMapType, SettingsSh
 	int w = 0;
 	for (int i = 0; i < ShadowGeoCount; i++) if (!ShadowGeoPool[i].IsActor && ShadowGeoPool[i].GeoData != NULL) ShadowGeoPool[w++] = ShadowGeoPool[i];
 	ShadowGeoCount = w;
-	// EXPERIMENT: skip far terrain in the MapFar bake to test whether far-terrain self-occlusion is the
-	// source of the caster-less "cloud shadow" blobs over terrain. Near-region terrain still renders.
-	bool SkipTerrain = (ShadowMapType == MapFar);
-	RenderShadowMap(ShadowMapType, S, &LookAtPosition, SunDir, &TheShaderManager->ShaderConst.Shadow.Data, SkipTerrain);
+	RenderShadowMap(ShadowMapType, S, &LookAtPosition, SunDir, &TheShaderManager->ShaderConst.Shadow.Data);
 	CollectWorldSpace = false;
 }
 
