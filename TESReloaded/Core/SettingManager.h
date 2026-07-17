@@ -319,6 +319,7 @@ struct SettingsShadowStruct {
 		float				RebakeMarginNear;
 		float				RebakeMarginFar;
 		float				RebakeSunInterval;
+		bool				CacheStaticShadows;
 		bool                UsePostProcessing;
 		bool				UseIntervalUpdate;
 		bool				UseInstancing;
