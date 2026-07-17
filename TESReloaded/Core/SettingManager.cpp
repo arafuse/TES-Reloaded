@@ -1266,6 +1266,10 @@ void SettingManager::LoadSettings() {
 	SettingsShadows.Exteriors.UseInstancing = GetPrivateProfileIntA("Exteriors", "UseInstancing", 1, Filename);
 	GetPrivateProfileStringA("Exteriors", "Darkness", "0.2", value, SettingStringBuffer, Filename);
 	SettingsShadows.Exteriors.Darkness = atof(value);
+	GetPrivateProfileStringA("Exteriors", "DarknessCloudy", "0.75", value, SettingStringBuffer, Filename);
+	float DarknessCloudy = atof(value);
+	GetPrivateProfileStringA("Exteriors", "DarknessPrecipitation", "0.9", value, SettingStringBuffer, Filename);
+	float DarknessPrecipitation = atof(value);
 	GetPrivateProfileStringA("Exteriors", "ShadowMapFarPlane", "8192.0", value, SettingStringBuffer, Filename);
 	SettingsShadows.Exteriors.ShadowMapFarPlane = atof(value);
 	GetPrivateProfileStringA("Exteriors", "SunUpThreshold", "0.15", value, SettingStringBuffer, Filename);
@@ -1328,10 +1332,13 @@ void SettingManager::LoadSettings() {
 	GetPrivateProfileStringA("ExteriorsPoint", "Darkness", "1.0", value, SettingStringBuffer, Filename);
 	SettingsShadows.ExteriorsPoint.Darkness = atof(value);
 	
-	// araf Alt settings for weather switch
+	// Weather-driven darkness tiers: cloudy and precipitation copy every other exterior sun-shadow
+	// setting (map sizes/radii/bias/etc.) from the base Exteriors struct and only override Darkness.
 	SettingsShadows.ExteriorsAlt = SettingsShadowStruct::ExteriorsStruct(SettingsShadows.Exteriors);
+	SettingsShadows.ExteriorsAlt.Darkness = DarknessCloudy;
+	SettingsShadows.ExteriorsPrecip = SettingsShadowStruct::ExteriorsStruct(SettingsShadows.Exteriors);
+	SettingsShadows.ExteriorsPrecip.Darkness = DarknessPrecipitation;
 	SettingsShadows.ExteriorsPointAlt = SettingsShadowStruct::InteriorsStruct(SettingsShadows.ExteriorsPoint);
-	SettingsShadows.ExteriorsAlt.Darkness = SettingsShadows.Exteriors.Darkness + 0.35f;
 	SettingsShadows.ExteriorsPointAlt.Darkness = SettingsShadows.ExteriorsPointAlt.Darkness + 0.35f;
 
 	ValueList FormValue;
@@ -1688,6 +1695,8 @@ void SettingManager::SaveSettings(const char* Item, const char* Definition, cons
 			strcat(Filename, "Shadows\\Shadows.ini");
 			WritePrivateProfileStringA("Exteriors", "UsePostProcessing", ToString(SettingsShadows.Exteriors.UsePostProcessing).c_str(), Filename);
 			WritePrivateProfileStringA("Exteriors", "Darkness", ToString(SettingsShadows.Exteriors.Darkness).c_str(), Filename);
+			WritePrivateProfileStringA("Exteriors", "DarknessCloudy", ToString(SettingsShadows.ExteriorsAlt.Darkness).c_str(), Filename);
+			WritePrivateProfileStringA("Exteriors", "DarknessPrecipitation", ToString(SettingsShadows.ExteriorsPrecip.Darkness).c_str(), Filename);
 			WritePrivateProfileStringA("Exteriors", "forwardNormBias", ToString(SettingsShadows.Exteriors.forwardNormBias).c_str(), Filename);
 			WritePrivateProfileStringA("Exteriors", "forwardFarNormBias", ToString(SettingsShadows.Exteriors.forwardFarNormBias).c_str(), Filename);
 			WritePrivateProfileStringA("Exteriors", "forwardConstBias", ToString(SettingsShadows.Exteriors.forwardConstBias).c_str(), Filename);
@@ -2386,6 +2395,8 @@ SettingsList SettingManager::GetMenuSettings(const char* Item, const char* Defin
 			if (!strcmp(Section, "Exteriors")) {
 				Settings["UsePostProcessing"] = SettingsShadows.Exteriors.UsePostProcessing;
 				Settings["Darkness"] = SettingsShadows.Exteriors.Darkness;
+				Settings["DarknessCloudy"] = SettingsShadows.ExteriorsAlt.Darkness;
+				Settings["DarknessPrecipitation"] = SettingsShadows.ExteriorsPrecip.Darkness;
 				Settings["forwardNormBias"] = SettingsShadows.Exteriors.forwardNormBias;
 				Settings["forwardFarNormBias"] = SettingsShadows.Exteriors.forwardFarNormBias;
 				Settings["forwardConstBias"] = SettingsShadows.Exteriors.forwardConstBias;
@@ -3156,7 +3167,12 @@ void SettingManager::SetMenuSetting(const char* Item, const char* Definition, co
 			if (!strcmp(Section, "Exteriors")) {
 				if (!strcmp(Setting, "Darkness")) {
 					SettingsShadows.Exteriors.Darkness = Value;
-					SettingsShadows.ExteriorsAlt.Darkness = Value + 0.35f; // araf
+				}
+				else if (!strcmp(Setting, "DarknessCloudy")) {
+					SettingsShadows.ExteriorsAlt.Darkness = Value;
+				}
+				else if (!strcmp(Setting, "DarknessPrecipitation")) {
+					SettingsShadows.ExteriorsPrecip.Darkness = Value;
 				}
 				else if (!strcmp(Setting, "ShadowMapFarPlane")) {
 					SettingsShadows.Exteriors.ShadowMapFarPlane = Value;

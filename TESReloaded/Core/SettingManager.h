@@ -350,8 +350,11 @@ struct SettingsShadowStruct {
 	InteriorsStruct		Interiors;
 	InteriorsStruct		ExteriorsPoint;
 
-	// araf
+	// Weather-driven darkness tiers for exterior sun shadows: ExteriorsAlt = cloudy, ExteriorsPrecip = rainy/snowy.
+	// Full ExteriorsStruct copies (not just a Darkness float) so SelectExteriorShadowSettings can swap the
+	// whole config in one call; only .Darkness differs from the base Exteriors struct.
 	ExteriorsStruct		ExteriorsAlt;
+	ExteriorsStruct		ExteriorsPrecip;
 	InteriorsStruct		ExteriorsPointAlt;
 };
 
