@@ -19,6 +19,7 @@ float4x4 TESR_ViewTransform;
 float4 TESR_ReciprocalResolution;
 float4 TESR_CameraPosition;
 float4 TESR_ShadowData;
+float4 TESR_ShadowBiasDeferred;
 float4 TESR_ShadowLightDir;
 float4 TESR_WaterSettings;
 float4 TESR_GameTime;
@@ -109,8 +110,10 @@ static const float farZ = (TESR_ProjectionTransform._33 * nearZ) / (TESR_Project
 static const float Zmul = nearZ * farZ;
 static const float Zdiff = farZ - nearZ;
 
-static const float BIAS = 0.001f;
-static const float darkness = 0.8f;
+// Match the deferred shadow apply (ShadowsExteriors.fx) instead of hardcoding: darkness is the
+// weather-tiered INI value ([Exteriors] Darkness/Cloudy/Precipitation), biases are the deferred
+// constant biases. All operands are uniforms, so these fold to CPU preshaders.
+static const float darkness = TESR_ShadowData.y;
 // Combined world->shadow transforms. Both operands are uniforms, so D3DX folds these to
 // once-per-draw CPU preshaders, removing a mat4 mul per ray-march step (see main loop).
 static const float4x4 ShadowNearCombined = mul(TESR_WorldViewProjectionTransform, TESR_ShadowCameraToLightTransformNear);
@@ -248,7 +251,7 @@ float readDepthShadow(in float2 coord : TEXCOORD0)
 float LookupFar(float4 ShadowPos, float2 OffSet)
 {
     float Shadow = tex2D(TESR_ShadowMapBufferFar, ShadowPos.xy + float2(OffSet.x * TESR_ShadowData.w, OffSet.y * TESR_ShadowData.w)).r;
-    if (Shadow < ShadowPos.z - BIAS)
+    if (Shadow < ShadowPos.z - TESR_ShadowBiasDeferred.w)
         return darkness;
     return 1.0f;
 }
@@ -270,7 +273,7 @@ float GetLightAmountFar(float4 ShadowPos)
 float Lookup(float4 ShadowPos, float2 OffSet)
 {
     float Shadow = tex2D(TESR_ShadowMapBufferNear, ShadowPos.xy + float2(OffSet.x * TESR_ShadowData.z, OffSet.y * TESR_ShadowData.z)).r;
-    if (Shadow < ShadowPos.z - BIAS)
+    if (Shadow < ShadowPos.z - TESR_ShadowBiasDeferred.z)
         return darkness;
     return 1.0f;
 }
