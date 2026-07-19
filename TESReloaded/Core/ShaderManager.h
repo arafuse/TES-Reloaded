@@ -25,9 +25,6 @@ enum EffectRecordType
 	EffectRecordType_VolumetricLight,
 	EffectRecordType_Precipitations,
 	EffectRecordType_ShadowsExteriors,
-	EffectRecordType_ShadowsExteriorsPoint,
-	EffectRecordType_ShadowsExteriorsPointDialog,
-	EffectRecordType_ShadowsInteriors,
 	EffectRecordType_ShadowsPoint,
 	EffectRecordType_Extra,
 };
@@ -62,13 +59,11 @@ struct ShaderConstants {
 		D3DXMATRIX	    ShadowWorld;
 		D3DXMATRIX		ShadowViewProj;
 		D3DXMATRIX		ShadowCameraToLight[4];
-		D3DXVECTOR4		ShadowCubeMapLightPosition;
-		D3DXVECTOR4		ShadowCastLightPosition[12];
-		D3DXVECTOR4		ShadowCullLightPosition[24];
-		D3DXVECTOR4		ShadowCubeMapFarPlanes;
-		D3DXVECTOR4		ShadowCubeMapBlend;
-		D3DXVECTOR4		ShadowCubeMapBlend2;
-		D3DXVECTOR4		ShadowCubeMapBlend3;
+		D3DXVECTOR4		ShadowCubeMapLightPosition;	// light being baked this pass (camera-relative)
+		// Per point-light slot: xyz camera-relative, w = far plane (0 = empty slot).
+		// Size must stay in step with ShadowManager::PointLightMax (this header is included first,
+		// so it cannot reference it) and with the sampler count in ShadowsPoint.fx.
+		D3DXVECTOR4		ShadowCastLightPosition[4];
 		D3DXVECTOR4		ShadowLightDir;
 		D3DXVECTOR4		ShadowBiasForward;
 		D3DXVECTOR4		ShadowBiasDeferred;
@@ -505,9 +500,6 @@ public:
 	EffectRecord*			SnowEffect;
 	EffectRecord*			ShadowsExteriorsEffect;
 	EffectRecord*			ShadowsPointEffect;
-	EffectRecord*           ShadowsExteriorsPointEffect;
-	EffectRecord*			ShadowsExteriorsPointDialogEffect;
-	EffectRecord*			ShadowsInteriorsEffect;
 	ExtraEffectsList		ExtraEffects;
 	NiD3DVertexShader*		WaterHeightMapVertexShader;
 	NiD3DPixelShader*		WaterHeightMapPixelShader;

@@ -76,18 +76,6 @@ bool TextureRecord::LoadTexture(TextureRecordType Type, const char* Filename) {
 		case TextureRecordType_ShadowCubeMapBuffer3:
 			Texture = TheShadowManager->ShadowCubeMapTexture[3];
 			break;
-		// Only PointLightMax (4) cube maps exist now; buffers 4..11 are legacy declarations in the
-		// old interior/exterior-point effects and bind nothing (cases + enum removed with them).
-		case TextureRecordType_ShadowCubeMapBuffer4:
-		case TextureRecordType_ShadowCubeMapBuffer5:
-		case TextureRecordType_ShadowCubeMapBuffer6:
-		case TextureRecordType_ShadowCubeMapBuffer7:
-		case TextureRecordType_ShadowCubeMapBuffer8:
-		case TextureRecordType_ShadowCubeMapBuffer9:
-		case TextureRecordType_ShadowCubeMapBuffer10:
-		case TextureRecordType_ShadowCubeMapBuffer11:
-			Texture = NULL;
-			break;
 	}	
 	return true;
 
@@ -223,20 +211,6 @@ TextureRecord* TextureManager::LoadTexture(const char* ShaderSource, UInt32 Regi
 					}
 				}
 				if (!Type) {
-					SamplerParser = strstr(Sampler, WordShadowCubeMapBuffer10);
-					if (SamplerParser && SamplerParser < strstr(Sampler, WordSamplerDelimeter)) {
-						Type = TextureRecordType_ShadowCubeMapBuffer10;
-						strcpy(Filename, WordShadowCubeMapBuffer10);
-					}
-				}
-				if (!Type) {
-					SamplerParser = strstr(Sampler, WordShadowCubeMapBuffer11);
-					if (SamplerParser && SamplerParser < strstr(Sampler, WordSamplerDelimeter)) {
-						Type = TextureRecordType_ShadowCubeMapBuffer11;
-						strcpy(Filename, WordShadowCubeMapBuffer11);
-					}
-				}
-				if (!Type) {
 					SamplerParser = strstr(Sampler, WordShadowCubeMapBuffer0);
 					if (SamplerParser && SamplerParser < strstr(Sampler, WordSamplerDelimeter)) {
 						Type = TextureRecordType_ShadowCubeMapBuffer0;
@@ -262,48 +236,6 @@ TextureRecord* TextureManager::LoadTexture(const char* ShaderSource, UInt32 Regi
 					if (SamplerParser && SamplerParser < strstr(Sampler, WordSamplerDelimeter)) {
 						Type = TextureRecordType_ShadowCubeMapBuffer3;
 						strcpy(Filename, WordShadowCubeMapBuffer3);
-					}
-				}
-				if (!Type) {
-					SamplerParser = strstr(Sampler, WordShadowCubeMapBuffer4);
-					if (SamplerParser && SamplerParser < strstr(Sampler, WordSamplerDelimeter)) {
-						Type = TextureRecordType_ShadowCubeMapBuffer4;
-						strcpy(Filename, WordShadowCubeMapBuffer4);
-					}
-				}
-				if (!Type) {
-					SamplerParser = strstr(Sampler, WordShadowCubeMapBuffer5);
-					if (SamplerParser && SamplerParser < strstr(Sampler, WordSamplerDelimeter)) {
-						Type = TextureRecordType_ShadowCubeMapBuffer5;
-						strcpy(Filename, WordShadowCubeMapBuffer5);
-					}
-				}
-				if (!Type) {
-					SamplerParser = strstr(Sampler, WordShadowCubeMapBuffer6);
-					if (SamplerParser && SamplerParser < strstr(Sampler, WordSamplerDelimeter)) {
-						Type = TextureRecordType_ShadowCubeMapBuffer6;
-						strcpy(Filename, WordShadowCubeMapBuffer6);
-					}
-				}
-				if (!Type) {
-					SamplerParser = strstr(Sampler, WordShadowCubeMapBuffer7);
-					if (SamplerParser && SamplerParser < strstr(Sampler, WordSamplerDelimeter)) {
-						Type = TextureRecordType_ShadowCubeMapBuffer7;
-						strcpy(Filename, WordShadowCubeMapBuffer7);
-					}
-				}
-				if (!Type) {
-					SamplerParser = strstr(Sampler, WordShadowCubeMapBuffer8);
-					if (SamplerParser && SamplerParser < strstr(Sampler, WordSamplerDelimeter)) {
-						Type = TextureRecordType_ShadowCubeMapBuffer8;
-						strcpy(Filename, WordShadowCubeMapBuffer8);
-					}
-				}
-				if (!Type) {
-					SamplerParser = strstr(Sampler, WordShadowCubeMapBuffer9);
-					if (SamplerParser && SamplerParser < strstr(Sampler, WordSamplerDelimeter)) {
-						Type = TextureRecordType_ShadowCubeMapBuffer9;
-						strcpy(Filename, WordShadowCubeMapBuffer9);
 					}
 				}
 				if (!Type) {
