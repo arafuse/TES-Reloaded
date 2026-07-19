@@ -1333,6 +1333,34 @@ void SettingManager::LoadSettings() {
 	GetPrivateProfileStringA("ExteriorsPoint", "Darkness", "1.0", value, SettingStringBuffer, Filename);
 	SettingsShadows.ExteriorsPoint.Darkness = atof(value);
 	
+	// Unified point-light shadows: single [Point] section, identical behavior interiors/exteriors.
+	SettingsShadows.Point.Enabled = GetPrivateProfileIntA("Point", "Enabled", 1, Filename);
+	SettingsShadows.Point.UsePostProcessing = GetPrivateProfileIntA("Point", "UsePostProcessing", 1, Filename);
+	SettingsShadows.Point.AlphaEnabled = GetPrivateProfileIntA("Point", "AlphaEnabled", 1, Filename);
+	SettingsShadows.Point.TorchesCastShadows = GetPrivateProfileIntA("Point", "TorchesCastShadows", 1, Filename);
+	SettingsShadows.Point.ShadowCubeMapSize = GetPrivateProfileIntA("Point", "ShadowCubeMapSize", 512, Filename);
+	SettingsShadows.Point.LightCount = GetPrivateProfileIntA("Point", "LightCount", 4, Filename);
+	if (SettingsShadows.Point.LightCount < 1) SettingsShadows.Point.LightCount = 1;
+	if (SettingsShadows.Point.LightCount > 4) SettingsShadows.Point.LightCount = 4;
+	GetPrivateProfileStringA("Point", "Darkness", "0.2", value, SettingStringBuffer, Filename);
+	SettingsShadows.Point.Darkness = atof(value);
+	GetPrivateProfileStringA("Point", "LightRadiusMin", "64.0", value, SettingStringBuffer, Filename);
+	SettingsShadows.Point.LightRadiusMin = atof(value);
+	GetPrivateProfileStringA("Point", "LightRadiusMax", "8192.0", value, SettingStringBuffer, Filename);
+	SettingsShadows.Point.LightRadiusMax = atof(value);
+	GetPrivateProfileStringA("Point", "MaxDistance", "4000.0", value, SettingStringBuffer, Filename);
+	SettingsShadows.Point.MaxDistance = atof(value);
+	SettingsShadows.Point.Forms.Activators = GetPrivateProfileIntA("Point", "Activators", 1, Filename);
+	SettingsShadows.Point.Forms.Actors = GetPrivateProfileIntA("Point", "Actors", 1, Filename);
+	SettingsShadows.Point.Forms.Apparatus = GetPrivateProfileIntA("Point", "Apparatus", 1, Filename);
+	SettingsShadows.Point.Forms.Books = GetPrivateProfileIntA("Point", "Books", 0, Filename);
+	SettingsShadows.Point.Forms.Containers = GetPrivateProfileIntA("Point", "Containers", 1, Filename);
+	SettingsShadows.Point.Forms.Doors = GetPrivateProfileIntA("Point", "Doors", 0, Filename);
+	SettingsShadows.Point.Forms.Furniture = GetPrivateProfileIntA("Point", "Furniture", 1, Filename);
+	SettingsShadows.Point.Forms.Misc = GetPrivateProfileIntA("Point", "Misc", 0, Filename);
+	SettingsShadows.Point.Forms.Statics = GetPrivateProfileIntA("Point", "Statics", 1, Filename);
+	SettingsShadows.Point.Forms.Trees = GetPrivateProfileIntA("Point", "Trees", 0, Filename);
+
 	// Weather-driven darkness tiers: cloudy and precipitation copy every other exterior sun-shadow
 	// setting (map sizes/radii/bias/etc.) from the base Exteriors struct and only override Darkness.
 	SettingsShadows.ExteriorsAlt = SettingsShadowStruct::ExteriorsStruct(SettingsShadows.Exteriors);
@@ -1350,12 +1378,14 @@ void SettingManager::LoadSettings() {
 	size_t EC = 0;
 	size_t NC = 0;
 	size_t IC = 0;
+	size_t PC = 0;
 	GetPrivateProfileSectionA("FormIDs", Sections, 32767, Filename);
 	for (int i = 0; i < 2; i++) {
 		if (i == 1) {
 			SettingsShadows.Exteriors.ExcludedForms.reserve(EC);
 			SettingsShadows.ExteriorsPoint.ExcludedForms.reserve(NC);
 			SettingsShadows.Interiors.ExcludedForms.reserve(IC);
+			SettingsShadows.Point.ExcludedForms.reserve(PC);
 		}
 		pNextSection = Sections;
 		while (*pNextSection != NULL) {
@@ -1385,6 +1415,14 @@ void SettingManager::LoadSettings() {
 					else
 						SettingsShadows.ExteriorsPoint.ExcludedForms.push_back(atoi(FormID));
 				}
+				// Unified point shadows honor every point-relevant prefix: X (all), I (interior
+				// point), N (exterior point) — the same form is excluded everywhere.
+				if (FormType[0] == 'X' || FormType[0] == 'I' || FormType[0] == 'N') {
+					if (i == 0)
+						PC += 1;
+					else
+						SettingsShadows.Point.ExcludedForms.push_back(atoi(FormID));
+				}
 			}
 			pNextSection = pNextSection + strlen(pNextSection) + 1;
 		}
@@ -1392,6 +1430,7 @@ void SettingManager::LoadSettings() {
 	if (EC) std::sort(SettingsShadows.Exteriors.ExcludedForms.begin(), SettingsShadows.Exteriors.ExcludedForms.end());
 	if (IC) std::sort(SettingsShadows.ExteriorsPoint.ExcludedForms.begin(), SettingsShadows.ExteriorsPoint.ExcludedForms.end());
 	if (IC) std::sort(SettingsShadows.Interiors.ExcludedForms.begin(), SettingsShadows.Interiors.ExcludedForms.end());
+	if (PC) std::sort(SettingsShadows.Point.ExcludedForms.begin(), SettingsShadows.Point.ExcludedForms.end());
 
 }
 

@@ -110,6 +110,12 @@ struct ShaderConstants {
 		D3DXVECTOR4		ShadowSkinData;
 		D3DXVECTOR4		OrthoData;
 	};
+	// Point-light cube shadows. Bake and sample constants are deliberately separate vectors
+	// (the old system overloaded one TESR_ShadowCubeData between phases — a known trap).
+	struct ShadowPointStruct {
+		D3DXVECTOR4		BakeData;	// bake phase: x = skinned flag, y = alpha flag, z = far plane
+		D3DXVECTOR4		PointData;	// sample phase: y = darkness, z = 1 / cube map size
+	};
 	struct PrecipitationsStruct {
 		D3DXVECTOR4		RainData;
 		D3DXVECTOR4		SnowData;
@@ -282,6 +288,7 @@ struct ShaderConstants {
 	SkinStruct				Skin;
 	ShadowStruct			Shadow;
 	ShadowStruct			ShadowCube;
+	ShadowPointStruct		ShadowPoint;
 	PrecipitationsStruct	Precipitations;
 	WaterLensStruct			WaterLens;
 	GodRaysStruct			GodRays;

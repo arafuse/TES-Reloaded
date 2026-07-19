@@ -176,8 +176,6 @@ void ShadowManager::LoadShadowShaders(IDirect3DDevice9* Device) {
 	if (ShadowCubeMapVertex->LoadShader("ShadowCubeMap.vso")) Device->CreateVertexShader((const DWORD*)ShadowCubeMapVertex->Function, &ShadowCubeMapVertexShader);
 	ShadowCubeMapPixel = new ShaderRecord();
 	if (ShadowCubeMapPixel->LoadShader("ShadowCubeMap.pso")) Device->CreatePixelShader((const DWORD*)ShadowCubeMapPixel->Function, &ShadowCubeMapPixelShader);
-	ShadowCubeMapExteriorPixel = new ShaderRecord();
-	if (ShadowCubeMapExteriorPixel->LoadShader("ShadowCubeMapExterior.pso")) Device->CreatePixelShader((const DWORD*)ShadowCubeMapExteriorPixel->Function, &ShadowCubeMapExteriorPixelShader);
 	// Optional: instanced static shadow VS. If the binary is missing (not yet compiled), the
 	// handle stays NULL and the renderer transparently falls back to the per-object path.
 	ShadowMapInstancedVertex = new ShaderRecord();
@@ -222,26 +220,27 @@ void ShadowManager::CreateShadowMapSurfaces(IDirect3DDevice9* Device, SettingsSh
 }
 
 void ShadowManager::CreateCubeMapSurfaces(IDirect3DDevice9* Device, UINT CubeMapSize) {
-	// SHADOWS DISABLED: point-light cube maps are no longer generated; leave all 12 unallocated
-	// to reclaim VRAM (12 * 6 faces of R32F + depth). TextureManager captures NULL and the bind
-	// path skips it; the neutered scene shaders never sample these. Dead reference: original
-	// allocation in the #if 0 block below.
-	for (int i = 0; i < 12; i++) {
+	// One R32F cube per point-light slot. Faces render strictly sequentially with a per-face
+	// depth clear, so a single shared depth-stencil surface serves every face of every cube.
+	for (int i = 0; i < PointLightMax; i++) {
 		ShadowCubeMapTexture[i] = NULL;
-		for (int j = 0; j < 6; j++) {
-			ShadowCubeMapSurface[i][j] = NULL;
-			ShadowCubeMapDepthSurface[i][j] = NULL;
-		}
+		for (int j = 0; j < 6; j++) ShadowCubeMapSurface[i][j] = NULL;
 	}
-#if 0 // SHADOWS DISABLED: original cube-map allocation (dead reference)
-	for (int i = 0; i < 12; i++) {
-		Device->CreateCubeTexture(CubeMapSize, 1, D3DUSAGE_RENDERTARGET, D3DFMT_R32F, D3DPOOL_DEFAULT, &ShadowCubeMapTexture[i], NULL);
-		for (int j = 0; j < 6; j++) {
+	ShadowCubeMapDepthSurface = NULL;
+	if (!TheSettingManager->SettingsShadows.Point.Enabled || !CubeMapSize) return;
+	for (int i = 0; i < PointLightMax; i++) {
+		if (FAILED(Device->CreateCubeTexture(CubeMapSize, 1, D3DUSAGE_RENDERTARGET, D3DFMT_R32F, D3DPOOL_DEFAULT, &ShadowCubeMapTexture[i], NULL))) {
+			Logger::Log("ShadowManager: point cube map %d allocation FAILED (size %u)", i, CubeMapSize);
+			ShadowCubeMapTexture[i] = NULL;
+			continue;
+		}
+		for (int j = 0; j < 6; j++)
 			ShadowCubeMapTexture[i]->GetCubeMapSurface((D3DCUBEMAP_FACES)j, 0, &ShadowCubeMapSurface[i][j]);
-			Device->CreateDepthStencilSurface(CubeMapSize, CubeMapSize, D3DFMT_D24S8, D3DMULTISAMPLE_NONE, 0, true, &ShadowCubeMapDepthSurface[i][j], NULL);
-		}
 	}
-#endif // SHADOWS DISABLED
+	if (FAILED(Device->CreateDepthStencilSurface(CubeMapSize, CubeMapSize, D3DFMT_D24S8, D3DMULTISAMPLE_NONE, 0, true, &ShadowCubeMapDepthSurface, NULL))) {
+		Logger::Log("ShadowManager: point cube depth surface allocation FAILED (size %u)", CubeMapSize);
+		ShadowCubeMapDepthSurface = NULL;
+	}
 }
 
 ShadowManager::ShadowManager() {
@@ -250,13 +249,10 @@ ShadowManager::ShadowManager() {
 
 	IDirect3DDevice9* Device = TheRenderManager->device;
 	SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors = &TheSettingManager->SettingsShadows.Exteriors;
-	SettingsShadowStruct::InteriorsStruct* ShadowsInteriors = &TheSettingManager->SettingsShadows.Interiors;
-	SettingsShadowStruct::InteriorsStruct* ShadowsExteriorsPoint = &TheSettingManager->SettingsShadows.ExteriorsPoint;
 
 	InitShadowBiasConstants();
 
-	//TODO: should this setting be on it's own? choose smaller of two for now
-	UINT ShadowCubeMapSize = min(ShadowsInteriors->ShadowCubeMapSize, ShadowsExteriorsPoint->ShadowCubeMapSize);
+	UINT ShadowCubeMapSize = TheSettingManager->SettingsShadows.Point.ShadowCubeMapSize;
 
 	CurrentCell = NULL;
 	ShadowCubeMapState = ShadowCubeMapStateEnum::None;
@@ -276,7 +272,13 @@ ShadowManager::ShadowManager() {
 	CreateCubeMapSurfaces(Device, ShadowCubeMapSize);
 
 	ShadowCubeMapViewPort = { 0, 0, ShadowCubeMapSize, ShadowCubeMapSize, 0.0f, 1.0f };
-	ShadowCubeMapLights[12] = { NULL };
+	for (int i = 0; i < PointLightMax; i++) {
+		ShadowCubeMapLights[i] = NULL;
+		PointSlots[i].Light = NULL;
+		PointSlots[i].BakedLightPos = D3DXVECTOR3(0.0f, 0.0f, 0.0f);
+		PointSlots[i].Checksum = 0.0;
+		PointSlots[i].Valid = false;
+	}
 
 	ResetIntervals();
 }

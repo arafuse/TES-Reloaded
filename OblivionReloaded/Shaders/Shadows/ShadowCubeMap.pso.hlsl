@@ -1,4 +1,8 @@
-float4 TESR_ShadowCubeData : register(c0);
+// Point-light shadow cube bake PS. Stores radial distance from the light, normalized by the
+// light's far plane (radius), into the R32F cube face. Distance (not depth) storage means no
+// projection-dependent bias is needed here; the apply shader biases at sample time.
+// TESR_ShadowCubeBakeData: x = skinned flag, y = alpha flag, z = far plane (light radius).
+float4 TESR_ShadowCubeBakeData : register(c0);
 sampler2D DiffuseMap : register(s0);
 
 struct VS_OUTPUT {
@@ -14,25 +18,12 @@ struct PS_OUTPUT {
 PS_OUTPUT main(VS_OUTPUT IN) {
 	PS_OUTPUT OUT;
 
-	float4 r0;
-	float r1;
-	float len = length(IN.texcoord_0);
-
-	if (TESR_ShadowCubeData.y == 1.0f) { // Alpha is required
-		r0.rgba = tex2D(DiffuseMap, IN.texcoord_1.xy);
-		if (r0.a > 0.2f)
-			r1 = length(IN.texcoord_0) / TESR_ShadowCubeData.z;
-		else
-			discard;
-		OUT.color_0 = r1;
-		return OUT;
+	if (TESR_ShadowCubeBakeData.y == 1.0f) { // Alpha is required
+		float4 diffuse = tex2D(DiffuseMap, IN.texcoord_1.xy);
+		if (diffuse.a <= 0.2f) discard;
 	}
 
-	if (len < TESR_ShadowCubeData.z && TESR_ShadowCubeData.x == 0.0f) {
-		IN.texcoord_0.w = len * 0.157f;
-	}
-
-	OUT.color_0 = length(IN.texcoord_0) / TESR_ShadowCubeData.z;
+	OUT.color_0 = length(IN.texcoord_0.xyz) / TESR_ShadowCubeBakeData.z;
 	return OUT;
 
 };
