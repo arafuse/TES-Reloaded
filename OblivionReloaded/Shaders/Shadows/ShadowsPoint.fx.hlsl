@@ -85,7 +85,8 @@ float GetPointShadow(samplerCUBE cubeMap, float4 lightPos, float3 pixelPos)
 	float3 dir = pixelPos - lightPos.xyz;
 	float len = length(dir);
 	float dist = len / lightPos.w;
-	if (dist >= 1.0f) return 1.0f; // beyond this light's reach
+	// Beyond this light's reach, or degenerately close to it (which would make the PCF basis NaN).
+	if (dist >= 1.0f || len < 0.001f) return 1.0f;
 
 	// The cube was rendered with GetCubeFaceAtUp's swapped Z faces; negating Z here is what makes
 	// the lookup agree with it. Change one and you must change the other.
