@@ -69,12 +69,13 @@ namespace {
 		Phase_IntClassify,     // cube-map ref gathering + per-light classification (pure CPU)
 		Phase_IntCubeRender,   // cube-map face draw submission
 		Phase_IntTotal,        // whole RenderInteriorShadows
+		Phase_PointTotal,      // whole RenderPointShadows (interiors AND exteriors)
 		Phase_FrameTotal,      // exterior + interior for one frame
 		Phase_COUNT
 	};
 	const char* const ShadowPhaseNames[Phase_COUNT] = {
 		"BuildGeoItems", "Pass:Near", "Pass:Far", "Pass:Ortho", "Pass:Skin",
-		"ExtTotal", "Int:Classify", "Int:CubeRender", "IntTotal", "FrameTotal"
+		"ExtTotal", "Int:Classify", "Int:CubeRender", "IntTotal", "PointTotal", "FrameTotal"
 	};
 	// Per-frame counters: how the submission cost breaks down (draws, batches, cache hits).
 	enum ShadowCounter {
@@ -94,13 +95,18 @@ namespace {
 		Cnt_DirGroups,          // distinct instance groups formed (= unique repeated meshes)
 		Cnt_DirInstancedItems,  // items actually covered by an instanced batch (group >= min, has decl)
 		Cnt_DirFallbackItems,   // instanceable items drawn per-object anyway (group < min, or no decl)
+		// Point-light shadow cubes (unified interior/exterior path):
+		Cnt_PointCandidates,    // lights passing the candidate filter this frame
+		Cnt_PointSlotsActive,   // slots holding a light after assignment
+		Cnt_PointRebakes,       // slot cubes (re)baked this frame (6 faces each)
 		Cnt_COUNT
 	};
 	const char* const ShadowCounterNames[Cnt_COUNT] = {
 		"DrawCalls", "DrawCalls:Cube", "DrawCalls:CubeActor", "RenderCalls:Cube", "CubeActorGeo",
 		"InstancedDraws", "CubeLightsDrawn", "CubeLightsCached",
 		"Dir:TerrainDraws", "Dir:ItemsInstanced", "Dir:ItemsImmNonInst", "Dir:ItemsImmAlpha",
-		"Dir:Groups", "Dir:InstancedItems", "Dir:FallbackItems"
+		"Dir:Groups", "Dir:InstancedItems", "Dir:FallbackItems",
+		"Point:Candidates", "Point:SlotsActive", "Point:Rebakes"
 	};
 	// When true, draw/Render counters attribute to the cube/point-light path (set around its submission).
 	bool gCubeBucket = false;
@@ -255,6 +261,10 @@ ShadowManager::ShadowManager() {
 	UINT ShadowCubeMapSize = TheSettingManager->SettingsShadows.Point.ShadowCubeMapSize;
 
 	CurrentCell = NULL;
+	PointCurrentCell = NULL;
+	PointSlotsActive = 0;
+	EnableStaticMaps = false;
+	EnableStaticMapsFrameCount = 0;
 	ShadowCubeMapState = ShadowCubeMapStateEnum::None;
 	ShadowMapInstancedVertexShader = NULL;
 	InstanceVB = NULL;
@@ -1303,6 +1313,200 @@ void ShadowManager::RenderExteriorShadows() {
 	}
 }
 
+// ---------------------------------------------------------------------------------------------
+// Point-light shadows (unified interior/exterior). Up to PointLightMax lights each own a shadow
+// cube map, baked camera-relative and cached until the slot is dirtied. Nothing here is gated on
+// worldspace: interiors and exteriors run the identical path.
+// ---------------------------------------------------------------------------------------------
+
+void ShadowManager::CollectSceneLights() {
+	SceneLights.clear();
+	ShadowSceneNode* SceneNode = *(ShadowSceneNode**)kShadowSceneNode;
+	if (!SceneNode) return;
+	NiTList<ShadowSceneLight>::Entry* Entry = SceneNode->lights.start;
+	while (Entry) {
+		NiPointLight* Light = Entry->data->sourceLight;
+		if (Light) {
+			int distance = (int)Light->GetDistance(&Player->pos);
+			SceneLights.emplace_back(distance, Light);
+		}
+		Entry = Entry->next;
+	}
+	// Order nearest-first; ties keep scene-graph order. Replaces a distance-keyed std::map
+	// with back-probing collision handling (a node allocation + O(log n) probe per light).
+	std::stable_sort(SceneLights.begin(), SceneLights.end(),
+		[](const std::pair<int, NiPointLight*>& a, const std::pair<int, NiPointLight*>& b) { return a.first < b.first; });
+}
+
+// Warmup after a cell change: havok settles objects over the first frames, so the per-slot static
+// checksum is unstable until then. Rebakes run unconditionally during warmup.
+void ShadowManager::UpdateStaticMapsCounter() {
+	if (!EnableStaticMaps) {
+		if (EnableStaticMapsFrameCount < EnableStaticMapsFrameThreshold)
+			EnableStaticMapsFrameCount++;
+		else
+			EnableStaticMaps = true;
+	}
+}
+
+bool ShadowManager::PointShadowsNeeded() {
+	if (!TheSettingManager->SettingsShadows.Point.Enabled) return false;
+	if (!ShadowCubeMapTexture[0] || !ShadowCubeMapDepthSurface) return false; // allocation failed
+	if (!Player || !Player->parentCell) return false;
+	return true;
+}
+
+// A light qualifies for a cube slot if it casts, is not a magic effect light, and its radius is
+// within the configured band. Distance is checked by the caller against the (already sorted)
+// collection distance.
+bool ShadowManager::IsPointLightCandidate(NiPointLight* Light, SettingsShadowStruct::PointStruct* Settings, bool TorchOnBeltEnabled) {
+	if (!Light->CastShadows) return false;
+	if (IsLightFromMagic(Light)) return false;
+	float Radius = Light->Spec.r; // NiPointLight stores light radius in Spec.rgb
+	if (Radius < Settings->LightRadiusMin || Radius > Settings->LightRadiusMax) return false;
+	// EquipmentMode torch-on-belt: the player's carried torch (CanCarry == 2) is stowed, so its
+	// shadow would be cast from inside the player's own body.
+	if (TorchOnBeltEnabled && Light->CanCarry == 2) {
+		HighProcessEx* Process = (HighProcessEx*)Player->process;
+		if (Process && Process->OnBeltState == HighProcessEx::State::In) return false;
+	}
+	return true;
+}
+
+// Assigns candidate lights to cube slots with stability: an incumbent keeps its slot as long as it
+// is still a candidate (so its cached cube survives), empty slots take the nearest free candidates,
+// and an incumbent is only evicted by a candidate substantially nearer than it (hysteresis), which
+// stops slot thrash — and the rebake it would cost — when two lights are at similar distance.
+void ShadowManager::SelectPointLights() {
+	SettingsShadowStruct::PointStruct* Settings = &TheSettingManager->SettingsShadows.Point;
+	SettingsMainStruct::EquipmentModeStruct* EquipmentModeSettings = &TheSettingManager->SettingsMain.EquipmentMode;
+	bool TorchOnBeltEnabled = EquipmentModeSettings->Enabled && EquipmentModeSettings->TorchKey != 255;
+	int MaxSlots = Settings->LightCount;
+	if (MaxSlots > PointLightMax) MaxSlots = PointLightMax;
+	if (MaxSlots < 1) MaxSlots = 1;
+
+	CollectSceneLights();
+
+	// Candidates, nearest first. SceneLights is sorted, so the scan stops at the distance cut.
+	const int MaxCandidates = 16;
+	struct Candidate { NiPointLight* Light; float Dist; };
+	Candidate Candidates[MaxCandidates];
+	bool Taken[MaxCandidates] = { false };
+	int CandidateCount = 0;
+	for (auto& [Distance, Light] : SceneLights) {
+		if ((float)Distance > Settings->MaxDistance) break;
+		if (CandidateCount >= MaxCandidates) break;
+		if (!IsPointLightCandidate(Light, Settings, TorchOnBeltEnabled)) continue;
+		Candidates[CandidateCount].Light = Light;
+		Candidates[CandidateCount].Dist = (float)Distance;
+		CandidateCount++;
+	}
+	ProfileCount(Cnt_PointCandidates, CandidateCount);
+
+	// 1. Incumbents that are still candidates keep their slot (and their cached cube). A slot whose
+	// light is absent from this frame's candidate set is released — its NiPointLight may already be
+	// destroyed (cell unload), so the pointer must not be dereferenced again after this point.
+	for (int s = 0; s < PointLightMax; s++) {
+		if (s >= MaxSlots) { PointSlots[s].Light = NULL; PointSlots[s].Valid = false; continue; }
+		NiPointLight* Incumbent = PointSlots[s].Light;
+		if (!Incumbent) continue;
+		int Found = -1;
+		for (int c = 0; c < CandidateCount; c++) {
+			if (!Taken[c] && Candidates[c].Light == Incumbent) { Found = c; break; }
+		}
+		if (Found < 0) { PointSlots[s].Light = NULL; PointSlots[s].Valid = false; }
+		else Taken[Found] = true;
+	}
+
+	// 2. Empty slots take the nearest unclaimed candidates.
+	for (int s = 0; s < MaxSlots; s++) {
+		if (PointSlots[s].Light) continue;
+		for (int c = 0; c < CandidateCount; c++) {
+			if (Taken[c]) continue;
+			Taken[c] = true;
+			PointSlots[s].Light = Candidates[c].Light;
+			PointSlots[s].Valid = false; // new occupant: cube must be baked
+			break;
+		}
+	}
+
+	// 3. Hysteresis eviction: a still-unclaimed candidate displaces the farthest incumbent only if
+	// it is clearly nearer. Candidates are sorted, so once one fails the test no later one can pass.
+	for (int c = 0; c < CandidateCount; c++) {
+		if (Taken[c]) continue;
+		int Worst = -1;
+		float WorstDist = -1.0f;
+		for (int s = 0; s < MaxSlots; s++) {
+			if (!PointSlots[s].Light) continue;
+			float d = PointSlots[s].Light->GetDistance(&Player->pos);
+			if (d > WorstDist) { WorstDist = d; Worst = s; }
+		}
+		if (Worst < 0) break;
+		if (Candidates[c].Dist >= WorstDist * PointSlotEvictFactor) break;
+		PointSlots[Worst].Light = Candidates[c].Light;
+		PointSlots[Worst].Valid = false;
+		Taken[c] = true;
+	}
+}
+
+// Publishes each slot's light position CAMERA-RELATIVE every frame (w = the cube's far plane).
+// The apply shader reconstructs camera-relative positions too, so cube sampling needs no matrix —
+// a cached cube stays correct as the camera moves because stored radial distance is origin-invariant.
+// w == 0 marks an inactive slot for the shader.
+void ShadowManager::PublishPointLightConstants() {
+	D3DXVECTOR4* Positions = TheShaderManager->ShaderConst.ShadowMap.ShadowCastLightPosition;
+	int Active = 0;
+	for (int s = 0; s < PointLightMax; s++) {
+		NiPointLight* Light = PointSlots[s].Light;
+		if (!Light) {
+			Positions[s] = D3DXVECTOR4(0.0f, 0.0f, 0.0f, 0.0f);
+			continue;
+		}
+		NiPoint3* LightPos = &Light->m_worldTransform.pos;
+		// Carried torches use a fixed far plane: their authored radius is large and washes the
+		// cube's precision out over a range the torch never actually lights.
+		float FarPlane = Light->CanCarry ? 257.0f : Light->Spec.r;
+		Positions[s].x = LightPos->x - TheRenderManager->CameraPosition.x;
+		Positions[s].y = LightPos->y - TheRenderManager->CameraPosition.y;
+		Positions[s].z = LightPos->z - TheRenderManager->CameraPosition.z;
+		Positions[s].w = FarPlane;
+		Active++;
+	}
+	PointSlotsActive = Active;
+	ProfileCount(Cnt_PointSlotsActive, Active);
+}
+
+void ShadowManager::RenderPointShadows() {
+	PointSlotsActive = 0;
+	if (!PointShadowsNeeded()) {
+		// Publish zeroed slots so a stale set never keeps shadowing after the feature is disabled.
+		for (int s = 0; s < PointLightMax; s++) {
+			PointSlots[s].Light = NULL;
+			PointSlots[s].Valid = false;
+			TheShaderManager->ShaderConst.ShadowMap.ShadowCastLightPosition[s] = D3DXVECTOR4(0.0f, 0.0f, 0.0f, 0.0f);
+		}
+		return;
+	}
+	ScopeTimer profile(Phase_PointTotal);
+
+	// Cell change invalidates every cached cube (the whole ref set changed). Tracked separately
+	// from CurrentCell, which belongs to the exterior-only sun path.
+	if (PointCurrentCell != Player->parentCell) {
+		PointCurrentCell = Player->parentCell;
+		for (int s = 0; s < PointLightMax; s++) PointSlots[s].Valid = false;
+		EnableStaticMapsFrameCount = 0;
+		EnableStaticMaps = false;
+	}
+	UpdateStaticMapsCounter();
+
+	SelectPointLights();
+	PublishPointLightConstants();
+
+	D3DXVECTOR4* PointData = &TheShaderManager->ShaderConst.ShadowPoint.PointData;
+	PointData->y = TheSettingManager->SettingsShadows.Point.Darkness;
+	PointData->z = 1.0f / (float)TheSettingManager->SettingsShadows.Point.ShadowCubeMapSize;
+}
+
 #if 0 // SHADOWS DISABLED: dead reference — point-light cube maps, interior shadows, and the old directional exterior path (Near/Far/Skin + interval). Replaced by the ortho-only RenderExteriorShadows above.
 void ShadowManager::RenderShadowCubeMapExt(NiPointLight** Lights, int LightIndex, float radiusScan, SettingsShadowStruct::InteriorsStruct* ShadowSettings, D3DXVECTOR4* ShadowData) {
 	double StaticValues[12] = { 0 };
@@ -1609,7 +1813,7 @@ void ShadowManager::RenderShadowMaps() {
 	{
 		ScopeTimer profile(Phase_FrameTotal);
 		RenderExteriorShadows();
-		// RenderInteriorShadows(); // SHADOWS DISABLED: interior/point-light path dummied out
+		RenderPointShadows(); // unified point-light cubes: runs in interiors AND exteriors
 	}
 	Device->SetDepthStencilSurface(DepthSurface);
 	ShadowProfileFrameEnd();
@@ -1783,13 +1987,10 @@ void ShadowManager::LoadShadowLightPointSettings() {
 	}
 }
 
-#if 0 // SHADOWS DISABLED: dead reference — point-light magic test (unused by ortho path)
 bool ShadowManager::IsLightFromMagic(NiPointLight* light) {
 	//TODO: a better way to check this
 	return light->m_parent && strstr(light->m_parent->m_pcName, "agic") != NULL;
 }
-
-#endif // SHADOWS DISABLED
 
 void ShadowManager::SetupGeoStreams(NiGeometryBufferData* GeoData) {
 	IDirect3DDevice9* Device = TheRenderManager->device;
@@ -2132,31 +2333,6 @@ void ShadowManager::HandleCellChange() {
 	EnableStaticMaps = false;
 }
 
-void ShadowManager::UpdateStaticMapsCounter() {
-	if (!EnableStaticMaps) {
-		if (EnableStaticMapsFrameCount < EnableStaticMapsFrameThreshold)
-			EnableStaticMapsFrameCount++;
-		else
-			EnableStaticMaps = true;
-	}
-}
-
-void ShadowManager::CollectSceneLights() {
-	SceneLights.clear();
-	ShadowSceneNode* SceneNode = *(ShadowSceneNode**)kShadowSceneNode;
-	NiTList<ShadowSceneLight>::Entry* Entry = SceneNode->lights.start;
-	while (Entry) {
-		NiPointLight* Light = Entry->data->sourceLight;
-		int distance = (int)Light->GetDistance(&Player->pos);
-		SceneLights.emplace_back(distance, Light);
-		Entry = Entry->next;
-	}
-	// Order nearest-first; ties keep scene-graph order. Replaces a distance-keyed std::map
-	// with back-probing collision handling (a node allocation + O(log n) probe per light).
-	std::stable_sort(SceneLights.begin(), SceneLights.end(),
-		[](const std::pair<int, NiPointLight*>& a, const std::pair<int, NiPointLight*>& b) { return a.first < b.first; });
-}
-
 bool ShadowManager::CategorizeSceneLight(NiPointLight* Light, int& shadowCastIndex, int& shadowCullIndex, NiPointLight** ShadowCastLights, NiPointLight** ShadowCullLights, SettingsShadowPointLightsStruct* ShadowSettings, bool CastShadow) {
 	if (IsLightFromMagic(Light) && shadowCullIndex < (ShadowSettings->iShadowCullLightPoints - 1)) {
 		Light->CanCarry = 1;
@@ -2191,15 +2367,9 @@ static __declspec(naked) void RenderShadowMapHook() {
 
 void AddCastShadowFlag(TESObjectREFR* Ref, TESObjectLIGH* Light, NiPointLight* LightPoint) {
 
-	SettingsShadowStruct::InteriorsStruct* ShadowSettings;
+	// Unified [Point] settings: torches behave the same in interiors and exteriors.
+	SettingsShadowStruct::PointStruct* ShadowSettings = &TheSettingManager->SettingsShadows.Point;
 	SettingsMainStruct::EquipmentModeStruct* EquipmentModeSettings = &TheSettingManager->SettingsMain.EquipmentMode;
-
-	if (Player->GetWorldSpace()) {
-		ShadowSettings = &TheSettingManager->SettingsShadows.ExteriorsPoint;
-	}
-	else {
-		ShadowSettings = &TheSettingManager->SettingsShadows.Interiors;
-	}
 
 	if (Light->lightFlags & TESObjectLIGH::LightFlags::kLightFlags_CanCarry) {
 		LightPoint->CastShadows = ShadowSettings->TorchesCastShadows;
