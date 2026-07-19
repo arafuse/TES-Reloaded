@@ -76,6 +76,12 @@ public:
 	void					RenderExteriorShadows();
 	bool					OrthoNeeded();
 	bool					SunShadowNeeded();
+	// --- Point-light cube shadows (unified interior/exterior) ---
+	void					RenderPointShadows();
+	bool					PointShadowsNeeded();
+	bool					IsPointLightCandidate(NiPointLight* Light, SettingsShadowStruct::PointStruct* Settings, bool TorchOnBeltEnabled);
+	void					SelectPointLights();
+	void					PublishPointLightConstants();
 	void					RenderInteriorShadows();
 	void					RenderShadowMaps();
 	void					ClearShadowMap(IDirect3DDevice9* Device);
@@ -187,6 +193,11 @@ public:
 		bool			Valid;			// false => cube must be (re)baked
 	};
 	PointLightSlot			PointSlots[PointLightMax];
+	int						PointSlotsActive;	// slots holding a light after this frame's selection
+	TESObjectCELL*			PointCurrentCell;	// cell tracked by the point path (CurrentCell is the sun path's)
+	// A candidate must be this much nearer than an incumbent to take its slot. Hysteresis: without
+	// it, two lights at similar distance swap slots frame to frame and rebake both cubes each time.
+	static constexpr float	PointSlotEvictFactor = 0.8f;
 
 	//TEXTURES
 	IDirect3DCubeTexture9*	ShadowCubeMapTexture[PointLightMax];
