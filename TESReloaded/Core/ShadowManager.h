@@ -18,12 +18,6 @@ public:
 	// sampler slots in ShadowsPoint.fx, TESR_ShadowLightPosition0..N-1 constants).
 	// [Point] LightCount can lower the active count at runtime but never exceed this.
 	static const int PointLightMax = 4;
-	enum ShadowCubeMapStateEnum {
-		None		   = 0,
-		Exterior	   = 1,
-		Exterior_Night = 2,
-		Interior	   = 3
-	};
 	enum PlaneEnum {
 		PlaneNear	= 0,
 		PlaneFar	= 1,
@@ -55,24 +49,15 @@ public:
 	void					GetFrustumPlanes(D3DXPLANE* Frustum, D3DXMATRIX* Matrix);
 	bool					InFrustum(D3DXPLANE* Frustum, NiGeometry* Geo);
 	TESObjectREFR*			GetRef(TESObjectREFR* Ref, SettingsShadowStruct::FormsStruct* Forms, SettingsShadowStruct::ExcludedFormsList* ExcludedForms);
-	TESObjectREFR*			GetRefO(TESObjectREFR* Ref);
 	void					AddInstance(NiGeometryBufferData* GeoData, int ItemIndex);
 	IDirect3DVertexDeclaration9* GetInstancedDeclaration(NiGeometryBufferData* GeoData);
 	bool					EnsureInstanceVB(UINT InstanceCount);
 	void					DrawInstancedGroup(NiGeometryBufferData* GeoData, std::vector<int>& ItemIdx, IDirect3DVertexDeclaration9* Decl);
 	void					FlushInstanceGroups(D3DXVECTOR4* ShadowData);
-	void					RenderObjectPoint(NiAVObject* Node, D3DXVECTOR4* ShadowData, bool HasWater);
 	void					CollectCubeMapGeometry(NiAVObject* Object, std::vector<NiGeometry*>& Out);
-	void					RenderObjectPointActor(NiAVObject* Node, D3DXVECTOR4* ShadowData, bool HasWater, int lightIndex);
 	void					RenderTerrain(NiAVObject* Object, ShadowMapTypeEnum ShadowMapType, D3DXVECTOR4* ShadowData);
 	void					Render(NiGeometry* Geo, D3DXVECTOR4* ShadowData, const D3DMATRIX* PrecomputedWorld = NULL);
-	void					RenderActor(NiGeometry* Geo, D3DXVECTOR4* ShadowData, int lightIndex);
 	void					RenderShadowMap(ShadowMapTypeEnum ShadowMapType, SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors, D3DXVECTOR3* At, D3DXVECTOR4* SunDir, D3DXVECTOR4* ShadowData, bool SkipTerrain = false);
-	void					RenderShadowCubeMapExt(NiPointLight** Lights, int LightIndex, float radiusLimit, SettingsShadowStruct::InteriorsStruct* ShadowsExteriors, D3DXVECTOR4* ShadowData);
-	void					RenderShadowCubeMapInt(NiPointLight** Lights, int LightIndex, float radiusLimit, SettingsShadowStruct::InteriorsStruct* ShadowsInteriors, D3DXVECTOR4* ShadowData);
-	void                    RenderShadowCubeMapFakeInt(int LightIndex, SettingsShadowStruct::InteriorsStruct* ShadowsInteriors, D3DXVECTOR4* ShadowData);
-	void                    RenderShadowCubeMap(int LightIndex, std::vector<NiNode*>* refMap, D3DXVECTOR4* ShadowData, bool enabled);
-	void                    RenderShadowCubeMapActor(int LightIndex, std::vector<NiNode*>* refMap, D3DXVECTOR4* ShadowData, bool enabled);
 	void					RenderExteriorShadows();
 	bool					OrthoNeeded();
 	bool					SunShadowNeeded();
@@ -87,24 +72,8 @@ public:
 	void					ClassifyRefForPointSlot(const RefLightInfo& Info, int Slot, double* Checksums);
 	bool					PointSlotNeedsRebake(int Slot, double Checksum);
 	void					BakePointCube(int Slot);
-	void					RenderInteriorShadows();
 	void					RenderShadowMaps();
-	void					ClearShadowMap(IDirect3DDevice9* Device);
-	void					ClearShadowCubeMaps(IDirect3DDevice9* Device, int From, ShadowCubeMapStateEnum NewState);
-	void					ClearShadowCubeMaps(IDirect3DDevice9* Device, int LightIndex);
-	void					ClearShadowCubeLightRegister(int From);
-	void					ClearShadowCubeLightCullRegister(int From);
-	void					ClearGeneralPointLightRegister(int From);
-	int                     GetShadowSceneLights(NiPointLight** ShadowCastLights, NiPointLight** ShadowCullLights, NiPointLight** GeneralPointLights, int& ShadowCastLightIndex, int& ShadowCullLightIndex, int& GeneralPointLightIndex, SettingsShadowPointLightsStruct* ShadowSettings);
-	void                    SetAllShadowCastLightPos(NiPointLight** Lights, int LightIndex);
-	void                    SetShadowCastLightPos(NiPointLight** Lights, int index);
-	void                    SetAllShadowCullLightPos(NiPointLight** Lights, int LightIndex);
-	void                    SetShadowCullLightPos(NiPointLight** Lights, int index);
-	void					SetAllGeneralLightPos(NiPointLight** Lights, int LightIndex);
-	void					SetGeneralLightPos(NiPointLight** Lights, int index);
-	void                    SetShadowCubeMapRegisters(int index);
 	void					ResetIntervals();
-	void					LoadShadowLightPointSettings();
 	bool					IsLightFromMagic(NiPointLight* Light);
 
 	// --- Helpers ---
@@ -114,9 +83,6 @@ public:
 	void					SetupSpeedTreeLeafShader(NiGeometry* Geo, D3DXVECTOR4* ShadowData);
 	void					SetupAlphaTexture(NiGeometry* Geo, BSShaderProperty* LProp, D3DXVECTOR4* ShadowData);
 	void					RenderSkinnedGeo(NiGeometry* Geo, D3DXVECTOR4* ShadowData);
-	void					RenderActorFaces(NiGeometryBufferData* GeoData, D3DPRIMITIVETYPE PrimitiveType, UINT VertCount, int lightIndex);
-	void					RenderActorSkinnedGeo(NiGeometry* Geo, D3DXVECTOR4* ShadowData, int lightIndex);
-	void					ComputeCubeFaceFrusta(int lightIndex);
 	void					SetupShadowMapMatrices(ShadowMapTypeEnum ShadowMapType, SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors, D3DXVECTOR3* At, D3DXVECTOR4* ShadowLightDir);
 	void					SetupCachedRegionMatrices(ShadowMapTypeEnum ShadowMapType, SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors, D3DXVECTOR4* SunDir);
 	void					PublishCachedRegionSampleMatrix(ShadowMapTypeEnum ShadowMapType);
@@ -128,22 +94,15 @@ public:
 	void					CollectExteriorGeo(NiAVObject* Object, bool HasWater, ShadowMapTypeEnum ShadowMapType, bool IsActorRef);
 	void					SetupCubeMapRenderState();
 	RefLightInfo			BuildRefLightInfo(TESObjectREFR* Ref);
-	void					ClassifyRefForLight(const RefLightInfo& Info, NiPointLight** Lights, int L, float radiusScan, std::vector<NiNode*>* refMap, std::vector<NiNode*>* actorMap, double* StaticValues, bool* forceRedrawMap);
 	void					ClearCubeMapNodeLists();
-	void					UpdateStaticTrackers(int LightIndex, double* StaticValues, bool* forceRedrawMap);
 	SettingsShadowStruct::ExteriorsStruct* SelectExteriorShadowSettings();
 	void					ComputeExteriorLookAt(D3DXVECTOR3& At, D3DXVECTOR3& SkinAt, SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors);
-	void					AdjustShadowLightDir(D3DXVECTOR4*& ShadowLightDir);
-	bool					UpdateShadowLightDirInterval(D3DXVECTOR4* ShadowLightDir, D3DXVECTOR4& ShadowLightDirInterval);
-	SettingsShadowStruct::InteriorsStruct* SelectInteriorShadowSettings();
-	void					HandleCellChange();
 	void					UpdateStaticMapsCounter();
 	void					InitShadowBiasConstants();
 	void					LoadShadowShaders(IDirect3DDevice9* Device);
 	void					CreateShadowMapSurfaces(IDirect3DDevice9* Device, SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors);
 	void					CreateCubeMapSurfaces(IDirect3DDevice9* Device, UINT CubeMapSize);
 	void					CollectSceneLights();
-	bool					CategorizeSceneLight(NiPointLight* Light, int& shadowCastIndex, int& shadowCullIndex, NiPointLight** ShadowCastLights, NiPointLight** ShadowCullLights, SettingsShadowPointLightsStruct* ShadowSettings, bool CastShadow);
 
 	IDirect3DTexture9*		ShadowMapTexture[4];
 	IDirect3DSurface9*		ShadowMapSurface[4];
@@ -222,18 +181,6 @@ public:
 
 	//MISC
 	D3DVIEWPORT9			ShadowCubeMapViewPort;
-	NiPointLight*			ShadowCubeMapLights[PointLightMax];
-	// Per-face cube view-projection + frustum, precomputed once per light in the actor path so
-	// each actor geo can be culled to the 1-2 faces it actually overlaps instead of being drawn
-	// to all 6 unconditionally. CubeActorFaceVisible is the per-geo result reused across the
-	// geo's skin partitions (all partitions share the geo's world bound).
-	D3DXMATRIX				CubeFaceViewProj[6];
-	D3DXPLANE				CubeFaceFrustum[6][6];
-	bool					CubeActorFaceVisible[6];
-	int                     ShadowCubeLightCount;
-	int						ShadowCubeCullLightCount;
-	double					ShadowCubeMapStaticValue[PointLightMax];
-	bool					ShadowCubeMapStaticTracker[PointLightMax];
 	bool					EnableStaticMaps;
 	int						EnableStaticMapsFrameCount;
 	int						EnableStaticMapsFrameThreshold = 30;
@@ -243,19 +190,9 @@ public:
 	ShaderRecord*			CurrentVertex;
 	ShaderRecord*			CurrentPixel;
 	TESObjectCELL*			CurrentCell;
-	ShadowCubeMapStateEnum	ShadowCubeMapState;
 	bool					AlphaEnabled;
-	bool					FakeExtShadowLightDirSet;
-	int						FakeExtShadowLightDirCnt;
-	D3DXVECTOR4				FakeExtShadowLightDir;
-	D3DXVECTOR4				ShadowLightDirOld;
-	D3DXVECTOR4				ShadowLightDirNew;
-	bool					UpdateShadowLightDir;
-	float					UpdateTargetTime;
 	D3DXVECTOR3				LookAtPosition;
-	int						GeneralPointLightCount;
 	float					GameTime;
-	SettingsShadowPointLightsStruct* ShadowLightPointSettings;
 
 	// Reusable per-light node lists for cube map passes, cleared each frame
 	// instead of allocating fresh std::map<int, std::vector> containers every frame.
