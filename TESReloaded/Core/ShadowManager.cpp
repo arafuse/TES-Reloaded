@@ -69,13 +69,16 @@ namespace {
 		Phase_IntClassify,     // cube-map ref gathering + per-light classification (pure CPU)
 		Phase_IntCubeRender,   // cube-map face draw submission
 		Phase_IntTotal,        // whole RenderInteriorShadows
+		Phase_PointClassify,   // point-light ref walk + per-slot classification (pure CPU)
+		Phase_PointBake,       // point-light cube face draw submission
 		Phase_PointTotal,      // whole RenderPointShadows (interiors AND exteriors)
 		Phase_FrameTotal,      // exterior + interior for one frame
 		Phase_COUNT
 	};
 	const char* const ShadowPhaseNames[Phase_COUNT] = {
 		"BuildGeoItems", "Pass:Near", "Pass:Far", "Pass:Ortho", "Pass:Skin",
-		"ExtTotal", "Int:Classify", "Int:CubeRender", "IntTotal", "PointTotal", "FrameTotal"
+		"ExtTotal", "Int:Classify", "Int:CubeRender", "IntTotal",
+		"Point:Classify", "Point:Bake", "PointTotal", "FrameTotal"
 	};
 	// Per-frame counters: how the submission cost breaks down (draws, batches, cache hits).
 	enum ShadowCounter {
@@ -364,7 +367,6 @@ void ShadowManager::GetShadowFrustum(ShadowMapTypeEnum ShadowMapType, D3DMATRIX*
 
 }
 
-#if 0 // SHADOWS DISABLED: dead reference — cube/point-light frustum helpers (unused by ortho path)
 void ShadowManager::GetFrustumPlanes(D3DXPLANE* Frustum, D3DXMATRIX* Matrix) {
 
 	Frustum[PlaneNear].a   = Matrix->_13;
@@ -398,15 +400,6 @@ void ShadowManager::GetFrustumPlanes(D3DXPLANE* Frustum, D3DXMATRIX* Matrix) {
 
 }
 
-// 6-plane containment for a precomputed camera-relative bound (center + radius) against an
-// arbitrary normalized frustum. Same test as InFrustum but takes the bound directly, so the
-// per-light face frustums can be reused across an actor's skin partitions.
-static bool BoundInFrustum6(const D3DXPLANE* Frustum, const D3DXVECTOR3& Center, float Radius) {
-	for (int i = 0; i < 6; ++i)
-		if (D3DXPlaneDotCoord(&Frustum[i], &Center) <= -Radius) return false;
-	return true;
-}
-
 bool ShadowManager::InFrustum(D3DXPLANE* Frustum, NiGeometry* Geo) {
 
 	NiBound* Bound = Geo->GetWorldBound();
@@ -419,8 +412,6 @@ bool ShadowManager::InFrustum(D3DXPLANE* Frustum, NiGeometry* Geo) {
 	return true;
 
 }
-
-#endif // SHADOWS DISABLED
 
 // True if the form type can ever cast shadows (independent of the per-map-type Forms filter).
 static bool IsShadowCastableType(UInt8 TypeID) {
@@ -457,7 +448,6 @@ static bool FormsAllows(SettingsShadowStruct::FormsStruct* Forms, UInt8 TypeID) 
 	}
 }
 
-#if 0 // SHADOWS DISABLED: dead reference — cube/point-light ref filters (unused by ortho path)
 TESObjectREFR* ShadowManager::GetRef(TESObjectREFR* Ref, SettingsShadowStruct::FormsStruct* Forms, SettingsShadowStruct::ExcludedFormsList* ExcludedForms) {
 
 	if (Ref && Ref->GetNode()) {
@@ -471,19 +461,6 @@ TESObjectREFR* ShadowManager::GetRef(TESObjectREFR* Ref, SettingsShadowStruct::F
 
 }
 
-TESObjectREFR* ShadowManager::GetRefO(TESObjectREFR* Ref) {
-
-	TESObjectREFR* r = NULL;
-
-	if (Ref && Ref->GetNode()) {
-		UInt8 TypeID = Ref->baseForm->formType;
-		if (TypeID == TESForm::FormType::kFormType_Stat) r = Ref;
-	}
-	return r;
-
-}
-
-#endif // SHADOWS DISABLED
 
 bool ShadowManager::InShadowFrustum(ShadowMapTypeEnum ShadowMapType, NiAVObject* Object) {
 
@@ -554,44 +531,18 @@ bool ShadowManager::LeafInShadowFrustum(ShadowMapTypeEnum ShadowMapType, const D
 	return true;
 }
 
-#if 0 // SHADOWS DISABLED: dead reference — cube/point-light scene-graph collectors (unused by ortho path)
-void ShadowManager::RenderObjectPoint(NiAVObject* Object, D3DXVECTOR4* ShadowData, bool HasWater) {
+// Flattens a ref's scene graph into renderable leaves for a cube bake. Both statics and actors go
+// through this: a cube bake redraws everything it contains, so there is no reason to split them at
+// draw time (the split exists only during classification, where actors use a wider radius).
+// No water z-cull: submerged casters cast, matching the sun path (submerged-casters fix).
+void ShadowManager::CollectCubeMapGeometry(NiAVObject* Object, std::vector<NiGeometry*>& Out) {
 
 	if (Object && !(Object->m_flags & NiAVObject::kFlag_AppCulled)) {
 		void* VFT = *(void**)Object;
-		if (VFT == VFTNiNode || VFT == VFTBSFadeNode || VFT == VFTBSFaceGenNiNode || VFT == VFTBSTreeNode) {
+		if (VFT == VFTNiNode || VFT == VFTBSFadeNode || VFT == VFTBSFaceGenNiNode || VFT == VFTBSTreeNode || VFT == VFTNiLODNode) {
 			NiNode* Node = (NiNode*)Object;
 			for (int i = 0; i < Node->m_children.end; i++) {
-				RenderObjectPoint(Node->m_children.data[i], ShadowData, HasWater);
-			}
-		}
-		else if (VFT == VFTNiTriShape || VFT == VFTNiTriStrips) {
-			NiGeometry* Geo = (NiGeometry*)Object;
-			if (Geo->shader) {
-				if (Geo->skinInstance || !HasWater || (HasWater && Geo->GetWorldBound()->Center.z > TheShaderManager->ShaderConst.Water.waterSettings.x)) {
-					NiGeometryBufferData* GeoData = Geo->geomData->BuffData;
-					if (GeoData) {
-						Render(Geo, ShadowData);
-					}
-					else if (Geo->skinInstance && Geo->skinInstance->SkinPartition && Geo->skinInstance->SkinPartition->Partitions) {
-						GeoData = Geo->skinInstance->SkinPartition->Partitions[0].BuffData;
-						if (GeoData) Render(Geo, ShadowData);
-					}
-				}
-			}
-		}
-	}
-
-}
-
-void ShadowManager::CollectCubeMapGeometry(NiAVObject* Object, bool HasWater, std::vector<NiGeometry*>& Out) {
-
-	if (Object && !(Object->m_flags & NiAVObject::kFlag_AppCulled)) {
-		void* VFT = *(void**)Object;
-		if (VFT == VFTNiNode || VFT == VFTBSFadeNode || VFT == VFTBSFaceGenNiNode || VFT == VFTBSTreeNode) {
-			NiNode* Node = (NiNode*)Object;
-			for (int i = 0; i < Node->m_children.end; i++) {
-				CollectCubeMapGeometry(Node->m_children.data[i], HasWater, Out);
+				CollectCubeMapGeometry(Node->m_children.data[i], Out);
 			}
 		}
 		else if (VFT == VFTNiTriShape || VFT == VFTNiTriStrips) {
@@ -599,50 +550,17 @@ void ShadowManager::CollectCubeMapGeometry(NiAVObject* Object, bool HasWater, st
 			// Torch geometry is skipped by Render() anyway; drop it once here instead of
 			// re-testing the name (and re-entering Render) for every one of the 6 cube faces.
 			if (Geo->shader && !(Geo->m_pcName && !memcmp(Geo->m_pcName, "Torch", 5))) {
-				if (Geo->skinInstance || !HasWater || (HasWater && Geo->GetWorldBound()->Center.z > TheShaderManager->ShaderConst.Water.waterSettings.x)) {
-					if (Geo->geomData->BuffData) {
-						Out.emplace_back(Geo);
-					}
-					else if (Geo->skinInstance && Geo->skinInstance->SkinPartition && Geo->skinInstance->SkinPartition->Partitions) {
-						if (Geo->skinInstance->SkinPartition->Partitions[0].BuffData) Out.emplace_back(Geo);
-					}
+				if (Geo->geomData->BuffData) {
+					Out.emplace_back(Geo);
+				}
+				else if (Geo->skinInstance && Geo->skinInstance->SkinPartition && Geo->skinInstance->SkinPartition->Partitions) {
+					if (Geo->skinInstance->SkinPartition->Partitions[0].BuffData) Out.emplace_back(Geo);
 				}
 			}
 		}
 	}
 
 }
-
-void ShadowManager::RenderObjectPointActor(NiAVObject* Object, D3DXVECTOR4* ShadowData, bool HasWater, int lightIndex) {
-
-	if (Object && !(Object->m_flags & NiAVObject::kFlag_AppCulled)) {
-		void* VFT = *(void**)Object;
-		if (VFT == VFTNiNode || VFT == VFTBSFadeNode || VFT == VFTBSFaceGenNiNode || VFT == VFTBSTreeNode) {
-			NiNode* Node = (NiNode*)Object;
-			for (int i = 0; i < Node->m_children.end; i++) {
-				RenderObjectPointActor(Node->m_children.data[i], ShadowData, HasWater, lightIndex);
-			}
-		}
-		else if (VFT == VFTNiTriShape || VFT == VFTNiTriStrips) {
-			NiGeometry* Geo = (NiGeometry*)Object;
-			if (Geo->shader) {
-				if (Geo->skinInstance || !HasWater || (HasWater && Geo->GetWorldBound()->Center.z > TheShaderManager->ShaderConst.Water.waterSettings.x)) {
-					NiGeometryBufferData* GeoData = Geo->geomData->BuffData;
-					if (GeoData) {
-						RenderActor(Geo, ShadowData, lightIndex);
-					}
-					else if (Geo->skinInstance && Geo->skinInstance->SkinPartition && Geo->skinInstance->SkinPartition->Partitions) {
-						GeoData = Geo->skinInstance->SkinPartition->Partitions[0].BuffData;
-						if (GeoData) RenderActor(Geo, ShadowData, lightIndex);
-					}
-				}
-			}
-		}
-	}
-
-}
-
-#endif // SHADOWS DISABLED
 
 void ShadowManager::RenderTerrain(NiAVObject* Object, ShadowMapTypeEnum ShadowMapType, D3DXVECTOR4* ShadowData) {
 
@@ -1476,6 +1394,157 @@ void ShadowManager::PublishPointLightConstants() {
 	ProfileCount(Cnt_PointSlotsActive, Active);
 }
 
+void ShadowManager::ClearCubeMapNodeLists() {
+	for (int i = 0; i < PointLightMax; i++) {
+		CubeMapRefMap[i].clear();
+		CubeMapActorMap[i].clear();
+	}
+}
+
+ShadowManager::RefLightInfo ShadowManager::BuildRefLightInfo(TESObjectREFR* Ref) {
+	RefLightInfo Info;
+	Info.Node = Ref->GetNode();
+	UInt8 TypeID = Ref->baseForm->formType;
+	Info.IsActorType = (TypeID >= TESForm::FormType::kFormType_NPC && TypeID <= TESForm::FormType::kFormType_LeveledCreature);
+	Info.BoundRadius = Info.Node->GetWorldBoundRadius();
+	NiBound* B = Ref->niNode->GetWorldBound();
+	// Quantized to whole units: an idle NPC's bound center jitters continuously under its
+	// breathing animation, and an exact sum would report the scene as changed every frame,
+	// rebaking every cube forever. Whole units still catch any movement that shifts a shadow.
+	Info.CenterSum = std::floor(B->Center.x) + std::floor(B->Center.y) + std::floor(B->Center.z);
+	Info.IsPlayer = (Ref->refID == Player->refID);
+	return Info;
+}
+
+// Tests one ref against one slot's light and files it under statics or actors. Actors (and any
+// carried light) get a wider radius because they move: a caster just outside the strict radius
+// can step inside it before the next rebake.
+void ShadowManager::ClassifyRefForPointSlot(const RefLightInfo& Info, int Slot, double* Checksums) {
+	NiPointLight* Light = PointSlots[Slot].Light;
+	NiPoint3* LightPos = &Light->m_worldTransform.pos;
+	float FarPlane = TheShaderManager->ShaderConst.ShadowMap.ShadowCastLightPosition[Slot].w;
+	float Radius = (Light->CanCarry || Info.IsActorType) ? FarPlane * 1.2f : FarPlane;
+
+	if (Info.Node->GetDistance(LightPos) - Info.BoundRadius > Radius) return;
+	if (Info.IsActorType) {
+		// The player's own carried torch would shadow the player from inside their own mesh.
+		if (Info.IsPlayer && Light->CanCarry) return;
+		CubeMapActorMap[Slot].emplace_back(Info.Node);
+	}
+	else {
+		CubeMapRefMap[Slot].emplace_back(Info.Node);
+	}
+	Checksums[Slot] += Info.CenterSum;
+}
+
+void ShadowManager::ClassifyCellForPointSlots(TESObjectCELL* Cell, double* Checksums) {
+	if (!Cell) return;
+	SettingsShadowStruct::PointStruct* Settings = &TheSettingManager->SettingsShadows.Point;
+	TList<TESObjectREFR>::Entry* Entry = &Cell->objectList.First;
+	while (Entry) {
+		if (TESObjectREFR* Ref = GetRef(Entry->item, &Settings->Forms, &Settings->ExcludedForms)) {
+			RefLightInfo Info = BuildRefLightInfo(Ref);
+			for (int s = 0; s < PointLightMax; s++)
+				if (PointSlots[s].Light) ClassifyRefForPointSlot(Info, s, Checksums);
+		}
+		Entry = Entry->next;
+	}
+}
+
+// The ONLY place the point path distinguishes interiors from exteriors: which ref list to walk.
+// Everything downstream (classification, baking, applying) is identical.
+void ShadowManager::BuildPointGeoLists(double* Checksums) {
+	ClearCubeMapNodeLists();
+	if (Player->GetWorldSpace()) {
+		for (UInt32 x = 0; x < *SettingGridsToLoad; x++)
+			for (UInt32 y = 0; y < *SettingGridsToLoad; y++)
+				ClassifyCellForPointSlots(Tes->gridCellArray->GetCell(x, y), Checksums);
+	}
+	else {
+		ClassifyCellForPointSlots(Player->parentCell, Checksums);
+	}
+}
+
+void ShadowManager::SetupCubeMapRenderState() {
+	IDirect3DDevice9* Device = TheRenderManager->device;
+	NiDX9RenderState* RenderState = TheRenderManager->renderState;
+	RenderState->SetRenderState(D3DRS_ZENABLE, D3DZB_TRUE, RenderStateArgs);
+	RenderState->SetRenderState(D3DRS_ZWRITEENABLE, 1, RenderStateArgs);
+	RenderState->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE, RenderStateArgs);
+	RenderState->SetRenderState(D3DRS_ALPHABLENDENABLE, 0, RenderStateArgs);
+	Device->SetViewport(&ShadowCubeMapViewPort);
+	RenderState->SetVertexShader(ShadowCubeMapVertexShader, false);
+	RenderState->SetPixelShader(ShadowCubeMapPixelShader, false);
+}
+
+// A slot's cached cube is reused unless something it depends on changed.
+bool ShadowManager::PointSlotNeedsRebake(int Slot, double Checksum) {
+	PointLightSlot& Slot_ = PointSlots[Slot];
+	if (!Slot_.Valid) return true;          // never baked, or reassigned to a different light
+	if (!EnableStaticMaps) return true;     // post-cell-change warmup: havok still settling
+	NiPoint3* P = &Slot_.Light->m_worldTransform.pos;
+	D3DXVECTOR3 Pos(P->x, P->y, P->z);
+	// Covers carried torches without special-casing them: a moving light is simply a moved light.
+	if (D3DXVec3Length(&(Pos - Slot_.BakedLightPos)) > PointLightMoveEpsilon) return true;
+	return Checksum != Slot_.Checksum;      // a caster within reach moved
+}
+
+// Renders one slot's shadow cube: 6 perspective faces from the light, storing normalized radial
+// distance. Statics and actors are drawn together per face so the single shared depth-stencil is
+// valid throughout (a separate later actor pass would have lost each face's depth).
+void ShadowManager::BakePointCube(int Slot) {
+	IDirect3DDevice9* Device = TheRenderManager->device;
+	D3DXVECTOR4* BakeData = &TheShaderManager->ShaderConst.ShadowPoint.BakeData;
+	D3DXVECTOR4* LightPos = &TheShaderManager->ShaderConst.ShadowMap.ShadowCastLightPosition[Slot];
+	ProfileCount(Cnt_PointRebakes);
+
+	// Cube bakes are camera-relative (matching the skinned bone path, which always is).
+	CollectWorldSpace = false;
+	CurrentVertex = ShadowCubeMapVertex;
+	CurrentPixel = ShadowCubeMapPixel;
+	AlphaEnabled = TheSettingManager->SettingsShadows.Point.AlphaEnabled;
+	TheShaderManager->ShaderConst.ShadowMap.ShadowCubeMapLightPosition = *LightPos;
+	BakeData->z = LightPos->w; // far plane: the PS normalizes distance by this
+
+	// Flatten the scene graph once and reuse across all 6 faces, with world matrices precomputed
+	// (they don't vary per face). Skinned geometry gets NULL here and resolves inside Render().
+	CubeMapGeoList.clear();
+	for (NiNode* RefNode : CubeMapRefMap[Slot]) CollectCubeMapGeometry(RefNode, CubeMapGeoList);
+	for (NiNode* RefNode : CubeMapActorMap[Slot]) CollectCubeMapGeometry(RefNode, CubeMapGeoList);
+	CubeMapGeoWorld.resize(CubeMapGeoList.size());
+	for (size_t g = 0; g < CubeMapGeoList.size(); g++)
+		CreateD3DMatrix(&CubeMapGeoWorld[g], &CubeMapGeoList[g]->m_worldTransform);
+
+	D3DXMATRIX Proj, View;
+	D3DXMatrixPerspectiveFovRH(&Proj, D3DXToRadian(90.0f), 1.0f, 1.0f, LightPos->w);
+	D3DXVECTOR3 Eye(LightPos->x, LightPos->y, LightPos->z);
+
+	for (int Face = 0; Face < 6; Face++) {
+		D3DXVECTOR3 At = Eye, Up;
+		GetCubeFaceAtUp(Face, At, Up);
+		D3DXMatrixLookAtRH(&View, &Eye, &At, &Up);
+		TheShaderManager->ShaderConst.ShadowMap.ShadowViewProj = View * Proj;
+		Device->SetDepthStencilSurface(ShadowCubeMapDepthSurface);
+		Device->SetRenderTarget(0, ShadowCubeMapSurface[Slot][Face]);
+		// Clear to 1.0 = "nothing occludes out to the far plane"; the apply reads distances < 1.
+		Device->Clear(0L, NULL, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, D3DXCOLOR(1.0f, 1.0f, 1.0f, 1.0f), 1.0f, 0L);
+		if (CubeMapGeoList.empty()) continue;
+
+		D3DXPLANE Frustum[6];
+		GetFrustumPlanes(Frustum, &TheShaderManager->ShaderConst.ShadowMap.ShadowViewProj);
+		Device->BeginScene();
+		SetupCubeMapRenderState();
+		for (size_t g = 0; g < CubeMapGeoList.size(); g++)
+			if (InFrustum(Frustum, CubeMapGeoList[g])) Render(CubeMapGeoList[g], BakeData, &CubeMapGeoWorld[g]);
+		Device->EndScene();
+	}
+
+	// Record what this cube was baked against, so the next frame can tell whether it is stale.
+	NiPoint3* P = &PointSlots[Slot].Light->m_worldTransform.pos;
+	PointSlots[Slot].BakedLightPos = D3DXVECTOR3(P->x, P->y, P->z);
+	PointSlots[Slot].Valid = true;
+}
+
 void ShadowManager::RenderPointShadows() {
 	PointSlotsActive = 0;
 	if (!PointShadowsNeeded()) {
@@ -1505,6 +1574,29 @@ void ShadowManager::RenderPointShadows() {
 	D3DXVECTOR4* PointData = &TheShaderManager->ShaderConst.ShadowPoint.PointData;
 	PointData->y = TheSettingManager->SettingsShadows.Point.Darkness;
 	PointData->z = 1.0f / (float)TheSettingManager->SettingsShadows.Point.ShadowCubeMapSize;
+
+	if (!PointSlotsActive) return;
+
+	// Classify every loaded ref against every occupied slot. This walk runs each frame even when
+	// no cube rebakes, because it is what produces the checksums that decide whether one must.
+	double Checksums[PointLightMax] = { 0.0 };
+	{
+		ScopeTimer profileClassify(Phase_PointClassify);
+		BuildPointGeoLists(Checksums);
+	}
+
+	{
+		ScopeTimer profileBake(Phase_PointBake);
+		gCubeBucket = true;
+		for (int s = 0; s < PointLightMax; s++) {
+			if (!PointSlots[s].Light) continue;
+			if (!PointSlotNeedsRebake(s, Checksums[s])) { ProfileCount(Cnt_CubeLightsCached); continue; }
+			BakePointCube(s);
+			PointSlots[s].Checksum = Checksums[s];
+			ProfileCount(Cnt_CubeLightsDrawn);
+		}
+		gCubeBucket = false;
+	}
 }
 
 #if 0 // SHADOWS DISABLED: dead reference — point-light cube maps, interior shadows, and the old directional exterior path (Near/Far/Skin + interval). Replaced by the ortho-only RenderExteriorShadows above.
@@ -2018,7 +2110,8 @@ void ShadowManager::DrawGeoArrays(NiGeometryBufferData* GeoData, D3DPRIMITIVETYP
 	}
 }
 
-#if 0 // SHADOWS DISABLED: dead reference — cube-face orientation helper (unused by ortho path)
+// Look-at target and up vector for each cube face. The sampling convention in the apply shader
+// (negating the light-vector Z) is matched to this table — change one and you must change both.
 void ShadowManager::GetCubeFaceAtUp(int Face, D3DXVECTOR3& At, D3DXVECTOR3& Up) {
 	switch (Face) {
 	case D3DCUBEMAP_FACE_POSITIVE_X: At += D3DXVECTOR3( 1.0f,  0.0f,  0.0f); Up = D3DXVECTOR3(0.0f,  1.0f,  0.0f); break;
@@ -2029,8 +2122,6 @@ void ShadowManager::GetCubeFaceAtUp(int Face, D3DXVECTOR3& At, D3DXVECTOR3& Up) 
 	case D3DCUBEMAP_FACE_NEGATIVE_Z: At += D3DXVECTOR3( 0.0f,  0.0f,  1.0f); Up = D3DXVECTOR3(0.0f,  1.0f,  0.0f); break;
 	}
 }
-
-#endif // SHADOWS DISABLED
 
 void ShadowManager::SetupSpeedTreeLeafShader(NiGeometry* Geo, D3DXVECTOR4* ShadowData) {
 	IDirect3DDevice9* Device = TheRenderManager->device;
@@ -2164,70 +2255,6 @@ void ShadowManager::RenderActorSkinnedGeo(NiGeometry* Geo, D3DXVECTOR4* ShadowDa
 	}
 	// Same cache invalidation as RenderSkinnedGeo — see comment there.
 	SkinInstance->FrameID = 0xFFFFFFFF;
-}
-
-void ShadowManager::SetupCubeMapRenderState() {
-	IDirect3DDevice9* Device = TheRenderManager->device;
-	NiDX9RenderState* RenderState = TheRenderManager->renderState;
-	RenderState->SetRenderState(D3DRS_ZENABLE, D3DZB_TRUE, RenderStateArgs);
-	RenderState->SetRenderState(D3DRS_ZWRITEENABLE, 1, RenderStateArgs);
-	RenderState->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE, RenderStateArgs);
-	RenderState->SetRenderState(D3DRS_ALPHABLENDENABLE, 0, RenderStateArgs);
-	Device->SetViewport(&ShadowCubeMapViewPort);
-	RenderState->SetVertexShader(ShadowCubeMapVertexShader, false);
-	if (Player->GetWorldSpace())
-		RenderState->SetPixelShader(ShadowCubeMapExteriorPixelShader, false);
-	else
-		RenderState->SetPixelShader(ShadowCubeMapPixelShader, false);
-}
-
-void ShadowManager::ClearCubeMapNodeLists() {
-	for (int i = 0; i < 12; i++) {
-		CubeMapRefMap[i].clear();
-		CubeMapActorMap[i].clear();
-	}
-}
-
-ShadowManager::RefLightInfo ShadowManager::BuildRefLightInfo(TESObjectREFR* Ref) {
-	RefLightInfo Info;
-	Info.Node = Ref->GetNode();
-	UInt8 TypeID = Ref->baseForm->formType;
-	Info.IsActorType = (TypeID >= TESForm::FormType::kFormType_NPC && TypeID <= TESForm::FormType::kFormType_LeveledCreature);
-	Info.BoundRadius = Info.Node->GetWorldBoundRadius();
-	NiBound* B = Ref->niNode->GetWorldBound();
-	Info.CenterSum = (double)B->Center.x + (double)B->Center.y + (double)B->Center.z;
-	Info.IsPlayer = (Ref->refID == Player->refID);
-	return Info;
-}
-
-void ShadowManager::ClassifyRefForLight(const RefLightInfo& Info, NiPointLight** Lights, int L, float radiusScan, std::vector<NiNode*>* refMap, std::vector<NiNode*>* actorMap, double* StaticValues, bool* forceRedrawMap) {
-	NiPoint3* LightPos = &Lights[L]->m_worldTransform.pos;
-	float FarPlane = TheShaderManager->ShaderConst.ShadowMap.ShadowCastLightPosition[L].w;
-	float radius = (Lights[L]->CanCarry || Info.IsActorType) ? FarPlane * 1.2f : FarPlane * radiusScan;
-
-	if (Info.Node->GetDistance(LightPos) - Info.BoundRadius <= radius) {
-		if (Lights[L]->CanCarry) forceRedrawMap[L] = true;
-		if (Info.IsActorType) {
-			// araf Exclude torches on the player, bugs in IFPV
-			// TODO: Exclude player's own torch
-			if (!Info.IsPlayer || !Lights[L]->CanCarry)
-				actorMap[L].emplace_back(Info.Node);
-		} else {
-			refMap[L].emplace_back(Info.Node);
-		}
-		StaticValues[L] += Info.CenterSum;
-	}
-}
-
-void ShadowManager::UpdateStaticTrackers(int LightIndex, double* StaticValues, bool* forceRedrawMap) {
-	for (int i = 0; i <= LightIndex; i++) {
-		if (StaticValues[i] == ShadowCubeMapStaticValue[i]) {
-			ShadowCubeMapStaticTracker[i] = !forceRedrawMap[i];
-		} else {
-			ShadowCubeMapStaticTracker[i] = false;
-			ShadowCubeMapStaticValue[i] = StaticValues[i];
-		}
-	}
 }
 
 #endif // SHADOWS DISABLED
