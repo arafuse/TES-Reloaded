@@ -549,7 +549,12 @@ void ShadowManager::CollectCubeMapGeometry(NiAVObject* Object, std::vector<NiGeo
 			NiGeometry* Geo = (NiGeometry*)Object;
 			// Torch geometry is skipped by Render() anyway; drop it once here instead of
 			// re-testing the name (and re-entering Render) for every one of the 6 cube faces.
-			if (Geo->shader && !(Geo->m_pcName && !memcmp(Geo->m_pcName, "Torch", 5))) {
+			if (Geo->m_pcName && !memcmp(Geo->m_pcName, "Torch", 5)) return;
+			// SpeedTree leaves are unusable here: they need billboarding the cube bake VS does not
+			// implement, and Render()'s leaf path writes vertex constant c63 -- which is where the
+			// cube VS keeps the light position. Trunks still cast.
+			if (Geo->m_parent && Geo->m_parent->m_pcName && !memcmp(Geo->m_parent->m_pcName, "Leaves", 6)) return;
+			if (Geo->shader) {
 				if (Geo->geomData->BuffData) {
 					Out.emplace_back(Geo);
 				}
