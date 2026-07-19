@@ -1,6 +1,11 @@
+// Point-light shadow cube bake VS. Writes the light-to-vertex vector for the PS to convert
+// into normalized radial distance. Geometry and light position are both camera-relative at
+// bake time (matching the skinned bone path), so the cached cube stays valid as the camera
+// moves — radial distance is origin-invariant.
+// TESR_ShadowCubeBakeData: x = skinned flag, y = alpha flag, z = far plane (light radius).
 row_major float4x4 TESR_ShadowWorldTransform : register(c0);
 row_major float4x4 TESR_ShadowViewProjTransform : register(c4);
-float4 TESR_ShadowCubeData : register(c8);
+float4 TESR_ShadowCubeBakeData : register(c8);
 float4 Bones[54] : register(c9);
 float4 TESR_ShadowCubeMapLightPosition : register(c63);
 
@@ -34,7 +39,7 @@ VS_OUTPUT main(VS_INPUT IN) {
 	float4 r1 = 0.0f;
 	float4 r0 = IN.position;
 
-	if (TESR_ShadowCubeData.x == 1.0f) { // Skinned (Actors)
+	if (TESR_ShadowCubeBakeData.x == 1.0f) { // Skinned (Actors)
 		offset.xyzw = IN.blendindexes.zyxw * const_0.y;
 		r0.w = 1;
 		q0.xyzw = (IN.position.xyzx * const_0.xxxz) + const_0.zzzx;

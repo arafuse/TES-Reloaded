@@ -76,29 +76,17 @@ bool TextureRecord::LoadTexture(TextureRecordType Type, const char* Filename) {
 		case TextureRecordType_ShadowCubeMapBuffer3:
 			Texture = TheShadowManager->ShadowCubeMapTexture[3];
 			break;
+		// Only PointLightMax (4) cube maps exist now; buffers 4..11 are legacy declarations in the
+		// old interior/exterior-point effects and bind nothing (cases + enum removed with them).
 		case TextureRecordType_ShadowCubeMapBuffer4:
-			Texture = TheShadowManager->ShadowCubeMapTexture[4];
-			break;
 		case TextureRecordType_ShadowCubeMapBuffer5:
-			Texture = TheShadowManager->ShadowCubeMapTexture[5];
-			break;
 		case TextureRecordType_ShadowCubeMapBuffer6:
-			Texture = TheShadowManager->ShadowCubeMapTexture[6];
-			break;
 		case TextureRecordType_ShadowCubeMapBuffer7:
-			Texture = TheShadowManager->ShadowCubeMapTexture[7];
-			break;
 		case TextureRecordType_ShadowCubeMapBuffer8:
-			Texture = TheShadowManager->ShadowCubeMapTexture[8];
-			break;
 		case TextureRecordType_ShadowCubeMapBuffer9:
-			Texture = TheShadowManager->ShadowCubeMapTexture[9];
-			break;
 		case TextureRecordType_ShadowCubeMapBuffer10:
-			Texture = TheShadowManager->ShadowCubeMapTexture[10];
-			break;
 		case TextureRecordType_ShadowCubeMapBuffer11:
-			Texture = TheShadowManager->ShadowCubeMapTexture[11];
+			Texture = NULL;
 			break;
 	}	
 	return true;

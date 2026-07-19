@@ -14,6 +14,10 @@ public:
 		MapOrtho	= 2,
 		MapSkin     = 3,
 	};
+	// Compile-time cap on simultaneous shadow-casting point lights (cube maps allocated,
+	// sampler slots in ShadowsPoint.fx, TESR_ShadowLightPosition0..N-1 constants).
+	// [Point] LightCount can lower the active count at runtime but never exceed this.
+	static const int PointLightMax = 4;
 	enum ShadowCubeMapStateEnum {
 		None		   = 0,
 		Exterior	   = 1,
@@ -172,24 +176,34 @@ public:
 
 	//-------SHADOW CUBE MAP--------
 
+	// Per-slot state for the point-light shadow cubes. A slot owns one cube map; its contents
+	// are baked camera-relative and cached until the slot is dirtied (light reassigned/moved,
+	// contributing refs moved, or cell change). Light pointers are only valid for the frame
+	// they were collected — validate membership in SceneLights before dereferencing.
+	struct PointLightSlot {
+		NiPointLight*	Light;			// NULL = slot empty
+		D3DXVECTOR3		BakedLightPos;	// world-space light position at last bake
+		double			Checksum;		// quantized bound-center sum of in-radius refs at last bake
+		bool			Valid;			// false => cube must be (re)baked
+	};
+	PointLightSlot			PointSlots[PointLightMax];
+
 	//TEXTURES
-	IDirect3DCubeTexture9*	ShadowCubeMapTexture[12];
+	IDirect3DCubeTexture9*	ShadowCubeMapTexture[PointLightMax];
 
 	//SURFACES
-	IDirect3DSurface9*		ShadowCubeMapSurface[12][6];
-	IDirect3DSurface9*		ShadowCubeMapDepthSurface[12][6];
+	IDirect3DSurface9*		ShadowCubeMapSurface[PointLightMax][6];
+	IDirect3DSurface9*		ShadowCubeMapDepthSurface; // single shared depth-stencil: faces render sequentially
 
 	//SHADERS
 	ShaderRecord*			ShadowCubeMapVertex;
 	ShaderRecord*			ShadowCubeMapPixel;
 	IDirect3DVertexShader9* ShadowCubeMapVertexShader;
 	IDirect3DPixelShader9*	ShadowCubeMapPixelShader;
-	ShaderRecord*			ShadowCubeMapExteriorPixel;
-	IDirect3DPixelShader9*	ShadowCubeMapExteriorPixelShader;
 
 	//MISC
 	D3DVIEWPORT9			ShadowCubeMapViewPort;
-	NiPointLight*			ShadowCubeMapLights[12];
+	NiPointLight*			ShadowCubeMapLights[PointLightMax];
 	// Per-face cube view-projection + frustum, precomputed once per light in the actor path so
 	// each actor geo can be culled to the 1-2 faces it actually overlaps instead of being drawn
 	// to all 6 unconditionally. CubeActorFaceVisible is the per-geo result reused across the
@@ -199,8 +213,8 @@ public:
 	bool					CubeActorFaceVisible[6];
 	int                     ShadowCubeLightCount;
 	int						ShadowCubeCullLightCount;
-	double					ShadowCubeMapStaticValue[12];
-	bool					ShadowCubeMapStaticTracker[12];
+	double					ShadowCubeMapStaticValue[PointLightMax];
+	bool					ShadowCubeMapStaticTracker[PointLightMax];
 	bool					EnableStaticMaps;
 	int						EnableStaticMapsFrameCount;
 	int						EnableStaticMapsFrameThreshold = 30;
@@ -224,10 +238,10 @@ public:
 	float					GameTime;
 	SettingsShadowPointLightsStruct* ShadowLightPointSettings;
 
-	// Reusable per-light node lists for cube map passes (indexed 0..11), cleared each frame
+	// Reusable per-light node lists for cube map passes, cleared each frame
 	// instead of allocating fresh std::map<int, std::vector> containers every frame.
-	std::vector<NiNode*>	CubeMapRefMap[12];
-	std::vector<NiNode*>	CubeMapActorMap[12];
+	std::vector<NiNode*>	CubeMapRefMap[PointLightMax];
+	std::vector<NiNode*>	CubeMapActorMap[PointLightMax];
 	// Scene point lights gathered each frame for the cube-map passes; pooled (cleared + refilled
 	// by CollectSceneLights) instead of allocating a fresh vector per frame.
 	std::vector<std::pair<int, NiPointLight*>> SceneLights;
