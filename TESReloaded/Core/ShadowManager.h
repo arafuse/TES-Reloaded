@@ -62,7 +62,7 @@ public:
 	void					DrawInstancedGroup(NiGeometryBufferData* GeoData, std::vector<int>& ItemIdx, IDirect3DVertexDeclaration9* Decl);
 	void					FlushInstanceGroups(D3DXVECTOR4* ShadowData);
 	void					RenderObjectPoint(NiAVObject* Node, D3DXVECTOR4* ShadowData, bool HasWater);
-	void					CollectCubeMapGeometry(NiAVObject* Object, bool HasWater, std::vector<NiGeometry*>& Out);
+	void					CollectCubeMapGeometry(NiAVObject* Object, std::vector<NiGeometry*>& Out);
 	void					RenderObjectPointActor(NiAVObject* Node, D3DXVECTOR4* ShadowData, bool HasWater, int lightIndex);
 	void					RenderTerrain(NiAVObject* Object, ShadowMapTypeEnum ShadowMapType, D3DXVECTOR4* ShadowData);
 	void					Render(NiGeometry* Geo, D3DXVECTOR4* ShadowData, const D3DMATRIX* PrecomputedWorld = NULL);
@@ -82,6 +82,11 @@ public:
 	bool					IsPointLightCandidate(NiPointLight* Light, SettingsShadowStruct::PointStruct* Settings, bool TorchOnBeltEnabled);
 	void					SelectPointLights();
 	void					PublishPointLightConstants();
+	void					BuildPointGeoLists(double* Checksums);
+	void					ClassifyCellForPointSlots(TESObjectCELL* Cell, double* Checksums);
+	void					ClassifyRefForPointSlot(const RefLightInfo& Info, int Slot, double* Checksums);
+	bool					PointSlotNeedsRebake(int Slot, double Checksum);
+	void					BakePointCube(int Slot);
 	void					RenderInteriorShadows();
 	void					RenderShadowMaps();
 	void					ClearShadowMap(IDirect3DDevice9* Device);
@@ -198,6 +203,9 @@ public:
 	// A candidate must be this much nearer than an incumbent to take its slot. Hysteresis: without
 	// it, two lights at similar distance swap slots frame to frame and rebake both cubes each time.
 	static constexpr float	PointSlotEvictFactor = 0.8f;
+	// How far a light may drift before its cube is stale. Small enough that a moving torch rebakes
+	// every frame, large enough that float noise on a static light does not.
+	static constexpr float	PointLightMoveEpsilon = 1.0f;
 
 	//TEXTURES
 	IDirect3DCubeTexture9*	ShadowCubeMapTexture[PointLightMax];
