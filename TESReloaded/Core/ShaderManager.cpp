@@ -1125,6 +1125,7 @@ ShaderManager::ShaderManager() {
 	RainEffect = NULL;
 	SnowEffect = NULL;
 	ShadowsExteriorsEffect = NULL;
+	ShadowsPointEffect = NULL;
 	ShadowsExteriorsPointEffect = NULL;
 	ShadowsExteriorsPointDialogEffect = NULL;
 	ShadowsInteriorsEffect = NULL;
@@ -1197,6 +1198,7 @@ void ShaderManager::CreateEffects() {
 	if (TheSettingManager->SettingsShadows.Exteriors.UsePostProcessing) CreateEffect(EffectRecordType_ShadowsExteriors);
 	if (TheSettingManager->SettingsShadows.ExteriorsPoint.UsePostProcessing) { CreateEffect(EffectRecordType_ShadowsExteriorsPoint); CreateEffect(EffectRecordType_ShadowsExteriorsPointDialog); }
 	if (TheSettingManager->SettingsShadows.Interiors.UsePostProcessing) CreateEffect(EffectRecordType_ShadowsInteriors);
+	if (TheSettingManager->SettingsShadows.Point.UsePostProcessing) CreateEffect(EffectRecordType_ShadowsPoint);
 
 }
 
@@ -3114,6 +3116,11 @@ void ShaderManager::CreateEffect(EffectRecordType EffectType) {
 			ShadowsExteriorsEffect = new EffectRecord();
 			TheSettingManager->SettingsShadows.Exteriors.UsePostProcessing = LoadEffect(ShadowsExteriorsEffect, Filename, NULL);
 			break;
+		case EffectRecordType_ShadowsPoint:
+			strcat(Filename, "Shadows\\ShadowsPoint.fx");
+			ShadowsPointEffect = new EffectRecord();
+			TheSettingManager->SettingsShadows.Point.UsePostProcessing = LoadEffect(ShadowsPointEffect, Filename, NULL);
+			break;
 		case EffectRecordType_ShadowsExteriorsPoint:
 			strcat(Filename, "Shadows\\ShadowsExteriorsPoint.fx");
 			ShadowsExteriorsPointEffect = new EffectRecord();
@@ -3208,6 +3215,7 @@ void ShaderManager::DisposeEffect(EffectRecord* TheEffect) {
 	else if (TheEffect == RainEffect) RainEffect = NULL;
 	else if (TheEffect == SnowEffect) SnowEffect = NULL;
 	else if (TheEffect == ShadowsExteriorsEffect) ShadowsExteriorsEffect = NULL;
+	else if (TheEffect == ShadowsPointEffect) ShadowsPointEffect = NULL;
 	else if (TheEffect == ShadowsExteriorsPointEffect) ShadowsExteriorsPointEffect = NULL;
 	else if (TheEffect == ShadowsExteriorsPointDialogEffect) ShadowsExteriorsPointDialogEffect = NULL;	
 	else if (TheEffect == ShadowsInteriorsEffect) ShadowsInteriorsEffect = NULL;
@@ -3240,7 +3248,7 @@ void ShaderManager::RenderEffects(IDirect3DSurface9* RenderTarget) {
 		SnowAccumulationEffect->Render(Device, RenderTarget, RenderedSurface, false);
 	}
 	// Exterior sun-shadow apply: no longer part of this post chain — it runs MID-SCENE via
-	// RenderSunShadowsMidScene() (before the first near-water draw) so water and the Underwater
+	// RenderShadowsMidScene() (before the first near-water draw) so water and the Underwater
 	// effect composite over the shadows instead of being painted over by them.
 	// The point-light and interior image-space apply passes below remain dummied out pending rewrite.
 #if 0 // SHADOWS DISABLED: point-light + interior image-space apply passes skipped — their maps are not generated yet. Dead reference.
@@ -3427,18 +3435,26 @@ void ShaderManager::RenderEffectsPostHdr(IDirect3DSurface9* RenderTargetParam) {
 	TheShaderManager->PrevWorldViewProjMatrix = TheRenderManager->WorldViewProjMatrix;
 }
 
-// Exterior sun-shadow apply, run MID-SCENE: invoked from the render hook right before the first
-// near-water surface draw of the main pass (grass and LOD water are already drawn), or at the end
-// of the WorldSceneGraph render when no near water binds this frame. Rendering the darkening quad
-// before the water surface lets water (and the Underwater post-effect) composite OVER the shadows,
-// so shadows are never painted onto the water surface or over the underwater look.
+// Shadow apply, run MID-SCENE: invoked from the render hook right before the first near-water
+// surface draw of the main pass (grass and LOD water are already drawn), or at the end of the
+// WorldSceneGraph render when no near water binds this frame. Rendering the darkening quad before
+// the water surface lets water (and the Underwater post-effect) composite OVER the shadows, so
+// shadows are never painted onto the water surface or over the underwater look.
+//
+// Two effects run here: the exterior sun shadows (worldspace only), then the point-light cube
+// shadows (interiors AND exteriors). Order matters and costs nothing extra — a single-pass
+// EffectRecord::Render ends by blitting the render target back into RenderedSurface, so the point
+// effect reads the already-sun-shadowed image through TESR_RenderedBuffer with no second blit.
+//
 // The engine is mid-accumulation here, so all device changes go through raw Device calls (NOT
 // NiDX9RenderState, whose cache must keep matching the device) and are bracketed by a full state
 // block, restoring the exact device state the engine's state caches believe is current.
-void ShaderManager::RenderSunShadowsMidScene() {
+void ShaderManager::RenderShadowsMidScene() {
 
-	if (!TheSettingManager->SettingsShadows.Exteriors.UsePostProcessing || !ShadowsExteriorsEffect) return;
-	if (!Player->GetWorldSpace()) return;
+	bool DoSun = TheSettingManager->SettingsShadows.Exteriors.UsePostProcessing && ShadowsExteriorsEffect && Player->GetWorldSpace();
+	bool DoPoint = TheSettingManager->SettingsShadows.Point.UsePostProcessing && ShadowsPointEffect
+		&& TheShadowManager && TheShadowManager->PointSlotsActive > 0;
+	if (!DoSun && !DoPoint) return;
 
 	IDirect3DDevice9* Device = TheRenderManager->device;
 	IDirect3DSurface9* SceneRT = NULL;
@@ -3459,9 +3475,16 @@ void ShaderManager::RenderSunShadowsMidScene() {
 	Device->SetRenderState(D3DRS_STENCILENABLE, FALSE);
 	Device->SetStreamSource(0, EffectVertex, 0, sizeof(EffectQuad));
 	Device->SetFVF(EFFECTQUADFORMAT);
+	// Seed TESR_RenderedBuffer for whichever effect runs first; each Render() re-blits for the next.
 	Device->StretchRect(SceneRT, NULL, RenderedSurface, NULL, D3DTEXF_NONE); // scene color -> TESR_RenderedBuffer
-	ShadowsExteriorsEffect->SetCT();
-	ShadowsExteriorsEffect->Render(Device, SceneRT, RenderedSurface, false);
+	if (DoSun) {
+		ShadowsExteriorsEffect->SetCT();
+		ShadowsExteriorsEffect->Render(Device, SceneRT, RenderedSurface, false);
+	}
+	if (DoPoint) {
+		ShadowsPointEffect->SetCT();
+		ShadowsPointEffect->Render(Device, SceneRT, RenderedSurface, false);
+	}
 
 	StateBlock->Apply();
 	StateBlock->Release();
@@ -3708,6 +3731,10 @@ void ShaderManager::SwitchShaderStatus(const char* Name) {
 	else if (!strcmp(Name, "ShadowsExteriors")) {
 		DisposeEffect(ShadowsExteriorsEffect);
 		if (TheSettingManager->SettingsShadows.Exteriors.UsePostProcessing) CreateEffect(EffectRecordType_ShadowsExteriors);
+	}
+	else if (!strcmp(Name, "ShadowsPoint")) {
+		DisposeEffect(ShadowsPointEffect);
+		if (TheSettingManager->SettingsShadows.Point.UsePostProcessing) CreateEffect(EffectRecordType_ShadowsPoint);
 	}
 	else if (!strcmp(Name, "ShadowsExteriorsPoint")) {
 		DisposeEffect(ShadowsExteriorsPointEffect);
