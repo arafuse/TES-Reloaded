@@ -525,7 +525,11 @@ bool ShaderProgram::SetConstantTableValue1(LPCSTR Name, UInt32 Index) {
 
 bool ShaderProgram::SetConstantTableValue2(LPCSTR Name, UInt32 Index) {
 
-	if (!strcmp(Name, "TESR_VolumetricLightData1"))
+	if (!strcmp(Name, "TESR_ShadowCubeBakeData"))
+		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.ShadowPoint.BakeData;
+	else if (!strcmp(Name, "TESR_ShadowPointData"))
+		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.ShadowPoint.PointData;
+	else if (!strcmp(Name, "TESR_VolumetricLightData1"))
 		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.VolumetricLight.data1;
 	else if (!strcmp(Name, "TESR_VolumetricLightData2"))
 		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.VolumetricLight.data2;

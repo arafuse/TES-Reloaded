@@ -347,9 +347,27 @@ struct SettingsShadowStruct {
 		ExcludedFormsList	ExcludedForms;
 	};
 
+	// Unified point-light shadow settings: one section governing both interiors and exteriors
+	// (the point system behaves identically in both — no weather tiers, no per-location profiles).
+	struct PointStruct {
+		FormsStruct			Forms;
+		bool				Enabled;
+		bool				UsePostProcessing;
+		bool				AlphaEnabled;
+		bool				TorchesCastShadows;
+		int					ShadowCubeMapSize;
+		int					LightCount;			// active cube-map lights, clamped 1..PointLightMax(4)
+		float				Darkness;
+		float				LightRadiusMin;		// candidate light radius bounds (NiPointLight::Spec.r)
+		float				LightRadiusMax;
+		float				MaxDistance;		// max light distance from player to cast shadows
+		ExcludedFormsList	ExcludedForms;
+	};
+
 	ExteriorsStruct		Exteriors;
 	InteriorsStruct		Interiors;
 	InteriorsStruct		ExteriorsPoint;
+	PointStruct			Point;
 
 	// Weather-driven darkness tiers for exterior sun shadows: ExteriorsAlt = cloudy, ExteriorsPrecip = rainy/snowy.
 	// Full ExteriorsStruct copies (not just a Darkness float) so SelectExteriorShadowSettings can swap the
