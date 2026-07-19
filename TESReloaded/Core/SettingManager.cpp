@@ -1350,6 +1350,8 @@ void SettingManager::LoadSettings() {
 	SettingsShadows.Point.LightRadiusMax = atof(value);
 	GetPrivateProfileStringA("Point", "MaxDistance", "4000.0", value, SettingStringBuffer, Filename);
 	SettingsShadows.Point.MaxDistance = atof(value);
+	GetPrivateProfileStringA("Point", "Bias", "0.002", value, SettingStringBuffer, Filename);
+	SettingsShadows.Point.Bias = atof(value);
 	SettingsShadows.Point.Forms.Activators = GetPrivateProfileIntA("Point", "Activators", 1, Filename);
 	SettingsShadows.Point.Forms.Actors = GetPrivateProfileIntA("Point", "Actors", 1, Filename);
 	SettingsShadows.Point.Forms.Apparatus = GetPrivateProfileIntA("Point", "Apparatus", 1, Filename);

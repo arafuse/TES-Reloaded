@@ -28,6 +28,7 @@ enum EffectRecordType
 	EffectRecordType_ShadowsExteriorsPoint,
 	EffectRecordType_ShadowsExteriorsPointDialog,
 	EffectRecordType_ShadowsInteriors,
+	EffectRecordType_ShadowsPoint,
 	EffectRecordType_Extra,
 };
 
@@ -421,7 +422,7 @@ public:
 	void					RenderEffectsPreHdr(IDirect3DSurface9* RenderTarget);
 	void					RenderEffectsPostHdr(IDirect3DSurface9* RenderTarget);
 	void					RenderEffects(IDirect3DSurface9* RenderTarget);
-	void					RenderSunShadowsMidScene(); // exterior sun-shadow apply, run mid-scene before the first near-water draw
+	void					RenderShadowsMidScene(); // sun + point shadow apply, run mid-scene before the first near-water draw
 	void					ProfileBlitToSource(IDirect3DSurface9* RenderTarget); // counted scene->SourceSurface copy
 	void					SwitchShaderStatus(const char* Name);
 	void					SetCustomConstant(const char* Name, D3DXVECTOR4 Value);
@@ -503,6 +504,7 @@ public:
 	EffectRecord*			RainEffect;
 	EffectRecord*			SnowEffect;
 	EffectRecord*			ShadowsExteriorsEffect;
+	EffectRecord*			ShadowsPointEffect;
 	EffectRecord*           ShadowsExteriorsPointEffect;
 	EffectRecord*			ShadowsExteriorsPointDialogEffect;
 	EffectRecord*			ShadowsInteriorsEffect;

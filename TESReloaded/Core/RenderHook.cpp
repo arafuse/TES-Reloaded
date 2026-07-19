@@ -458,7 +458,7 @@ UInt32 RenderHook::TrackSetupShaderPrograms(NiGeometry* Geometry, NiSkinInstance
 		if (InMainScenePass && !TheShaderManager->PreWaterDepthBufferFilled && !memcmp(PixelShader->ShaderName, "WATER", 5) && PixelShader->ShaderName[5] >= '0' && PixelShader->ShaderName[5] <= '9') {
 			if (atoi(PixelShader->ShaderName + 5) < 12) {
 				TheRenderManager->ResolvePreWaterDepthBuffer();
-				TheShaderManager->RenderSunShadowsMidScene();
+				TheShaderManager->RenderShadowsMidScene();
 				TheShaderManager->PreWaterDepthBufferFilled = true;
 			}
 		}
@@ -584,10 +584,10 @@ void __cdecl TrackRenderObject(NiCamera* Camera, NiNode* Object, NiCullingProces
 	}
 	if (MainScenePass) {
 		if (!TheShaderManager->PreWaterDepthBufferFilled) {
-			// No near-water draw this frame: resolve the receiver depth (== full scene depth) and run
-			// the sun-shadow apply now, at the end of the main scene render.
+			// No near-water draw this frame (the common case in interiors): resolve the receiver depth
+			// (== full scene depth) and run the shadow apply now, at the end of the main scene render.
 			TheRenderManager->ResolvePreWaterDepthBuffer();
-			TheShaderManager->RenderSunShadowsMidScene();
+			TheShaderManager->RenderShadowsMidScene();
 			TheShaderManager->PreWaterDepthBufferFilled = true;
 		}
 		TheRenderManager->ResolveDepthBuffer();

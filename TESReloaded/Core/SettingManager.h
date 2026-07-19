@@ -361,6 +361,7 @@ struct SettingsShadowStruct {
 		float				LightRadiusMin;		// candidate light radius bounds (NiPointLight::Spec.r)
 		float				LightRadiusMax;
 		float				MaxDistance;		// max light distance from player to cast shadows
+		float				Bias;				// depth bias in normalized cube distance (scales with light radius)
 		ExcludedFormsList	ExcludedForms;
 	};
 
