@@ -1574,6 +1574,7 @@ void ShadowManager::RenderPointShadows() {
 	D3DXVECTOR4* PointData = &TheShaderManager->ShaderConst.ShadowPoint.PointData;
 	PointData->y = TheSettingManager->SettingsShadows.Point.Darkness;
 	PointData->z = 1.0f / (float)TheSettingManager->SettingsShadows.Point.ShadowCubeMapSize;
+	PointData->w = TheSettingManager->SettingsShadows.Point.Bias;
 
 	if (!PointSlotsActive) return;
 
