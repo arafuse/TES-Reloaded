@@ -2991,8 +2991,9 @@ void SettingManager::SetMenuSetting(const char* Item, const char* Definition, co
 				spls->fShadowObjectScanRadius = Value;
 			else if (!strcmp(Setting, "bEnabled"))
 				spls->bEnabled = Value;
-
-			TheShadowManager->LoadShadowLightPointSettings();
+			// The per-location ShadowPointLights.ini profiles no longer drive the shadow system:
+			// point shadows are configured once in [Point] and behave identically everywhere. These
+			// profiles are still parsed and editable, but nothing consumes them.
 		}
 		else if (!strcmp(Definition, "Cinema")) {
 			if (!strcmp(Setting, "AspectRatio"))
