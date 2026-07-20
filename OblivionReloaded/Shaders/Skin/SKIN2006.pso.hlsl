@@ -66,7 +66,6 @@ struct PS_OUTPUT {
 // Code:
 
 #include "includes/Skin.hlsl"
-#include "../Shadows/Includes/ShadowCubeSkin.hlsl"
 
 PS_OUTPUT main(VS_OUTPUT IN) {
     PS_OUTPUT OUT;
@@ -93,7 +92,7 @@ PS_OUTPUT main(VS_OUTPUT IN) {
     float3 r3;
     float Shadow;
 
-    Shadow = GetLightAmount(IN.texcoord_8);
+    Shadow = 1.0f;
 	
     norm = normalize(expand(tex2D(NormalMap, IN.BaseUV.xy).xyz));
     r0 = tex2D(BaseMap, IN.BaseUV.xy);

@@ -32,7 +32,7 @@ static char* TitleMenu = "Skyrim Reloaded - Settings";
 #define RowSpace TheSettingManager->SettingsMain.Menu.RowSpace
 #define RowsPerPage TheSettingManager->SettingsMain.Menu.RowsPerPage
 #define IntValues "ScreenshotKey GrassDensity LightShaftPasses CombatEquipmentKey TorchKey Average Min Critical Gap Delay FadeStep FadeMinObjects FadeMinActors GridStep GridMin TimeKey DayR DayG DayB NightR NightG NightB SunriseR SunriseG SunriseB SunsetR SunsetG SunsetB CloudSpeedLower CloudSpeedUpper SunGlare SunDamage TransDelta WindSpeed Mode Quality LightPoints iShadowLightPoints iShadowCullLightPoints Randomizer JitterPattern"
-#define BoolValues "Enabled DistantBlur SunGlareEnabled TimeEnabled FPSOverlay SleepingEquipment SwimmingEquipment PurgeCells PurgeTextures FatigueEnabled HealthEnabled InfoEnabled AlphaEnabled DirectionalLightOverride RenderEffectsBeforeHdr UsePostProcessing bEnabled EnableSpecularShadow UseVanillaShaders AnimatedFog JitterEnabled"
+#define BoolValues "Enabled DistantBlur SunGlareEnabled TimeEnabled FPSOverlay SleepingEquipment SwimmingEquipment PurgeCells PurgeTextures FatigueEnabled HealthEnabled InfoEnabled AlphaEnabled DirectionalLightOverride RenderEffectsBeforeHdr UsePostProcessing UseVanillaShaders AnimatedFog JitterEnabled"
 
 GameMenuManager::GameMenuManager() {
 
@@ -308,7 +308,7 @@ void GameMenuManager::Render() {
 						Rect.right += 100;
 						SetRect(&RectShadow, Rect.left + 1, Rect.top + 1, Rect.right + 1, Rect.bottom + 1);
 
-						if (!strcmp(Definition->first.c_str(), "Shadows") || !strcmp(Definition->first.c_str(), "ShadowPointLights")) {
+						if (!strcmp(Definition->first.c_str(), "Shadows")) {
 							Text = "";
 						} else {
 							if (TheSettingManager->GetMenuShaderEnabled(Definition->first.c_str())) Text = "ENABLED"; else Text = "DISABLED";

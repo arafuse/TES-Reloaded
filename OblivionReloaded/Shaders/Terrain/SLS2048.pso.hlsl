@@ -52,7 +52,6 @@ struct PS_OUTPUT {
     float4 color_0 : COLOR0;
 };
 
-#include "../Shadows/Includes/Shadow.hlsl"
 
 PS_OUTPUT main(VS_OUTPUT IN) {
     PS_OUTPUT OUT;
@@ -81,7 +80,7 @@ PS_OUTPUT main(VS_OUTPUT IN) {
     r0.xyz = tex2D(NormalMap, IN.BaseUV.xy).xyz;
     r3.xyz = tex2D(BaseMap, IN.BaseUV.xy).xyz;
     nl = shades((IN.texcoord_3.xyz * 2) - 1, normalize(expand(r0.xyz)));
-    shadow = GetLightAmount(IN.texcoord_6, IN.texcoord_7, IN.texcoord_8);
+    shadow = 1.0f;
     r0.xyz = r3.xyz * ((shadow * (nl * PSLightColor[0].rgb)) + AmbientColor.rgb);
 	spclr = smoothstep(0.0, 0.25, length(r3.rgb)) * (r3.b * 2.0 * TESR_TerrainData.z) + 1.0;
     OUT.color_0.a = 1;

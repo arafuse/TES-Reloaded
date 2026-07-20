@@ -34,7 +34,6 @@
 #define ExteriorPom "PAR2022.pso"
 #define ExteriorExtraShaders "SM3LL003.pso SM3002.vso"
 #define InteriorShadowShaders "SLS2022.pso SLS2021.pso SLS2016.vso SLS2015.vso SLS2015.pso SLS2012.vso SLS2011.vso SLS2010.pso SLS2008.vso SLS2007.vso SLS2002.vso SLS2002.pso SLS2000.vso SLS2000.pso SLS1006.vso SLS1005.vso SLS1004.pso SLS1S006.vso SLS1S005.vso SLS1003.pso SLS2009.pso SLS2035.vso SLS2036.vso SLS2041.pso SM3002.vso SM3001.vso SM3001.pso SM3000.vso SM3LL003.pso SM3LL001.pso SM3LL000.pso PAR2022.pso"
-#define InteriorSpecularShadowShaders "SLS2021.pso SLS2035.vso SLS2036.vso SLS2041.pso PAR2025.pso PAR2026.pso PAR2034.vso"
 #define ExteriorDialogShaders "SLS2003.pso SLS2018.pso SLS2039.pso SKIN2001.pso SKIN2003.pso SKIN2007.pso"
 #define BloodShaders "GDECALS.vso GDECAL.pso SLS2040.vso SLS2046.pso"
 #elif defined(SKYRIM)
@@ -349,8 +348,6 @@ bool ShaderProgram::SetConstantTableValue1(LPCSTR Name, UInt32 Index) {
 		FloatShaderValues[Index].Value = (D3DXVECTOR4*)&TheShaderManager->ShaderConst.ShadowMap.ShadowCastLightPosition[3];
 	else if (!strcmp(Name, "TESR_ShadowBiasDeferred"))
 		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.ShadowMap.ShadowBiasDeferred;
-	else if (!strcmp(Name, "TESR_ShadowBiasForward"))
-		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.ShadowMap.ShadowBiasForward;
 	else if (!strcmp(Name, "TESR_ReciprocalResolution"))
 		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.ReciprocalResolution;
 	else if (!strcmp(Name, "TESR_ReciprocalResolutionWater"))
@@ -1183,16 +1180,6 @@ void ShaderManager::UpdateShaderStates() {
 			LocationState = CellLocation::Interior;
 			DisposeShader("InteriorShadows");
 			CreateShader("InteriorShadows");
-
-			//If interior shadow spec is on
-			if (TheSettingManager->SettingsShadows.Interiors.EnableSpecularShadow) {
-				DisposeShader("InteriorSpecularShadow");
-				CreateShader("InteriorSpecularShadowActive");
-			} 
-			else {
-				DisposeShader("InteriorSpecularShadow");
-				CreateShader("InteriorSpecularShadowInactive");
-			}
 		}
 
 	}
@@ -2579,60 +2566,6 @@ void ShaderManager::CreateShader(const char* Name) {
 			}
 		}
 	}
-	else if (!strcmp(Name, "InteriorSpecularShadowActive")) {
-		for (int i = 0; i < 130; i++) {
-			NiD3DPixelShaderEx* PS = ShadowLightPixelShaders[i];
-			if (PS && strstr(InteriorSpecularShadowShaders, PS->ShaderName)) {
-				LoadShader(PS, "InteriorSpecular");
-			}
-		}
-
-		for (int i = 0; i < 130; i++) {
-			NiD3DVertexShaderEx* VS = ShadowLightVertexShaders[i];
-			if (VS && strstr(InteriorSpecularShadowShaders, VS->ShaderName)) {
-				LoadShader(VS, "InteriorSpecular");
-			}
-		}
-
-		ParallaxShader* PRS = (ParallaxShader*)GetShaderDefinition(15)->Shader;
-		for each (NiD3DVertexShaderEx * VS in PRS->Vertex) {
-			if (VS && strstr(InteriorSpecularShadowShaders, VS->ShaderName)) {
-				LoadShader(VS, "InteriorSpecular");
-			}
-		}
-		for each (NiD3DPixelShaderEx * PS in PRS->Pixel) {
-			if (PS && strstr(InteriorSpecularShadowShaders, PS->ShaderName)) {
-				LoadShader(PS, "InteriorSpecular");
-			}
-		}
-	}
-	else if (!strcmp(Name, "InteriorSpecularShadowInactive")) {
-		for (int i = 0; i < 130; i++) {
-			NiD3DPixelShaderEx* PS = ShadowLightPixelShaders[i];
-			if (PS && strstr(InteriorSpecularShadowShaders, PS->ShaderName)) {
-				LoadShader(PS);
-			}
-		}
-
-		for (int i = 0; i < 130; i++) {
-			NiD3DVertexShaderEx* VS = ShadowLightVertexShaders[i];
-			if (VS && strstr(InteriorSpecularShadowShaders, VS->ShaderName)) {
-				LoadShader(VS);
-			}
-		}
-
-		ParallaxShader* PRS = (ParallaxShader*)GetShaderDefinition(15)->Shader;
-		for each (NiD3DVertexShaderEx * VS in PRS->Vertex) {
-			if (VS && strstr(InteriorSpecularShadowShaders, VS->ShaderName)) {
-				LoadShader(VS);
-			}
-		}
-		for each (NiD3DPixelShaderEx * PS in PRS->Pixel) {
-			if (PS && strstr(InteriorSpecularShadowShaders, PS->ShaderName)) {
-				LoadShader(PS);
-			}
-		}
-	}
 #elif defined(SKYRIM)
 	if (!strcmp(Name, "Water")) {
 		for each (NiD3DVertexShader* VS in WaterVertexShaders) LoadShader(VS);
@@ -2901,23 +2834,6 @@ void ShaderManager::DisposeShader(const char* Name) {
 		SkinShader* SS = (SkinShader*)GetShaderDefinition(14)->Shader;
 		for each (NiD3DPixelShaderEx * PS in SS->Pixel) {
 			if (PS && PS->ShaderProg && strstr(ExteriorDialogShaders, PS->ShaderName)) {
-				PS->ShaderHandle = PS->ShaderHandleBackup;
-				delete PS->ShaderProg; PS->ShaderProg = NULL;
-			}
-		}
-	}
-	else if (!strcmp(Name, "InteriorSpecularShadow")) {
-		for (int i = 0; i < 130; i++) {
-			NiD3DPixelShaderEx* PS = ShadowLightPixelShaders[i];
-			if (PS && PS->ShaderProg && strstr(InteriorSpecularShadowShaders, PS->ShaderName)) {
-				PS->ShaderHandle = PS->ShaderHandleBackup;
-				delete PS->ShaderProg; PS->ShaderProg = NULL;
-			}
-		}
-
-		ParallaxShader* PRS = (ParallaxShader*)GetShaderDefinition(15)->Shader;
-		for each (NiD3DPixelShaderEx * PS in PRS->Pixel) {
-			if (PS && PS->ShaderProg && strstr(InteriorSpecularShadowShaders, PS->ShaderName)) {
 				PS->ShaderHandle = PS->ShaderHandleBackup;
 				delete PS->ShaderProg; PS->ShaderProg = NULL;
 			}
@@ -3544,8 +3460,6 @@ void ShaderManager::SwitchShaderStatus(const char* Name) {
 		DisposeShader(Name);
 		if (Value) {
 			CreateShader(Name);
-			//Have to reload this since it includes PAR shaders
-			SwitchShaderStatus("InteriorSpecularShadow");
 		}
 	}
 	else if (!strcmp(Name, "Precipitations")) {
@@ -3638,19 +3552,6 @@ void ShaderManager::SwitchShaderStatus(const char* Name) {
 	else if (!strcmp(Name, "ShadowsPoint")) {
 		DisposeEffect(ShadowsPointEffect);
 		if (TheSettingManager->SettingsShadows.Point.UsePostProcessing) CreateEffect(EffectRecordType_ShadowsPoint);
-	}
-	else if (!strcmp(Name, "InteriorSpecularShadow")) {
-		//edge case is when PAR is turned off, this setting will still enable it's associated PAR shaders
-		//will have to rethink this approach because additional subsets of shaders will become too difficult to maintain
-		if (LocationState == CellLocation::Interior) {
-			DisposeShader(Name);
-			if (TheSettingManager->SettingsShadows.Interiors.EnableSpecularShadow) {
-				CreateShader("InteriorSpecularShadowActive");
-			}
-			else {
-				CreateShader("InteriorSpecularShadowInactive");
-			}
-		}
 	}
 
 }

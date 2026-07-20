@@ -65,7 +65,6 @@ struct VS_OUTPUT {
 
 // Code:
 
-#include "../Shadows/Includes/Shadow.hlsl"
 
 VS_OUTPUT main(VS_INPUT IN) {
     VS_OUTPUT OUT;
@@ -141,7 +140,7 @@ VS_OUTPUT main(VS_INPUT IN) {
       l74.xyz = mul(TanSpaceProj, LightData[1].xyz);
       l5.xyz = pow(abs(shades(normalize(r5.xyz + l74.xyz), r3.xyz)), ToggleNumLights.z) * LightData[0].xyz;			// partial precision
       r3.w = 1;
-      q4.xyz = GetLightAmount(IN.texcoord_1, IN.texcoord_2, IN.texcoord_8);			// partial precision
+      q4.xyz = 1.0f;			// partial precision
       r0.xyz = q4.xyz * l5.xyz;			// partial precision
       r2.xyz = q4.xyz * (shade(r3.xyz, l74.xyz) * LightData[0].xyz);			// partial precision
     }

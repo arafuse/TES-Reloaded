@@ -57,7 +57,6 @@ struct PS_OUTPUT {
 // Code:
 
 #include "includes/PAR.hlsl"
-#include "../Shadows/Includes/Shadow.hlsl"
 
 PS_OUTPUT main(VS_OUTPUT IN) {
     PS_OUTPUT OUT;
@@ -111,7 +110,7 @@ PS_OUTPUT main(VS_OUTPUT IN) {
     r0.xyz = shades(q2.xyz, IN.Light2Dir.xyz) * PSLightColor[2].rgb;
     r1.xyz = shades(q2.xyz, IN.Light1Dir.xyz) * PSLightColor[1].rgb;
     r2.xyz = shades(q2.xyz, IN.Light0Dir.xyz) * PSLightColor[0].rgb;
-    r3.xyz = GetLightAmount(IN.ShadowUV0, IN.ShadowUV1, IN.InvPos);
+    r3.xyz = 1.0f;
     q21.xyz = (r3.xyz * r2.xyz) + (a0 * r1.xyz);
 
     OUT.Color.a = 1;

@@ -58,7 +58,6 @@ struct PS_OUTPUT {
     float4 color_0 : COLOR0;
 };
 
-#include "../Shadows/Includes/Shadow.hlsl"
 
 PS_OUTPUT main(VS_OUTPUT IN) {
     PS_OUTPUT OUT;
@@ -88,7 +87,7 @@ PS_OUTPUT main(VS_OUTPUT IN) {
     q1.xyz = normalize(expand(r6.xyz));
     q5.xyz = saturate((1 - att2.x) - att4.x) * (shades(q1.xyz, normalize(IN.texcoord_2.xyz)) * PSLightColor[1].rgb);
     q17.xyz = (2 * ((IN.LCOLOR_0.y * (EmittanceColor.rgb - 0.5)) + 0.5)) * lerp(r0.xyz, r1.xyz, r1.w);	// [0,1] to [-1,+1]
-    q6.xyz = (GetLightAmount(IN.texcoord_6, IN.texcoord_7, IN.texcoord_8) * (shades(q1.xyz, IN.texcoord_1.xyz) * PSLightColor[0].rgb)) + q5.xyz;
+    q6.xyz = (1.0f * (shades(q1.xyz, IN.texcoord_1.xyz) * PSLightColor[0].rgb)) + q5.xyz;
     q7.xyz = max(q6.xyz + AmbientColor.rgb, 0);
     q8.xyz = q7.xyz * q17.xyz;
     OUT.color_0.a = r0.w * AmbientColor.a;

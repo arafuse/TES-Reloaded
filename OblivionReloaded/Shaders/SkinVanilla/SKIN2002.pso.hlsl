@@ -75,7 +75,6 @@ struct PS_OUTPUT {
 
 // Code:
 
-#include "../Shadows/Includes/ShadowCubeSkin.hlsl"
 
 PS_OUTPUT main(VS_OUTPUT IN) {
     PS_OUTPUT OUT;
@@ -105,7 +104,7 @@ PS_OUTPUT main(VS_OUTPUT IN) {
     float4 r2;
     float Shadow;
 
-    Shadow = GetLightAmount(IN.texcoord_7);
+    Shadow = 1.0f;
 
     noxel2.xyz = tex2D(NormalMap, IN.BaseUV.xy);
     // partial precision

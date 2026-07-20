@@ -62,7 +62,6 @@ struct PS_OUTPUT {
     float4 color_0 : COLOR0;
 };
 
-#include "../Shadows/Includes/ShadowCube.hlsl"
 
 // Code:
 
@@ -88,7 +87,7 @@ PS_OUTPUT main(VS_OUTPUT IN) {
     float3 q9;
     float4 r0;
     float4 r1;
-    float Shadow = GetLightAmount(IN.texcoord_7);
+    float Shadow = 1.0f;
 
     r1.xyzw = tex2D(NormalMap, IN.BaseUV.xy);			// partial precision
     r0.xyzw = tex2D(BaseMap, IN.BaseUV.xy);			// partial precision

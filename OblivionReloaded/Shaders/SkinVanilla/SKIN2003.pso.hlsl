@@ -61,7 +61,6 @@ struct PS_OUTPUT {
 
 // Code:
 
-#include "../Shadows/Includes/ShadowSkin.hlsl"
 
 PS_OUTPUT main(VS_OUTPUT IN) {
     PS_OUTPUT OUT;
@@ -92,7 +91,7 @@ PS_OUTPUT main(VS_OUTPUT IN) {
     float3 r5;
     float1 Shadow;
 
-    Shadow = GetLightAmountSkin(IN.texcoord_5, IN.texcoord_7, IN.texcoord_8);
+    Shadow = 1.0f;
     noxel2.xyz = tex2D(NormalMap, IN.BaseUV.xy);
     // partial precision
     r2.xyzw = tex2D(FaceGenMap1, IN.BaseUV.xy);
