@@ -229,7 +229,13 @@ float GetLightAmount(float4 WorldPos, float4 ShadowPos, float4 ShadowPosFar, flo
 float4 Shadow(VSOUT IN) : COLOR0{
 	float3 color = tex2D(TESR_RenderedBuffer, IN.UVCoord).rgb;
 
-	if (length(color) > 1.4f) {
+	// Sky guard: pixels at the far plane are sky/backdrop and must never be shadowed (keep full brightness).
+	// This REPLACES the old `length(color) > 1.4` bright-pixel early-out. That brightness test also skipped
+	// the sun-specular "glare" on real geometry, letting it survive on top of shadowed ground as washed-out
+	// blobs. Gating on depth instead lets bright glare on receivers flow through the shadow multiply below
+	// (darkened when in shadow, preserved in sun) while still protecting the sky.
+	float rawDepth = tex2D(TESR_DepthBufferPreWater, IN.UVCoord).x;
+	if (rawDepth >= 0.9999f) {
 		return float4(color, 1.0f);
 	}
 
