@@ -82,9 +82,6 @@ PS_OUTPUT main(VS_OUTPUT IN) {
     r3.xyz = tex2D(BaseMap, IN.BaseUV.xy).xyz;
     nl = shades((IN.texcoord_3.xyz * 2) - 1, normalize(expand(r0.xyz)));
     shadow = GetLightAmount(IN.texcoord_6, IN.texcoord_7, IN.texcoord_8);
-    // Sun-specular gate: real sun shadow (0 in shadow / 1 in sun). Diffuse keeps `shadow` (==1.0,
-    // image-space owned); only the specular add below uses this so glare vanishes in shadow.
-    float specShadow = GetSpecularShadow(IN.texcoord_6, IN.texcoord_7);
     r0.xyz = r3.xyz * ((shadow * (nl * PSLightColor[0].rgb)) + AmbientColor.rgb);
 	spclr = smoothstep(0.0, 0.25, length(r3.rgb)) * (r3.b * 2.0 * TESR_TerrainData.z) + 1.0;
     OUT.color_0.a = 1;
@@ -96,7 +93,7 @@ PS_OUTPUT main(VS_OUTPUT IN) {
     float rCoeff = saturate(1 - ((rmb) * 10));
     float coeff = min(gCoeff, rCoeff);
     float baseIntensity = smoothstep(.25f, 1.0f, length(r3.xyz));
-    OUT.color_0.rgb += ((((PSLightColor[0].rgb * (coeff * r2.w) * specShadow) * saturate(nl*2.5f)) * baseIntensity) * TESR_TerrainData.z);
+    OUT.color_0.rgb += ((((PSLightColor[0].rgb * (coeff * r2.w) * shadow) * saturate(nl*2.5f)) * baseIntensity) * TESR_TerrainData.z);
     return OUT;
 	
 };

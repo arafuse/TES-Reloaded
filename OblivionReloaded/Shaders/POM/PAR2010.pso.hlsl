@@ -97,9 +97,7 @@ PS_OUTPUT main(VS_OUTPUT IN) {
     q7.xyz = saturate((0.2 >= q4.x ? (q6.x * max(q4.x + 0.5, 0)) : q6.x) * PSLightColor[0].rgb);
     q5.xyz = GetLightAmount(IN.ShadowUV0, IN.ShadowUV1, IN.InvPos);
     r1.xyz = (Toggles.x <= 0.0 ? r0.xyz : (r0.xyz * IN.Color.rgb));
-    // Gate the sun SPECULAR by the real sun shadow so glare is not emitted in shadow (diffuse stays
-    // owned by the image-space pass; q5 == GetLightAmount == 1.0). Prevents washed-out glare blobs.
-    q17.xyz = (r1.xyz * max((q5.xyz * (saturate(q4.x) * PSLightColor[0].rgb)) + AmbientColor.rgb, 0)) + (q7.xyz * GetSpecularShadow(IN.ShadowUV0, IN.ShadowUV1));
+    q17.xyz = (r1.xyz * max((q5.xyz * (saturate(q4.x) * PSLightColor[0].rgb)) + AmbientColor.rgb, 0)) + (q7.xyz * q5.xyz);
     q17.xyz = q17.xyz * ao;
 
     OUT.Color.a = AmbientColor.a;
