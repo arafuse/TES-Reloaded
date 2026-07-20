@@ -118,8 +118,11 @@ float GetPointShadow(samplerCUBE cubeMap, float4 lightPos, float3 pixelPos)
 float4 Shadow(VSOUT IN) : COLOR0{
 	float3 color = tex2D(TESR_RenderedBuffer, IN.UVCoord).rgb;
 
-	// Sky and other very bright pixels receive no point shadow (same early-out as the sun apply).
-	if (length(color) > 1.4f) {
+	// Sky guard: only the far-plane backdrop is exempt from point shadowing (same guard as the sun apply,
+	// ShadowsExteriors.fx). Replaces the old `length(color) > 1.4` brightness early-out, which also skipped
+	// bright glare on real geometry and let it survive on top of shadowed ground as washed-out blobs.
+	float rawDepth = tex2D(TESR_DepthBufferPreWater, IN.UVCoord).x;
+	if (rawDepth >= 0.9999f) {
 		return float4(color, 1.0f);
 	}
 
