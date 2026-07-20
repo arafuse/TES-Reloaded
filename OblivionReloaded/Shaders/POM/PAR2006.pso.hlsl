@@ -59,7 +59,6 @@ struct PS_OUTPUT {
 // Code:
 
 #include "includes/PAR.hlsl"
-#include "../Shadows/Includes/Shadow.hlsl"
 
 PS_OUTPUT main(VS_OUTPUT IN) {
     PS_OUTPUT OUT;
@@ -106,7 +105,7 @@ PS_OUTPUT main(VS_OUTPUT IN) {
     q4.xyz = normalize(expand(nm.xyz));
     q14.xyz = saturate((1 - att0.x) - att13.x) * (shades(q4.xyz, IN.Light1Dir.xyz) * PSLightColor[1].rgb);
     q7.xyz = (Toggles.x <= 0.0 ? r0.xyz : (r0.xyz * IN.Color.rgb));
-    q5.xyz = (GetLightAmount(IN.ShadowUV0, IN.ShadowUV1, IN.InvPos) * (shades(q4.xyz, IN.Light0Dir.xyz) * PSLightColor[0].rgb)) + q14.xyz;
+    q5.xyz = (1.0f * (shades(q4.xyz, IN.Light0Dir.xyz) * PSLightColor[0].rgb)) + q14.xyz;
     q6.xyz = max(q5.xyz + AmbientColor.rgb, 0);
     q8.xyz = q6.xyz * q7.xyz * ao;
     q9.xyz = (Toggles.y <= 0.0 ? q8.xyz : ((IN.Fog.a * (IN.Fog.rgb - (q7.xyz * q6.xyz))) + q8.xyz));

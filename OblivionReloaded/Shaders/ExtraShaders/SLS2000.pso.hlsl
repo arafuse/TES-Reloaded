@@ -55,7 +55,6 @@ struct PS_OUTPUT {
     float4 color_0 : COLOR0;
 };
 
-#include "../Shadows/Includes/ShadowCube.hlsl"
 
 PS_OUTPUT main(VS_OUTPUT IN) {
 	
@@ -78,7 +77,7 @@ PS_OUTPUT main(VS_OUTPUT IN) {
     r0.xyzw = tex2D(BaseMap, IN.BaseUV.xy);
     q0.xyz = (shades(normalize(expand(r1.xyz)), IN.texcoord_1.xyz) * PSLightColor[0].rgb) + AmbientColor.rgb;
     q2.xyz = (Toggles.x <= 0.0 ? r0.xyz : (r0.xyz * IN.LCOLOR_0.xyz));
-    Shadow = GetLightAmount(IN.texcoord_7);
+    Shadow = 1.0f;
     q3.xyz = Shadow * max(q0.xyz, 0) * q2.xyz;
     q4.xyz = (Toggles.y <= 0.0 ? q3.xyz : ((IN.LCOLOR_1.w * (IN.LCOLOR_1.xyz - (q2.xyz * max(q0.xyz, 0)))) + q3.xyz));
     OUT.color_0.a = r0.w * AmbientColor.a;

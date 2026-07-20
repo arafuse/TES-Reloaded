@@ -46,7 +46,6 @@ struct PS_OUTPUT {
     float4 color_0 : COLOR0;
 };
 
-#include "../Shadows/Includes/ShadowCube.hlsl"
 
 PS_OUTPUT main(VS_OUTPUT IN) {
     PS_OUTPUT OUT;
@@ -59,7 +58,7 @@ PS_OUTPUT main(VS_OUTPUT IN) {
 
     r0 = tex2D(DiffuseMap, IN.DiffuseUV.xy);
     r2 = tex2D(DiffuseMap, r1.xy);
-    Shadow = GetLightAmount(IN.texcoord_7);
+    Shadow = 1.0f;
     OUT.color_0.a = r0.w;
     OUT.color_0.rgb = r0.xyz * IN.LCOLOR_0.xyz;
 

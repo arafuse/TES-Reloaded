@@ -76,7 +76,6 @@ struct PS_OUTPUT {
 };
 
 // Code:
-#include "../Shadows/Includes/ShadowCube.hlsl"
 
 PS_OUTPUT main(VS_OUTPUT IN) {
     PS_OUTPUT OUT;
@@ -291,7 +290,7 @@ PS_OUTPUT main(VS_OUTPUT IN) {
       r1.xyz = (max(r3.z, 0) * ((l356.x * l27.xyz) * q60.xyz)) + r1.xyz;			// partial precision
       r4.xyz = (max(r3.w * l356.x, 0) * l27.xyz) + r4.xyz;			// partial precision
     }
-    Shadow = GetLightAmount(IN.texcoord_8);
+    Shadow = 1.0f;
     r4 *= Shadow;
 
     r2.xyzw = tex2D(LayerMap, IN.BaseUV.xy);			// partial precision

@@ -60,7 +60,6 @@ struct PS_OUTPUT {
     float4 color_0 : COLOR0;
 };
 
-#include "../Shadows/Includes/ShadowCube.hlsl"
 
 PS_OUTPUT main(VS_OUTPUT IN) {
 
@@ -95,7 +94,7 @@ PS_OUTPUT main(VS_OUTPUT IN) {
     q3.xyz = saturate((1 - att1.x) - att2.x) * (shades(q0.xyz, normalize(IN.texcoord_2.xyz)) * PSLightColor[1].rgb);
     q6.xyz = (Toggles.x <= 0.0 ? r0.xyz : (r0.xyz * IN.LCOLOR_0.xyz));
     r4.xyz = shades(q0.xyz, IN.texcoord_1.xyz) * PSLightColor[0].rgb;
-    Shadow = GetLightAmount(IN.texcoord_7);
+    Shadow = 1.0f;
     if ((r6.r > .9 && r6.g < .1 && r6.b > .9)) {
         Shadow = 1;
     }

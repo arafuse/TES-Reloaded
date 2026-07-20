@@ -166,10 +166,6 @@ namespace {
 
 void ShadowManager::InitShadowBiasConstants() {
 	auto& Ext = TheSettingManager->SettingsShadows.Exteriors;
-	TheShaderManager->ShaderConst.ShadowMap.ShadowBiasForward.x  = Ext.forwardNormBias;
-	TheShaderManager->ShaderConst.ShadowMap.ShadowBiasForward.y  = Ext.forwardFarNormBias;
-	TheShaderManager->ShaderConst.ShadowMap.ShadowBiasForward.z  = Ext.forwardConstBias;
-	TheShaderManager->ShaderConst.ShadowMap.ShadowBiasForward.w  = Ext.forwardFarConstBias;
 	TheShaderManager->ShaderConst.ShadowMap.ShadowBiasDeferred.x = Ext.deferredNormBias;
 	TheShaderManager->ShaderConst.ShadowMap.ShadowBiasDeferred.y = Ext.deferredFarNormBias;
 	TheShaderManager->ShaderConst.ShadowMap.ShadowBiasDeferred.z = Ext.deferredConstBias;
@@ -192,11 +188,8 @@ void ShadowManager::LoadShadowShaders(IDirect3DDevice9* Device) {
 }
 
 void ShadowManager::CreateShadowMapSurfaces(IDirect3DDevice9* Device, SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors) {
-	// SHADOWS DISABLED: only the ortho map is still rendered (precipitation dependency). The
-	// Near/Far/Skin maps (incl. 4096^2 Near/Skin) are left unallocated to reclaim VRAM.
-	// TextureManager captures the NULL handle at shader-load and the bind path
-	// (ShaderManager: `if (Value->Texture->Texture)`) skips NULL textures; the neutered
-	// scene shaders never sample them anyway.
+	// Zero-init all four map slots, then allocate them: MapOrtho (precipitation occlusion) first,
+	// the directional sun maps (Near/Far/Skin) in the loop below. R32F color + D24S8 depth throughout.
 	for (int i = 0; i < 4; i++) {
 		ShadowMapTexture[i] = NULL;
 		ShadowMapSurface[i] = NULL;
@@ -1041,7 +1034,7 @@ void ShadowManager::RenderShadowMap(ShadowMapTypeEnum ShadowMapType, SettingsSha
 	AlphaEnabled = ShadowsExteriors->AlphaEnabled[ShadowMapType];
 	// Matrices/frustum are set up by the caller (RenderExteriorShadows) before geometry collection,
 	// so the pool is already culled to this map's frustum; do not recompute here.
-	if (!ShadowMapSurface[ShadowMapType]) return; // only MapOrtho is allocated in the dummied-out build
+	if (!ShadowMapSurface[ShadowMapType]) return; // slot not allocated (e.g. ShadowMapSize 0) — nothing to render
 	Device->SetRenderTarget(0, ShadowMapSurface[ShadowMapType]);
 	Device->SetDepthStencilSurface(ShadowMapDepthSurface[ShadowMapType]);
 	Device->SetViewport(&ShadowMapViewPort[ShadowMapType]);
@@ -1116,10 +1109,9 @@ bool ShadowManager::SunShadowNeeded() {
 //  - Ortho depth map (DoOrtho): sampled by the precipitation effects (Rain/Snow/SnowAccumulation)
 //    for occlusion; also publishes ShaderConst.ShadowMap.ShadowCameraToLight[MapOrtho]
 //    (-> TESR_ShadowCameraToLightTransformOrtho) via SetupShadowMapMatrices.
-//  - Directional sun maps MapNear/MapFar (DoSun): reimplemented per-frame directional shadows,
-//    applied in image space by ShadowsExteriors.fx.
-// The Skin map, point-light cube maps, and interior shadows remain dummied out (dead reference in
-// the #if 0 block below) pending later work.
+//  - Directional sun maps MapNear/MapFar (DoSun): per-frame directional shadows, applied in image
+//    space by ShadowsExteriors.fx, plus the MapSkin per-frame actor overlay (RenderActorOverlay).
+// Point-light cube shadows are a separate pass (RenderPointShadows, driven from RenderShadowMaps).
 void ShadowManager::RenderExteriorShadows() {
 	if (!Player->GetWorldSpace()) return;
 	bool DoOrtho = OrthoNeeded();
