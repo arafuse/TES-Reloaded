@@ -79,14 +79,16 @@ PS_OUTPUT main(VS_OUTPUT IN) {
     s = r0.w;
     q18.xyz = normalize(expand(r0.xyz));
     fresnel = saturate(pow(1 - dot(q18.xyz, normalize(IN.texcoord_4.xyz)), 5) * 2);
+    // Whole output is sun specular, so `shadow` here IS the specular gate: use the real sun shadow
+    // (0 in shadow / 1 in sun) so this glare pass is not emitted in shadow and cannot wash it out.
     if (TESR_GEOM_Toggles.x) {
-        shadow = GetLightAmountSkin(IN.texcoord_9, IN.texcoord_6, IN.texcoord_8);
+        shadow = GetSpecularShadowSkin(IN.texcoord_9);
         maxSpec = r0.w;
         shine = Toggles.z;
         fresnel *= TESR_SpecularData.y; //TODO: configurable
     }
     else {
-        shadow = GetLightAmount(IN.texcoord_6, IN.texcoord_7, IN.texcoord_8);
+        shadow = GetSpecularShadow(IN.texcoord_6, IN.texcoord_7);
         fresnel *= TESR_SpecularData.z; //TODO: configurable
     }
     

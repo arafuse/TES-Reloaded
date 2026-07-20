@@ -77,6 +77,42 @@ float Lookup(float4 ShadowPos) {
 	return TESR_ShadowLightDir.w;
 }
 
+// --- Specular-only sun shadow -------------------------------------------------
+// Returns 1 where the sun reaches the surface, 0 where it is occluded. Used ONLY to gate
+// the in-shader sun SPECULAR ("glare") in exterior object shaders so glare is not emitted in
+// shadow. Diffuse is deliberately NOT gated here -- it is shadowed by the image-space pass
+// (ShadowsExteriors.fx); gating it here too would double-darken. Without this gate, a bright
+// specular highlight pushes the pixel past that pass's `length(color) > 1.4` bright-pixel
+// early-out, so the glare survives on top of shadowed ground as a washed-out blob.
+// ShadowPos/ShadowPosFar are the near/far light-space coords the object VS already computes
+// (mul(clipPos, TESR_ShadowCameraToLightTransform[0]/[1])). Cheap: 4 near taps + far 1-tap.
+float GetSpecularShadow(float4 ShadowPos, float4 ShadowPosFar) {
+	ShadowPos.xyz /= ShadowPos.w;
+	if (ShadowPos.x < -1.0f || ShadowPos.x > 1.0f ||
+		ShadowPos.y < -1.0f || ShadowPos.y > 1.0f ||
+		ShadowPos.z <  0.0f || ShadowPos.z > 1.0f) {
+		// Outside the near frustum: fall back to the far map (single tap).
+		ShadowPosFar.xyz /= ShadowPosFar.w;
+		if (ShadowPosFar.x < -1.0f || ShadowPosFar.x > 1.0f ||
+			ShadowPosFar.y < -1.0f || ShadowPosFar.y > 1.0f ||
+			ShadowPosFar.z <  0.0f || ShadowPosFar.z > 1.0f)
+			return 1.0f;
+		ShadowPosFar.x = ShadowPosFar.x * 0.5f + 0.5f;
+		ShadowPosFar.y = ShadowPosFar.y * -0.5f + 0.5f;
+		float df = tex2D(TESR_ShadowMapBufferFar, ShadowPosFar.xy).r;
+		return (df < ShadowPosFar.z - TESR_ShadowBiasForward.w) ? 0.0f : 1.0f;
+	}
+	ShadowPos.x = ShadowPos.x * 0.5f + 0.5f;
+	ShadowPos.y = ShadowPos.y * -0.5f + 0.5f;
+	// 4-tap PCF on the near map to soften the specular cutoff along shadow edges.
+	float lit = 0.0f;
+	for (uint s = 0; s < 4; s++) {
+		float d = tex2D(TESR_ShadowMapBufferNear, ShadowPos.xy + POISSON_SAMPLES[s] * RADIUS).r;
+		lit += (d < ShadowPos.z - TESR_ShadowBiasForward.z) ? 0.0f : 1.0f;
+	}
+	return lit * 0.25f;
+}
+
 float GetLightAmount(float4 ShadowPos, float4 ShadowPosFar, float4 InvPos) {
 	return 1.0f; // SHADOWS DISABLED: directional shadow sampling dummied out (reference code below)
 
