@@ -63,7 +63,6 @@ struct PS_OUTPUT {
 
 // Code:
 
-#include "../Shadows/Includes/Shadow.hlsl"
 
 PS_OUTPUT main(VS_OUTPUT IN) {
     PS_OUTPUT OUT;
@@ -131,7 +130,7 @@ PS_OUTPUT main(VS_OUTPUT IN) {
         r0.w = dot(r2.xyz, r0.xyz);        
         r2.w = max(r0.w, 0);        
         r0.xyzw = 1;//tex2D(ShadowMask, IN.texcoord_1.zw);        
-        r1.xyzw = GetLightAmount(IN.texcoord_1, IN.texcoord_2, IN.texcoord_8);//tex2D(ShadowMap, IN.texcoord_1.xy);        
+        r1.xyzw = 1.0f;//tex2D(ShadowMap, IN.texcoord_1.xy);        
         r1.xyz = r1.xyz - 1;        
         r1.xyz = (r0.x * r1.xyz) + 1;        
         r0.xyz = r2.w * LightData[0].xyz;        

@@ -54,7 +54,6 @@ struct PS_OUTPUT {
     float4 color_0 : COLOR0;
 };
 
-#include "../Shadows/Includes/Shadow.hlsl"
 
 PS_OUTPUT main(VS_OUTPUT IN) {
     PS_OUTPUT OUT;
@@ -80,7 +79,7 @@ PS_OUTPUT main(VS_OUTPUT IN) {
     r0.xyz = normalize(expand(r0.xyz));
     r2.xy = r0.xy * 0.5;
     r6.x = dot(r0.xyz, IN.texcoord_1.xyz);
-    q3.xyz = GetLightAmount(IN.texcoord_6, IN.texcoord_7, IN.texcoord_8);
+    q3.xyz = 1.0f;
     r1.xyz = (0.5 * r0.xyz) + const_4.xyz;
     q16.xyz = r1.xyz / sqrt((((r0.z * 0.5) + 1) * r1.z) + ((r2.y * r1.y) + (r2.x * r1.x)));
     r1.xyzw = tex2D(GlowMap, IN.BaseUV.xy);

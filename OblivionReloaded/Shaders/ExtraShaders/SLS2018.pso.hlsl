@@ -55,8 +55,6 @@ struct PS_OUTPUT {
     float4 color_0 : COLOR0;
 };
 
-#include "../Shadows/Includes/Shadow.hlsl"
-#include "../Shadows/Includes/ShadowSkin.hlsl"
 
 PS_OUTPUT main(VS_OUTPUT IN) {
     PS_OUTPUT OUT;
@@ -84,13 +82,13 @@ PS_OUTPUT main(VS_OUTPUT IN) {
     fresnel = saturate(pow(1 - dot(q18.xyz, normalize(IN.texcoord_4.xyz)), 5) * 2);
     
     if (TESR_GEOM_Toggles.x) {
-        q2.xyz = GetLightAmountSkin(IN.texcoord_9, IN.texcoord_6, IN.texcoord_8);
+        q2.xyz = 1.0f;
         maxSpec = r0.w;
         shine = Toggles.z;
         fresnel *= TESR_SpecularData.y; //TODO: Configurable 5.0f
     }
     else {
-        q2.xyz = GetLightAmount(IN.texcoord_6, IN.texcoord_7, IN.texcoord_8);
+        q2.xyz = 1.0f;
         fresnel *= TESR_SpecularData.z; //TODO: Configurable 1.0f;
     } 
     

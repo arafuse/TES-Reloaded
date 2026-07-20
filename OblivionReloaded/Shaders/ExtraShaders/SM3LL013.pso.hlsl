@@ -69,7 +69,6 @@ struct PS_OUTPUT {
     float4 color_0 : COLOR0;
 };
 
-#include "../Shadows/Includes/Shadow.hlsl"
 
 PS_OUTPUT main(VS_OUTPUT IN) {
     PS_OUTPUT OUT;
@@ -170,7 +169,7 @@ PS_OUTPUT main(VS_OUTPUT IN) {
 
     if (0 != r4.w) {
         r0.w = 1;
-        q6.xyz = GetLightAmount(IN.LTEXCOORD_1, 1, IN.LTEXCOORD_8);
+        q6.xyz = 1.0f;
         l7.xyz = ((r2.w * (2 * ((IN.LCOLOR_0.y * (r6.x + HairTint.rgb)) + 0.5))) + (r3.w * 0.7)) * LightData[0].xyz;
         r1.xyz = (max(r4.z, 0) * l7.xyz) * q6.xyz;
         r4.xyz = q6.xyz * (shade(r5.xyz, r4.xyz) * LightData[0].xyz);

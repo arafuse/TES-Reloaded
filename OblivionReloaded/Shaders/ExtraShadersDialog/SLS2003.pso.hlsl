@@ -78,8 +78,6 @@ struct PS_OUTPUT
     float4 color_0 : COLOR0;
 };
 
-#include "../Shadows/Includes/Shadow.hlsl"
-#include "../Shadows/Includes/ShadowSkin.hlsl"
 
 PS_OUTPUT main(VS_OUTPUT IN)
 {
@@ -111,12 +109,12 @@ PS_OUTPUT main(VS_OUTPUT IN)
 
     if (TESR_GEOM_Toggles.x || (r5.r > .9 && r5.g > .9 && r5.b < .1))
     {
-        shadow = GetLightAmountSkinDialog(IN.texcoord_9, IN.texcoord_6, IN.texcoord_8);
+        shadow = 1.0f;
         q2.xyz = max((shadow * nl.xyz) + AmbientColor.rgb, 0);
     }
     else
     {
-        shadow = GetLightAmount(IN.texcoord_6, IN.texcoord_7, IN.texcoord_8);
+        shadow = 1.0f;
         q2.xyz = max((shadow * nl.xyz) + AmbientColor.rgb, 0);
     }
 

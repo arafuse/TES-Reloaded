@@ -323,27 +323,10 @@ struct SettingsShadowStruct {
 		bool                UsePostProcessing;
 		bool				UseIntervalUpdate;
 		bool				UseInstancing;
-		float				forwardNormBias;
-		float				forwardFarNormBias;
-		float				forwardConstBias;
-		float				forwardFarConstBias;
 		float				deferredNormBias;
 		float				deferredFarNormBias;
 		float				deferredConstBias;
 		float				deferredFarConstBias;
-		ExcludedFormsList	ExcludedForms;
-	};
-	
-	//TODO: rename to something more appropriate
-	struct InteriorsStruct {
-		FormsStruct			Forms;
-		bool				Enabled;
-		bool				AlphaEnabled;
-		bool				TorchesCastShadows;
-		int					ShadowCubeMapSize;
-		float				Darkness;
-		bool                UsePostProcessing;
-		bool				EnableSpecularShadow;
 		ExcludedFormsList	ExcludedForms;
 	};
 
@@ -366,8 +349,6 @@ struct SettingsShadowStruct {
 	};
 
 	ExteriorsStruct		Exteriors;
-	InteriorsStruct		Interiors;
-	InteriorsStruct		ExteriorsPoint;
 	PointStruct			Point;
 
 	// Weather-driven darkness tiers for exterior sun shadows: ExteriorsAlt = cloudy, ExteriorsPrecip = rainy/snowy.
@@ -375,18 +356,6 @@ struct SettingsShadowStruct {
 	// whole config in one call; only .Darkness differs from the base Exteriors struct.
 	ExteriorsStruct		ExteriorsAlt;
 	ExteriorsStruct		ExteriorsPrecip;
-	InteriorsStruct		ExteriorsPointAlt;
-};
-
-struct SettingsShadowPointLightsStruct {
-	int		iShadowLightPoints;
-	int		iShadowCullLightPoints;
-	float	fShadowObjectScanRadius;
-	float	fShadowLightRadiusMin;
-	float	fShadowLightRadiusMax;
-	float	fShadowCullLightRadiusMin;
-	float	fShadowCullLightRadiusMax;
-	bool	bEnabled;
 };
 
 struct SettingsWaterStruct {
@@ -708,7 +677,6 @@ typedef std::map<std::string, SettingsColoringStruct> SettingsColoringList;
 typedef std::map<std::string, SettingsBloomStruct> SettingsBloomList;
 typedef std::map<std::string, SettingsMotionBlurStruct> SettingsMotionBlurList;
 typedef std::map<std::string, SettingsWeatherStruct> SettingsWeatherList;
-typedef std::map<std::string, SettingsShadowPointLightsStruct> SettingsShadowPointLightsList;
 typedef std::map<std::string, SettingsVolumetricLightStruct> SettingsVolumetricLightList;
 typedef std::map<std::string, std::string> DefinitionsList;
 typedef std::map<UInt32, std::string> SectionsList;
@@ -731,7 +699,6 @@ public:
 	SettingsAmbientOcclusionStruct*	GetSettingsAmbientOcclusion(const char* Section);
 	SettingsColoringStruct*			GetSettingsColoring(const char* PlayerLocation);
 	SettingsBloomStruct*			GetSettingsBloom(const char* PlayerLocation);
-	SettingsShadowPointLightsStruct*GetSettingsShadowPointLight(const char* PlayerLocation);
 	SettingsMotionBlurStruct*		GetSettingsMotionBlur(const char* Section);
 	SettingsWeatherStruct*			GetSettingsWeather(const char* WeatherName);
 	SettingsVolumetricLightStruct*  GetSettingsVolumetricLight(const char* WeatherName);
@@ -813,7 +780,6 @@ private:
 	SettingsBloomList				SettingsBloom;
 	SettingsMotionBlurList			SettingsMotionBlur;
 	SettingsWeatherList				SettingsWeather;
-	SettingsShadowPointLightsList   SettingsShadowPointLight;
 	SettingsVolumetricLightList		SettingsVolumetricLight;
 
 };

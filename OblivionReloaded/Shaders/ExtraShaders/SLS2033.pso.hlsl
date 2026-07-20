@@ -55,7 +55,6 @@ struct PS_OUTPUT {
     float4 color_0 : COLOR0;
 };
 
-#include "../Shadows/Includes/Shadow.hlsl"
 
 PS_OUTPUT main(VS_OUTPUT IN) {
     PS_OUTPUT OUT;
@@ -81,7 +80,7 @@ PS_OUTPUT main(VS_OUTPUT IN) {
     float s;
     float spec;
 
-    shadow = GetLightAmount(IN.texcoord_6, IN.texcoord_7, IN.texcoord_8);
+    shadow = 1.0f;
     r5.xyzw = tex2D(NormalMap, IN.BaseUV.xy);
     s = r5.w;
     spec = s < 1.0f ? 0 : pow(shades(normalize(expand(r5.xyz)), normalize(IN.texcoord_9.xyz)), 100.0f);

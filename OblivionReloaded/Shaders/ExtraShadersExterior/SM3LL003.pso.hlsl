@@ -82,7 +82,6 @@ struct PS_OUTPUT
     float4 color_0 : COLOR0;
 };
 
-#include "../Shadows/Includes/Shadow.hlsl"
 
 PS_OUTPUT main(VS_OUTPUT IN)
 {
@@ -184,7 +183,7 @@ PS_OUTPUT main(VS_OUTPUT IN)
 
     if (0 != r4.w)
     {
-        shadow = GetLightAmount(IN.texcoord_1, 1, IN.texcoord_8);
+        shadow = 1.0f;
         r0.w = 1;			// partial precision
         l4.xyz = ((r2.w * (2 * ((IN.color_0.g * (r6.x + HairTint.rgb)) + 0.5))) + (r3.w * 0.7)) * LightData[0].xyz;			// partial precision
         r1.xyz = max(r4.z, 0) * l4.xyz;			// partial precision

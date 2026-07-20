@@ -73,7 +73,6 @@ struct PS_OUTPUT {
 };
 
 // Code:
-#include "../Shadows/Includes/ShadowCube.hlsl"
 
 PS_OUTPUT main(VS_OUTPUT IN) {
     PS_OUTPUT OUT;
@@ -394,7 +393,7 @@ PS_OUTPUT main(VS_OUTPUT IN) {
         //endif
     }
 
-    Shadow = GetLightAmount(IN.texcoord_8);
+    Shadow = 1.0f;
 
     r2 *= Shadow;
 

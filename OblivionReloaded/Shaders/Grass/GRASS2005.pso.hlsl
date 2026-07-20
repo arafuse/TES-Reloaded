@@ -53,7 +53,6 @@ struct PS_OUTPUT {
 
 // Code:
 
-#include "../Shadows/Includes/Shadow.hlsl"
 
 PS_OUTPUT main(VS_OUTPUT IN) {
     PS_OUTPUT OUT;
@@ -68,7 +67,7 @@ PS_OUTPUT main(VS_OUTPUT IN) {
     float3 q5;
     float3 q6;
     float4 r0;
-    float shadow = GetLightAmountGrass(IN.texcoord_6, mul(IN.texcoord_8, TESR_ShadowCameraToLightTransformFar), mul(IN.texcoord_8, TESR_InvViewProjectionTransform));
+    float shadow = 1.0f;
     float dimCoeff = 1.0f;
 
     r0.xyzw = tex2D(DiffuseMap, IN.DiffuseUV.xy);

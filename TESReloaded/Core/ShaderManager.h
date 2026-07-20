@@ -65,7 +65,6 @@ struct ShaderConstants {
 		// so it cannot reference it) and with the sampler count in ShadowsPoint.fx.
 		D3DXVECTOR4		ShadowCastLightPosition[4];
 		D3DXVECTOR4		ShadowLightDir;
-		D3DXVECTOR4		ShadowBiasForward;
 		D3DXVECTOR4		ShadowBiasDeferred;
 	};
 

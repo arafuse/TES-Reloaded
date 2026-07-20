@@ -45,14 +45,13 @@ struct PS_OUTPUT {
     float4 color_0 : COLOR0;
 };
 
-#include "../Shadows/Includes/Shadow.hlsl"
 
 PS_OUTPUT main(VS_OUTPUT IN) {
     PS_OUTPUT OUT;
 
     float3 Color;
     float4 ColorDiffuse;
-    float shadow = GetLightAmountGrass(IN.texcoord_6, IN.texcoord_7, mul(IN.texcoord_8, TESR_InvViewProjectionTransform));
+    float shadow = 1.0f;
     float dimCoeff = 1.0f;
     ColorDiffuse = tex2D(DiffuseMap, IN.DiffuseUV.xy);
     Color.rgb = (shadow * IN.texcoord_5.xyz) + IN.texcoord_4.xyz;

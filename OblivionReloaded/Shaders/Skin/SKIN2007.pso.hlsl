@@ -61,7 +61,6 @@ struct PS_OUTPUT {
 // Code:
 
 #include "includes/SKIN.hlsl"
-#include "../Shadows/Includes/ShadowSkin.hlsl"
 
 PS_OUTPUT main(VS_OUTPUT IN) {
     PS_OUTPUT OUT;
@@ -104,7 +103,7 @@ PS_OUTPUT main(VS_OUTPUT IN) {
     q9  = psSkin(q9,  PSLightColor[1].rgb, camera, IN.Light1Dir.xyz, norm);
     q12 = psSkin(q12, PSLightColor[2].rgb, camera, IN.Light2Dir.xyz, norm);
 
-    q27  = GetLightAmountSkin(IN.ShadowUV2, IN.ShadowUV0, IN.InvPos) * q10;
+    q27  = 1.0f * q10;
     q27 += saturate(1 - att13 - att15) * q12;
     q27 += saturate(1 - att2  - att14) * q9;
 
