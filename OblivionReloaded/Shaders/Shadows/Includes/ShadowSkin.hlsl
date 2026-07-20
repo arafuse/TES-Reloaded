@@ -27,25 +27,6 @@ float LookupEye(float4 ShadowPos, float2 OffSet) {
 	return TESR_ShadowLightDir.w;
 }
 
-// Specular-only actor sun shadow (see GetSpecularShadow in Shadow.hlsl for the rationale). Samples the
-// per-frame camera-relative skin map so actor sun SPECULAR is not emitted where the actor is in shadow.
-// Returns 1 lit / 0 occluded. ShadowPos is the skin-map light-space coord (the object VS's skin ShadowUV).
-float GetSpecularShadowSkin(float4 ShadowPos) {
-	ShadowPos.xyz /= ShadowPos.w;
-	if (ShadowPos.x < -1.0f || ShadowPos.x > 1.0f ||
-		ShadowPos.y < -1.0f || ShadowPos.y > 1.0f ||
-		ShadowPos.z <  0.0f || ShadowPos.z > 1.0f)
-		return 1.0f;
-	ShadowPos.x = ShadowPos.x * 0.5f + 0.5f;
-	ShadowPos.y = ShadowPos.y * -0.5f + 0.5f;
-	float lit = 0.0f;
-	for (uint s = 0; s < 4; s++) {
-		float d = tex2D(TESR_ShadowMapBufferSkin, ShadowPos.xy + POISSON_SAMPLES_SKIN[s] * RADIUS_SKIN).r;
-		lit += (d < ShadowPos.z - 0.0000325f) ? 0.0f : 1.0f;
-	}
-	return lit * 0.25f;
-}
-
 float GetLightAmountSkinFar(float4 ShadowPos, float4 InvPos) {
 	return 1.0f; // SHADOWS DISABLED: skin shadow sampling dummied out (reference code below)
 

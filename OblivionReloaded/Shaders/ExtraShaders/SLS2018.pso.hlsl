@@ -77,7 +77,6 @@ PS_OUTPUT main(VS_OUTPUT IN) {
     float shine = 100.0f;
     float3 fresnel;
     float3 s;
-    float specShadow; // sun-specular gate (0 in shadow / 1 in sun); diffuse keeps q2 (image-space owned)
 
     r0.xyzw = tex2D(NormalMap, IN.BaseUV.xy);
     s = r0.w;
@@ -86,16 +85,14 @@ PS_OUTPUT main(VS_OUTPUT IN) {
     
     if (TESR_GEOM_Toggles.x) {
         q2.xyz = GetLightAmountSkin(IN.texcoord_9, IN.texcoord_6, IN.texcoord_8);
-        specShadow = GetSpecularShadowSkin(IN.texcoord_9);
         maxSpec = r0.w;
         shine = Toggles.z;
         fresnel *= TESR_SpecularData.y; //TODO: Configurable 5.0f
     }
     else {
         q2.xyz = GetLightAmount(IN.texcoord_6, IN.texcoord_7, IN.texcoord_8);
-        specShadow = GetSpecularShadow(IN.texcoord_6, IN.texcoord_7);
         fresnel *= TESR_SpecularData.z; //TODO: Configurable 1.0f;
-    }
+    } 
     
     if (TESR_GEOM_Toggles.y) {
         maxSpec = r0.w;
@@ -108,7 +105,7 @@ PS_OUTPUT main(VS_OUTPUT IN) {
     r2.w += fresnel;
     r0.xyzw = tex2D(BaseMap, IN.BaseUV.xy);
     q5.x = dot(q18.xyz, IN.texcoord_1.xyz);
-    q9.xyz = saturate((0.2 >= q5.x ? (r2.w * max(q5.x + 0.5, 0)) : r2.w) * PSLightColor[0].rgb) * specShadow;
+    q9.xyz = saturate((0.2 >= q5.x ? (r2.w * max(q5.x + 0.5, 0)) : r2.w) * PSLightColor[0].rgb) * q2.xyz;
     r0.xyz = (Toggles.x <= 0.0 ? r0.xyz : (r0.xyz * IN.LCOLOR_0.xyz));
     q4.xyz = (r0.xyz * max((q2.xyz * (saturate(q5.x) * PSLightColor[0].rgb)) + AmbientColor.rgb, 0)) + q9.xyz;
     OUT.color_0.a = r0.w * AmbientColor.a;
