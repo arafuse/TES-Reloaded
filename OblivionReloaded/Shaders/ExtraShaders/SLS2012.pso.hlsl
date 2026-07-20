@@ -82,9 +82,6 @@ PS_OUTPUT main(VS_OUTPUT IN) {
     float3 nl;
 
     shadow = GetLightAmount(IN.texcoord_6, IN.texcoord_7, IN.texcoord_8);
-    // Sun-specular gate: real sun shadow (0 in shadow / 1 in sun). Diffuse keeps `shadow` (==1.0)
-    // and is shadowed by the image-space pass; only the specular uses this so glare vanishes in shadow.
-    float specShadow = GetSpecularShadow(IN.texcoord_6, IN.texcoord_7);
     r5.xyzw = tex2D(NormalMap, IN.BaseUV.xy);
     s = r5.w;
     spec = s < 1.0f ? 0 : pow(shades(normalize(expand(r5.xyz)), normalize(IN.texcoord_3.xyz)), 100.0f);
@@ -104,7 +101,7 @@ PS_OUTPUT main(VS_OUTPUT IN) {
     coeff = min(coeff, TESR_SpecularData.x);
     float baseIntensity = smoothstep(.25f, 1.0f, length(r0.xyz));  
     q8.xyz = (Toggles.x <= 0.0 ? r0.xyz : (r0.xyz * IN.LCOLOR_0.xyz));
-    q8.xyz += (((((coeff * spec) * specShadow) * saturate(nl * 2.5f)) * baseIntensity));
+    q8.xyz += (((((coeff * spec) * shadow) * saturate(nl * 2.5f)) * baseIntensity));
     q6.xyz = (shadow * nl) + q4.xyz;
     q7.xyz = max(q6.xyz + AmbientColor.rgb, 0);
     q9.xyz = q7.xyz * q8.xyz;

@@ -78,9 +78,7 @@ PS_OUTPUT main(VS_OUTPUT IN) {
     q5.x = dot(normalize(expand(r0.xyz)), IN.texcoord_1.xyz);
     r0.xyzw = tex2D(BaseMap, IN.BaseUV.xy);
     q2.xyz = GetLightAmount(IN.texcoord_6, IN.texcoord_7, IN.texcoord_8);
-    // Sun-specular gated by the real sun shadow (q2 == GetLightAmount == 1.0; diffuse below keeps q2
-    // and is shadowed by the image-space pass). Stops glare from washing out shadow.
-    q9.xyz = saturate((0.2 >= q5.x ? (q66.x * max(q5.x + 0.5, 0)) : q66.x) * PSLightColor[0].rgb) * GetSpecularShadow(IN.texcoord_6, IN.texcoord_7);
+    q9.xyz = saturate((0.2 >= q5.x ? (q66.x * max(q5.x + 0.5, 0)) : q66.x) * PSLightColor[0].rgb) * q2.xyz;
     q3.xyz = (q2.xyz * (saturate(q5.x) * PSLightColor[0].rgb)) + ((r1.xyz * EmittanceColor.rgb) + AmbientColor.rgb);
     q4.xyz = ((Toggles.x <= 0.0 ? r0.xyz : (r0.xyz * IN.LCOLOR_0.xyz)) * max(q3.xyz, 0)) + q9.xyz;
     OUT.color_0.a = r0.w * AmbientColor.a;
