@@ -1870,7 +1870,7 @@ void ShaderManager::UpdateHDR(ShaderConstants& ShaderConst) {
 
 void ShaderManager::UpdatePOM(ShaderConstants& ShaderConst) {
 	ShaderConst.POM.ParallaxData.x = TheSettingManager->SettingsPOM.HeightMapScale;
-	ShaderConst.POM.ParallaxData.y = TheSettingManager->SettingsPOM.ShadowSoftening;
+	ShaderConst.POM.ParallaxData.y = TheSettingManager->SettingsPOM.SelfShadow != 0.0f ? TheSettingManager->SettingsPOM.SelfShadowStrength : 0.0f;
 	ShaderConst.POM.ParallaxData.z = TheSettingManager->SettingsPOM.MinSamples;
 	ShaderConst.POM.ParallaxData.w = TheSettingManager->SettingsPOM.MaxSamples;
 }
