@@ -66,17 +66,10 @@ PS_OUTPUT main(VS_OUTPUT IN) {
     float1 t4;
     float2 uv;
     float  ao;
-    float  hg;
-    float3 cm = normalize(IN.CameraDir);
-
-    /* calculate parallaxed position */
-    hg = tex2D(TESR_samplerBaseMap, IN.BaseUV.xy).a;
-    uv.xy = (uvtile(hg) * (cm.xy / length(cm.xyz))) + IN.BaseUV.xy;
-    ao = 1.0;
 
     /* modifying shader --------------------------------------- */
 
-    psParallax(IN.BaseUV, IN.CameraDir, uv, ao);
+    psParallax(IN.BaseUV, IN.CameraDir, IN.Light0Dir.xyz, uv, ao);
 
     /* fetch Normal+Diffuse from parallaxed position */
     r2.xyzw = tex2D(NormalMap, uv.xy);
