@@ -164,12 +164,44 @@ namespace {
 	}
 }
 
-void ShadowManager::InitShadowBiasConstants() {
+// Publish the deferred shadow bias constants. Two things are going on here:
+//
+// 1. The normal-offset values (.x/.y) are authored in shadow-map TEXELS, so they are scaled by each
+//    cascade's world-units-per-texel (2 * Radius / Size). That keeps them correct if ShadowMapSize or
+//    ShadowMapRadius is retuned. The legacy bias path wants the raw clip-space numbers instead, so the
+//    scaling is skipped entirely when AdaptiveBias is off.
+// 2. Bias is NOT weather-dependent, so the values come from the canonical Exteriors struct while only
+//    the cascade geometry comes from the weather-selected one. This is also what makes live INI edits
+//    take effect under the cloudy/precipitation tiers -- SelectExteriorShadowSettings returns a COPY
+//    (ExteriorsAlt/ExteriorsPrecip, built at load), which the live-edit handlers never touch.
+void ShadowManager::PublishShadowBiasConstants(SettingsShadowStruct::ExteriorsStruct* Selected) {
 	auto& Ext = TheSettingManager->SettingsShadows.Exteriors;
-	TheShaderManager->ShaderConst.ShadowMap.ShadowBiasDeferred.x = Ext.deferredNormBias;
-	TheShaderManager->ShaderConst.ShadowMap.ShadowBiasDeferred.y = Ext.deferredFarNormBias;
-	TheShaderManager->ShaderConst.ShadowMap.ShadowBiasDeferred.z = Ext.deferredConstBias;
-	TheShaderManager->ShaderConst.ShadowMap.ShadowBiasDeferred.w = Ext.deferredFarConstBias;
+	auto& Sm = TheShaderManager->ShaderConst.ShadowMap;
+
+	float ScaleNear = 1.0f;
+	float ScaleFar = 1.0f;
+	if (Ext.AdaptiveBias) {
+		if (Selected->ShadowMapSize[MapNear])
+			ScaleNear = (2.0f * Selected->ShadowMapRadius[MapNear]) / (float)Selected->ShadowMapSize[MapNear];
+		if (Selected->ShadowMapSize[MapFar])
+			ScaleFar = (2.0f * Selected->ShadowMapRadius[MapFar]) / (float)Selected->ShadowMapSize[MapFar];
+	}
+
+	Sm.ShadowBiasDeferred.x = Ext.deferredNormBias * ScaleNear;
+	Sm.ShadowBiasDeferred.y = Ext.deferredFarNormBias * ScaleFar;
+	Sm.ShadowBiasDeferred.z = Ext.deferredConstBias;
+	Sm.ShadowBiasDeferred.w = Ext.deferredFarConstBias;
+
+	Sm.ShadowBiasAdaptive.x = Ext.BiasTerminatorWidth;
+	Sm.ShadowBiasAdaptive.y = Ext.BiasMaxSlope;
+	Sm.ShadowBiasAdaptive.z = Ext.AdaptiveBias ? 1.0f : 0.0f;
+	Sm.ShadowBiasAdaptive.w = 0.0f;
+}
+
+// Startup publish. Uses the canonical Exteriors struct rather than SelectExteriorShadowSettings(),
+// which depends on weather state that is not available this early.
+void ShadowManager::InitShadowBiasConstants() {
+	PublishShadowBiasConstants(&TheSettingManager->SettingsShadows.Exteriors);
 }
 
 void ShadowManager::LoadShadowShaders(IDirect3DDevice9* Device) {
@@ -1179,6 +1211,8 @@ void ShadowManager::RenderExteriorShadows() {
 		ShadowData->y = ShadowsExteriors->Darkness;
 		ShadowData->z = 1.0f / (float)ShadowsExteriors->ShadowMapSize[MapNear];
 		ShadowData->w = 1.0f / (float)ShadowsExteriors->ShadowMapSize[MapFar];
+
+		PublishShadowBiasConstants(ShadowsExteriors);
 	}
 }
 
