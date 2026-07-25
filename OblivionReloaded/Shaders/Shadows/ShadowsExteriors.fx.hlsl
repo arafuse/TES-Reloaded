@@ -44,6 +44,7 @@ float4 TESR_SunAmount;
 float4 TESR_ShadowLightDir;
 float4 TESR_ReciprocalResolution;
 float4 TESR_ShadowBiasDeferred;
+float4 TESR_ShadowBiasAdaptive; // x = terminator width, y = max slope clamp, z = adaptive enable, w = unused
 float4 TESR_FogData;
 
 sampler2D TESR_RenderedBuffer : register(s0) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
@@ -104,7 +105,11 @@ float3 getPosition(in float2 tex, in float depth)
 	return (TESR_CameraPosition.xyz + toWorld(tex) * depth);
 }
 
-float4 getNormals(float2 UVCoord)
+// Screen-space normal reconstruction: the world-space cross of the depth derivatives. The SIGN is
+// deliberately left unresolved -- the cross product's orientation depends on tap winding, and the two
+// bias paths disambiguate it differently (the adaptive path flips toward the camera, the legacy path
+// mirrors z and encodes). Both derive from this single result so the depth taps happen only once.
+float3 getRawNormal(float2 UVCoord)
 {
 	float depth = readDepth(UVCoord);
 	float3 pos = getPosition(UVCoord, depth);
@@ -113,23 +118,21 @@ float4 getNormals(float2 UVCoord)
 	float3 right = getPosition(UVCoord + TESR_ReciprocalResolution.xy * float2(1, 0), readDepth(UVCoord + TESR_ReciprocalResolution.xy * float2(1, 0))) - pos;
 	float3 up = pos - getPosition(UVCoord + TESR_ReciprocalResolution.xy * float2(0, -1), readDepth(UVCoord + TESR_ReciprocalResolution.xy * float2(0, -1)));
 	float3 down = getPosition(UVCoord + TESR_ReciprocalResolution.xy * float2(0, 1), readDepth(UVCoord + TESR_ReciprocalResolution.xy * float2(0, 1))) - pos;
+	// Shorter derivative wins: at a silhouette the far side spans a depth discontinuity.
 	float3 dx = length(left) < length(right) ? left : right;
 	float3 dy = length(up) < length(down) ? up : down;
-	float3 norm = normalize(cross(dx, dy));
 
-	norm.z *= -1;
-
-	return float4((norm + 1) / 2, 1);
+	return normalize(cross(dx, dy));
 }
 
 
-float LookupFar(float4 ShadowPos, float2 OffSet) {
+float LookupFar(float4 ShadowPos, float2 OffSet, float bias) {
 	float Shadow = tex2D(TESR_ShadowMapBufferFar, ShadowPos.xy + float2(OffSet.x * TESR_ShadowData.w, OffSet.y * TESR_ShadowData.w)).r;
-	if (Shadow < ShadowPos.z - TESR_ShadowBiasDeferred.w) return darkness;
+	if (Shadow < ShadowPos.z - bias) return darkness;
 	return clamp(TESR_ShadowLightDir.w, darkness, 1.0f);
 }
 
-float GetLightAmountFar(float4 ShadowPos) {
+float GetLightAmountFar(float4 ShadowPos, float bias) {
 
 	float Shadow = 0.0f;
 	float x;
@@ -146,7 +149,7 @@ float GetLightAmountFar(float4 ShadowPos) {
 	// Perf: 2x2 = 4 taps (was 3x3 = 9). Aggressive quality trade.
 	for (x = -0.5f; x <= 0.5f; x += 1.0f) {
 		for (y = -0.5f; y <= 0.5f; y += 1.0f) {
-			Shadow += LookupFar(ShadowPos, float2(x, y));
+			Shadow += LookupFar(ShadowPos, float2(x, y), bias);
 		}
 	}
 	Shadow /= 4.0f;
@@ -194,7 +197,7 @@ float GetLightAmountSkin(float4 ShadowPosSkin, float bias) {
 	return Shadow / 16.0f;
 }
 
-float GetLightAmount(float4 WorldPos, float4 ShadowPos, float4 ShadowPosFar, float4 ShadowPosSkin, float bias) {
+float GetLightAmount(float4 WorldPos, float4 ShadowPos, float4 ShadowPosFar, float4 ShadowPosSkin, float biasNear, float biasFar) {
 
 	float Shadow = 0.0f;
 	float x;
@@ -205,7 +208,7 @@ float GetLightAmount(float4 WorldPos, float4 ShadowPos, float4 ShadowPosFar, flo
 	if (ShadowPos.x < -1.0f || ShadowPos.x > 1.0f ||
 		ShadowPos.y < -1.0f || ShadowPos.y > 1.0f ||
 		ShadowPos.z < 0.0f || ShadowPos.z > 1.0f)
-		return GetLightAmountFar(ShadowPosFar);
+		return GetLightAmountFar(ShadowPosFar, biasFar);
 
 	ShadowPos.x = ShadowPos.x * 0.5f + 0.5f;
 	ShadowPos.y = ShadowPos.y * -0.5f + 0.5f;
@@ -213,14 +216,14 @@ float GetLightAmount(float4 WorldPos, float4 ShadowPos, float4 ShadowPosFar, flo
 	// Perf: 4x4 = 16 taps (was 6x6 = 36). Aggressive quality trade.
 	for (y = -1.5f; y <= 1.5f; y += 1.0f) {
 		for (x = -1.5f; x <= 1.5f; x += 1.0f) {
-			Shadow += Lookup(ShadowPos, float2(x, y), bias);
+			Shadow += Lookup(ShadowPos, float2(x, y), biasNear);
 		}
 	}
 	Shadow /= 16.0f;
 
 	// Per-frame actor overlay: MapSkin is drawn dynamically each frame in its own camera-relative light
 	// space; min-combine its shadow term with the cached static near term.
-	Shadow = min(Shadow, GetLightAmountSkin(ShadowPosSkin, bias));
+	Shadow = min(Shadow, GetLightAmountSkin(ShadowPosSkin, biasNear));
 
 	return saturate(Shadow);
 
@@ -243,26 +246,75 @@ float4 Shadow(VSOUT IN) : COLOR0{
 	float3 camera_vector = toWorld(IN.UVCoord) * depth;
 	float4 world_pos = float4(TESR_CameraPosition.xyz + camera_vector, 1.0f);
 
-	if (world_pos.z > -2147483000.0f) { // pre-water depth excludes the water surface; gate effectively off (sky handled by the length(color) early-out + GetLightAmount frustum bounds)
+	if (world_pos.z > -2147483000.0f) { // pre-water depth excludes the water surface; gate effectively off (sky handled by the rawDepth early-out + GetLightAmount frustum bounds)
 		float fogCoeff = (saturate((distance(world_pos, TESR_CameraPosition.xyz) - ((TESR_FogData.y - 2000))) / 1000)) + 1.0f;
-		float4 pos = mul(world_pos, TESR_WorldViewProjectionTransform);
-		float4 farPos = pos;
 		float4 world_pos_trans = mul(world_pos, TESR_WorldTransform);
-		float4 normal = getNormals(IN.UVCoord);
-		float4 lightDir = abs(TESR_ShadowLightDir);
+		float3 raw = getRawNormal(IN.UVCoord);
 
-		float3 n = normalize(normal);
-		float3 l = normalize(lightDir);
-		float cosTheta = clamp(dot(n, l), 0, 1);
-		float bias = TESR_ShadowBiasDeferred.z * tan(acos(cosTheta));
+		float4 posNear;
+		float4 posFar;
+		float biasNear;
+		float biasFar;
+		float facing;
 
-		pos.xyz = pos.xyz + (normal.xyz * TESR_ShadowBiasDeferred.x);
-		farPos.xyz = farPos.xyz + (normal.xyz * TESR_ShadowBiasDeferred.y);
-		float4 ShadowNear = mul(pos, TESR_ShadowCameraToLightTransformNear);
-		float4 ShadowFar = mul(farPos, TESR_ShadowCameraToLightTransformFar);
-		float4 ShadowSkin = mul(pos, TESR_ShadowCameraToLightTransformSkin);
-		float Shadow = GetLightAmount(world_pos_trans, ShadowNear, ShadowFar, ShadowSkin, bias);
-		color.rgb *= saturate(Shadow*fogCoeff) * float3(1.0f, 1.0f, 1.0f);
+		if (TESR_ShadowBiasAdaptive.z > 0.5f) {
+			// Resolve the reconstruction's sign: a visible surface must face the camera.
+			float3 viewRay = normalize(toWorld(IN.UVCoord));
+			float3 N = (dot(raw, viewRay) > 0.0f) ? -raw : raw;
+			float3 L = normalize(TESR_ShadowLightDir.xyz); // points TOWARD the sun; no abs()
+			float ndl = dot(N, L);
+
+			// A surface pointing away from the sun is self-shadowed by its own geometry. Ramp it to
+			// the shadow term directly -- it never reaches the depth compare, so no bias value can
+			// produce acne there. Smoothstep rather than a hard cutoff because the reconstructed
+			// normals are noisy and a binary test would speckle along the terminator.
+			// The max() guards BiasTerminatorWidth = 0, which would otherwise divide by zero inside
+			// smoothstep and produce NaN; at 1e-4 it degenerates to a hard cutoff, as intended.
+			facing = smoothstep(0.0f, max(TESR_ShadowBiasAdaptive.x, 1e-4f), ndl);
+
+			// sqrt(1-x*x)/x == tan(acos(x)), without the transcendentals and clamped. The unclamped
+			// form diverges at grazing angles, which is what the legacy path below still does.
+			float ndlSafe = max(ndl, 0.05f);
+			float slope = min(sqrt(1.0f - ndlSafe * ndlSafe) / ndlSafe, TESR_ShadowBiasAdaptive.y);
+			biasNear = TESR_ShadowBiasDeferred.z * (1.0f + slope);
+			biasFar = TESR_ShadowBiasDeferred.w * (1.0f + slope);
+
+			// World-space normal offset, growing with tilt, applied BEFORE the transform chain.
+			// TESR_ShadowBiasDeferred.x/.y arrive pre-scaled from texels to world units per cascade.
+			float sinT = sqrt(saturate(1.0f - ndl * ndl));
+			posNear = mul(float4(world_pos.xyz + N * TESR_ShadowBiasDeferred.x * sinT, 1.0f), TESR_WorldViewProjectionTransform);
+			posFar = mul(float4(world_pos.xyz + N * TESR_ShadowBiasDeferred.y * sinT, 1.0f), TESR_WorldViewProjectionTransform);
+		}
+		else {
+			// Legacy path, bit-exact with the pre-adaptive shader: encoded normal mirrored in z, an
+			// abs()'d light dir (both of which force everything into the positive octant, which is
+			// why cosTheta could never tell sun-facing from sun-away), unclamped slope, flat far
+			// bias, and a normal offset applied in CLIP space after the WVP multiply.
+			float4 normal = float4((float3(raw.x, raw.y, -raw.z) + 1) / 2, 1);
+			float4 lightDir = abs(TESR_ShadowLightDir);
+			float3 n = normalize(normal);
+			float3 l = normalize(lightDir);
+			float cosTheta = clamp(dot(n, l), 0, 1);
+			biasNear = TESR_ShadowBiasDeferred.z * tan(acos(cosTheta));
+			biasFar = TESR_ShadowBiasDeferred.w;
+
+			float4 pos = mul(world_pos, TESR_WorldViewProjectionTransform);
+			posNear = pos;
+			posFar = pos;
+			posNear.xyz = posNear.xyz + (normal.xyz * TESR_ShadowBiasDeferred.x);
+			posFar.xyz = posFar.xyz + (normal.xyz * TESR_ShadowBiasDeferred.y);
+			facing = 1.0f; // no terminator ramp: lerp below collapses to the raw map term
+		}
+
+		float4 ShadowNear = mul(posNear, TESR_ShadowCameraToLightTransformNear);
+		float4 ShadowFar = mul(posFar, TESR_ShadowCameraToLightTransformFar);
+		float4 ShadowSkin = mul(posNear, TESR_ShadowCameraToLightTransformSkin);
+		float mapShadow = GetLightAmount(world_pos_trans, ShadowNear, ShadowFar, ShadowSkin, biasNear, biasFar);
+
+		// `darkness` is exactly what Lookup returns on its shadowed branch, so the forced-shadow
+		// path and the map path agree. facing == 1 collapses this to mapShadow.
+		float Shadow = lerp(darkness, mapShadow, facing);
+		color.rgb *= saturate(Shadow * fogCoeff) * float3(1.0f, 1.0f, 1.0f);
 	}
 	return float4(color, 1.0f);
 
