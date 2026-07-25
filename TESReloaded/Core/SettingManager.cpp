@@ -1250,7 +1250,9 @@ void SettingManager::LoadSettings() {
 	SettingsShadows.Exteriors.deferredConstBias = atof(value);
 	GetPrivateProfileStringA("Exteriors", "deferredFarConstBias", "0.001", value, SettingStringBuffer, Filename);
 	SettingsShadows.Exteriors.deferredFarConstBias = atof(value);
-	SettingsShadows.Exteriors.AdaptiveBias = GetPrivateProfileIntA("Exteriors", "AdaptiveBias", 1, Filename);
+	// Defaults OFF: a Shadows.ini predating this feature must keep the legacy bias math. The
+	// shipped INI carries the enable, so fresh installs still get it.
+	SettingsShadows.Exteriors.AdaptiveBias = GetPrivateProfileIntA("Exteriors", "AdaptiveBias", 0, Filename);
 	GetPrivateProfileStringA("Exteriors", "BiasTerminatorWidth", "0.15", value, SettingStringBuffer, Filename);
 	SettingsShadows.Exteriors.BiasTerminatorWidth = atof(value);
 	GetPrivateProfileStringA("Exteriors", "BiasMaxSlope", "4.0", value, SettingStringBuffer, Filename);
