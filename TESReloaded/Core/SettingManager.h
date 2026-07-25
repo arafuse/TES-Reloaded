@@ -406,9 +406,10 @@ struct SettingsHDRStruct {
 
 struct SettingsPOMStruct {
 	float HeightMapScale;
-	float ShadowSoftening;
 	float MinSamples;
 	float MaxSamples;
+	float SelfShadow;
+	float SelfShadowStrength;
 };
 
 struct SettingsTerrainStruct {
