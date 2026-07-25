@@ -34,7 +34,6 @@ struct PS_OUTPUT {
 
 // Code:
 
-#define	  nolight
 #include "../POM/Includes/PAR.hlsl"
 
 PS_OUTPUT main(VS_OUTPUT IN) {
@@ -45,17 +44,10 @@ PS_OUTPUT main(VS_OUTPUT IN) {
     float4 r0;
     float2 uv;
     float  ao;
-    float  hg;
-    float3 cm = normalize(IN.CameraDir);
-
-    /* calculate parallaxed position */
-    hg = tex2D(TESR_samplerBaseMap, IN.BaseUV.xy).a;
-    uv.xy = (uvtile(hg) * (cm.xy / length(cm.xyz))) + IN.BaseUV.xy;
-    ao = 1.0;
 
     /* modifying shader --------------------------------------- */
 
-    psParallax(IN.BaseUV, IN.CameraDir, uv, ao);
+    psParallax(IN.BaseUV, IN.CameraDir, float3(0, 0, 0), uv, ao);
 
     /* fetch Base from parallaxed position */
     r0.rgb = tex2D(TESR_samplerBaseMap, uv.xy).rgb;
