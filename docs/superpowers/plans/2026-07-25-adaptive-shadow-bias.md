@@ -21,7 +21,7 @@
   ```
   "/c/Program Files (x86)/Windows Kits/10/bin/10.0.26100.0/x86/fxc.exe" -T fx_2_0 -nologo "OblivionReloaded/Shaders/Shadows/ShadowsExteriors.fx.hlsl" -Fo "$TMPDIR/shadowsexteriors.fxo"
   ```
-  Baseline before any change: exit 0, `compilation object save succeeded`, and 18 pre-existing `warning X3570: gradient instruction used in a loop with varying iteration` lines from the `tex2D` calls inside the PCF loops. **X3570 count must not increase** — that is the signal that texture sampling accidentally landed inside a dynamic branch.
+  Baseline before any change: exit 0, `compilation object save succeeded`, and **285** pre-existing `warning X3570: gradient instruction used in a loop with varying iteration` lines, emitted from 3 call sites — the `tex2D` calls inside the PCF loops, which fxc unrolls. **X3570 count must not increase** — that is the signal that texture sampling accidentally landed inside a dynamic branch. Always count with `| grep -c X3570`; an earlier draft of this plan said 18, which came from reading a truncated `tail -20` rather than counting.
 - **Force-included header:** `TESReloaded/Framework/Framework.h` is pulled into every translation unit automatically. Do not add includes for anything it already provides.
 - **Multi-game conditionals:** this fork only builds Oblivion (`#if defined(OBLIVION)`). None of the files touched here need new conditionals — do not add any.
 - **`Shadow.Data.x` is off limits.** It is used by unrelated code paths (`ShadowManager.cpp:590, 1002, 1644, 1682`). The new values go in a new `float4`, not in spare components of existing ones.
