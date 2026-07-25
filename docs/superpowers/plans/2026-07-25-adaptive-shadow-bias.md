@@ -91,12 +91,21 @@ In `TESReloaded/Core/SettingManager.h`, inside `struct ExteriorsStruct`, immedia
 In `TESReloaded/Core/SettingManager.cpp`, immediately after line 1252 (`SettingsShadows.Exteriors.deferredFarConstBias = atof(value);`):
 
 ```cpp
-	SettingsShadows.Exteriors.AdaptiveBias = GetPrivateProfileIntA("Exteriors", "AdaptiveBias", 1, Filename);
+	// Defaults OFF: a Shadows.ini predating this feature must keep the legacy bias math. The
+	// shipped INI carries the enable, so fresh installs still get it.
+	SettingsShadows.Exteriors.AdaptiveBias = GetPrivateProfileIntA("Exteriors", "AdaptiveBias", 0, Filename);
 	GetPrivateProfileStringA("Exteriors", "BiasTerminatorWidth", "0.15", value, SettingStringBuffer, Filename);
 	SettingsShadows.Exteriors.BiasTerminatorWidth = atof(value);
 	GetPrivateProfileStringA("Exteriors", "BiasMaxSlope", "4.0", value, SettingStringBuffer, Filename);
 	SettingsShadows.Exteriors.BiasMaxSlope = atof(value);
 ```
+
+**The `AdaptiveBias` code default must be `0`, not `1`.** The game reads its INI from
+`Data\Shaders\OblivionReloaded\`, which is a deployed copy — the post-build step ships only the DLL
+and PDB, so an existing install's Shadows.ini has no `AdaptiveBias` key. A default of `1` would
+silently enable the feature there and change rendered shadows, breaking Task 1's defining no-op
+property. A missing key must mean legacy; the shipped INI carries the enable (Task 3 flips it
+to `1`), so fresh installs still get the feature.
 
 **This must stay above line 1286.** That line copy-constructs `ExteriorsAlt` and `ExteriorsPrecip` from `Exteriors`, so any field read after it would be missing from the cloudy and precipitation weather tiers.
 
