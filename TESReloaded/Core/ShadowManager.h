@@ -99,6 +99,7 @@ public:
 	void					ComputeExteriorLookAt(D3DXVECTOR3& At, D3DXVECTOR3& SkinAt, SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors);
 	void					UpdateStaticMapsCounter();
 	void					InitShadowBiasConstants();
+	void					PublishShadowBiasConstants(SettingsShadowStruct::ExteriorsStruct* Selected);
 	void					LoadShadowShaders(IDirect3DDevice9* Device);
 	void					CreateShadowMapSurfaces(IDirect3DDevice9* Device, SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors);
 	void					CreateCubeMapSurfaces(IDirect3DDevice9* Device, UINT CubeMapSize);

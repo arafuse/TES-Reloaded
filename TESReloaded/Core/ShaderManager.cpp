@@ -348,6 +348,8 @@ bool ShaderProgram::SetConstantTableValue1(LPCSTR Name, UInt32 Index) {
 		FloatShaderValues[Index].Value = (D3DXVECTOR4*)&TheShaderManager->ShaderConst.ShadowMap.ShadowCastLightPosition[3];
 	else if (!strcmp(Name, "TESR_ShadowBiasDeferred"))
 		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.ShadowMap.ShadowBiasDeferred;
+	else if (!strcmp(Name, "TESR_ShadowBiasAdaptive"))
+		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.ShadowMap.ShadowBiasAdaptive;
 	else if (!strcmp(Name, "TESR_ReciprocalResolution"))
 		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.ReciprocalResolution;
 	else if (!strcmp(Name, "TESR_ReciprocalResolutionWater"))

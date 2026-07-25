@@ -1250,6 +1250,11 @@ void SettingManager::LoadSettings() {
 	SettingsShadows.Exteriors.deferredConstBias = atof(value);
 	GetPrivateProfileStringA("Exteriors", "deferredFarConstBias", "0.001", value, SettingStringBuffer, Filename);
 	SettingsShadows.Exteriors.deferredFarConstBias = atof(value);
+	SettingsShadows.Exteriors.AdaptiveBias = GetPrivateProfileIntA("Exteriors", "AdaptiveBias", 1, Filename);
+	GetPrivateProfileStringA("Exteriors", "BiasTerminatorWidth", "0.15", value, SettingStringBuffer, Filename);
+	SettingsShadows.Exteriors.BiasTerminatorWidth = atof(value);
+	GetPrivateProfileStringA("Exteriors", "BiasMaxSlope", "4.0", value, SettingStringBuffer, Filename);
+	SettingsShadows.Exteriors.BiasMaxSlope = atof(value);
 
 	// Unified point-light shadows: single [Point] section, identical behavior interiors/exteriors.
 	SettingsShadows.Point.Enabled = GetPrivateProfileIntA("Point", "Enabled", 1, Filename);
@@ -1581,6 +1586,9 @@ void SettingManager::SaveSettings(const char* Item, const char* Definition, cons
 			WritePrivateProfileStringA("Exteriors", "deferredFarNormBias", ToString(SettingsShadows.Exteriors.deferredFarNormBias).c_str(), Filename);
 			WritePrivateProfileStringA("Exteriors", "deferredConstBias", ToString(SettingsShadows.Exteriors.deferredConstBias).c_str(), Filename);
 			WritePrivateProfileStringA("Exteriors", "deferredFarConstBias", ToString(SettingsShadows.Exteriors.deferredFarConstBias).c_str(), Filename);
+			WritePrivateProfileStringA("Exteriors", "AdaptiveBias", ToString(SettingsShadows.Exteriors.AdaptiveBias).c_str(), Filename);
+			WritePrivateProfileStringA("Exteriors", "BiasTerminatorWidth", ToString(SettingsShadows.Exteriors.BiasTerminatorWidth).c_str(), Filename);
+			WritePrivateProfileStringA("Exteriors", "BiasMaxSlope", ToString(SettingsShadows.Exteriors.BiasMaxSlope).c_str(), Filename);
 			WritePrivateProfileStringA("Exteriors", "ShadowMapFarPlane", ToString(SettingsShadows.Exteriors.ShadowMapFarPlane).c_str(), Filename);
 			WritePrivateProfileStringA("ExteriorsNear", "Enabled", ToString(SettingsShadows.Exteriors.Enabled[ShadowManager::ShadowMapTypeEnum::MapNear]).c_str(), Filename);
 			WritePrivateProfileStringA("ExteriorsNear", "AlphaEnabled", ToString(SettingsShadows.Exteriors.AlphaEnabled[ShadowManager::ShadowMapTypeEnum::MapNear]).c_str(), Filename);
@@ -2229,6 +2237,9 @@ SettingsList SettingManager::GetMenuSettings(const char* Item, const char* Defin
 				Settings["deferredFarNormBias"] = SettingsShadows.Exteriors.deferredFarNormBias;
 				Settings["deferredConstBias"] = SettingsShadows.Exteriors.deferredConstBias;
 				Settings["deferredFarConstBias"] = SettingsShadows.Exteriors.deferredFarConstBias;
+				Settings["AdaptiveBias"] = SettingsShadows.Exteriors.AdaptiveBias;
+				Settings["BiasTerminatorWidth"] = SettingsShadows.Exteriors.BiasTerminatorWidth;
+				Settings["BiasMaxSlope"] = SettingsShadows.Exteriors.BiasMaxSlope;
 				Settings["ShadowMapFarPlane"] = SettingsShadows.Exteriors.ShadowMapFarPlane;
 			}
 			else if (!strcmp(Section, "ExteriorsNear")) {
@@ -2969,21 +2980,31 @@ void SettingManager::SetMenuSetting(const char* Item, const char* Definition, co
 				else if (!strcmp(Setting, "ShadowMapFarPlane")) {
 					SettingsShadows.Exteriors.ShadowMapFarPlane = Value;
 				}
+				// The bias constants are republished every frame by
+				// ShadowManager::PublishShadowBiasConstants, so these only update the setting.
+				// Writing the shader constant here would be stomped on the next frame -- and
+				// routing through the publish is what makes live edits take effect under the
+				// cloudy/precipitation weather tiers too, which the old direct pokes did not.
 				else if (!strcmp(Setting, "deferredNormBias")) {
 					SettingsShadows.Exteriors.deferredNormBias = Value;
-					TheShaderManager->ShaderConst.ShadowMap.ShadowBiasDeferred.x = Value;
 				}
 				else if (!strcmp(Setting, "deferredFarNormBias")) {
 					SettingsShadows.Exteriors.deferredFarNormBias = Value;
-					TheShaderManager->ShaderConst.ShadowMap.ShadowBiasDeferred.y = Value;
 				}
 				else if (!strcmp(Setting, "deferredConstBias")) {
 					SettingsShadows.Exteriors.deferredConstBias = Value;
-					TheShaderManager->ShaderConst.ShadowMap.ShadowBiasDeferred.z = Value;
 				}
 				else if (!strcmp(Setting, "deferredFarConstBias")) {
 					SettingsShadows.Exteriors.deferredFarConstBias = Value;
-					TheShaderManager->ShaderConst.ShadowMap.ShadowBiasDeferred.w = Value;
+				}
+				else if (!strcmp(Setting, "AdaptiveBias")) {
+					SettingsShadows.Exteriors.AdaptiveBias = Value;
+				}
+				else if (!strcmp(Setting, "BiasTerminatorWidth")) {
+					SettingsShadows.Exteriors.BiasTerminatorWidth = Value;
+				}
+				else if (!strcmp(Setting, "BiasMaxSlope")) {
+					SettingsShadows.Exteriors.BiasMaxSlope = Value;
 				}
 				else if (!strcmp(Setting, "UsePostProcessing")) {
 					// Special case for forward or post-process shadowing

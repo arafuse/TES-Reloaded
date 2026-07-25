@@ -327,6 +327,9 @@ struct SettingsShadowStruct {
 		float				deferredFarNormBias;
 		float				deferredConstBias;
 		float				deferredFarConstBias;
+		bool				AdaptiveBias;			// 0 = legacy bias math (see Shadows.ini)
+		float				BiasTerminatorWidth;	// smoothstep upper bound on N.L
+		float				BiasMaxSlope;			// clamp on the slope-scaled bias multiplier
 		ExcludedFormsList	ExcludedForms;
 	};
 

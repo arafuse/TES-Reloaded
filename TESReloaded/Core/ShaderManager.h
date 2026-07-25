@@ -66,6 +66,8 @@ struct ShaderConstants {
 		D3DXVECTOR4		ShadowCastLightPosition[4];
 		D3DXVECTOR4		ShadowLightDir;
 		D3DXVECTOR4		ShadowBiasDeferred;
+		// x = terminator width, y = max slope clamp, z = adaptive enable (0/1), w = unused.
+		D3DXVECTOR4		ShadowBiasAdaptive;
 	};
 
 	struct PointLightStruct {
