@@ -322,7 +322,7 @@ cd "/c/Users/Adam/Code/Oblivion/Oblivion Reloaded E3 Custom"
   | grep -c X3570
 ```
 
-Expected: `18`. Record it — Step 7 checks this number did not grow.
+Expected: `285` (3 call sites, unrolled). Record it — Step 7 checks this number did not grow.
 
 - [ ] **Step 2: Declare the new constant**
 
@@ -491,7 +491,7 @@ cd "/c/Users/Adam/Code/Oblivion/Oblivion Reloaded E3 Custom"
 echo "EXIT=$?"; grep -E "error|succeeded" "$TMPDIR/fxc.log"
 ```
 
-Expected: exit 0, `compilation object save succeeded`, no `error` lines, and the X3570 count still `18` (the Step 1 baseline). **If the count grew, a `tex2D` ended up inside the `TESR_ShadowBiasAdaptive.z` branch** — move it back out to the shared call site rather than suppressing the warning.
+Expected: exit 0, `compilation object save succeeded`, no `error` lines, and the X3570 count still `285` (the Step 1 baseline). **If the count grew, a `tex2D` ended up inside the `TESR_ShadowBiasAdaptive.z` branch** — move it back out to the shared call site rather than suppressing the warning.
 
 - [ ] **Step 8: Build**
 
