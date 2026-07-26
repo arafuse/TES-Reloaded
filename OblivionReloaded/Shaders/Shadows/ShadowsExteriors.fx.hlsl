@@ -251,7 +251,21 @@ float4 Shadow(VSOUT IN) : COLOR0{
 	float3 camera_vector = toWorld(IN.UVCoord) * depth;
 	float4 world_pos = float4(TESR_CameraPosition.xyz + camera_vector, 1.0f);
 
-	if (world_pos.z > -2147483000.0f) { // pre-water depth excludes the water surface; gate effectively off (sky handled by the rawDepth early-out + GetLightAmount frustum bounds)
+	// Sun-active gate. This effect runs on a BROADER condition than the shadow pass that feeds it:
+	// it needs only an exterior worldspace, while ShadowManager::SunShadowNeeded() also requires the
+	// light to be above SunUpThreshold. Below that threshold the shadow maps AND the per-frame
+	// camera->light sample matrices stop being republished while the map textures stay resident, so
+	// sampling them with a frozen matrix drifts by exactly the camera delta and the shadows visibly
+	// detach and swim with the camera. TESR_ShadowBiasAdaptive.w is published every exterior frame
+	// from that same DoSun condition, so gating on it makes the two passes agree: when the maps stop
+	// updating, we stop sampling them. That is what makes SunUpThreshold safe at ANY value rather
+	// than a setting whose only correct value is the one that disables it.
+	//
+	// This REPLACES a dead `world_pos.z > -2147483000.0f` test that was always true. Reusing that
+	// slot rather than adding an early return is deliberate: an extra return ahead of the PCF loops
+	// puts their tex2D calls inside another dynamic branch, and fxc's X3570 unroll count jumps from
+	// 285 to 497. Same branch count, no new sampling context.
+	if (TESR_ShadowBiasAdaptive.w >= 0.5f) {
 		float fogCoeff = (saturate((distance(world_pos, TESR_CameraPosition.xyz) - ((TESR_FogData.y - 2000))) / 1000)) + 1.0f;
 		float4 world_pos_trans = mul(world_pos, TESR_WorldTransform);
 		float3 raw = getRawNormal(IN.UVCoord);
@@ -281,10 +295,6 @@ float4 Shadow(VSOUT IN) : COLOR0{
 			// smoothstep and produce NaN; at 1e-4 it degenerates to a hard cutoff, as intended.
 			facing = smoothstep(0.0f, max(TESR_ShadowBiasAdaptive.x, 1e-4f), ndl);
 
-			// TESR_ShadowBiasAdaptive.w is 1 while the sun shadow maps are being updated, 0 otherwise.
-			// When they are frozen the ramp must not force darkness -- there is no sun to be facing away
-			// from, and the map path already returns lit for everything out of bounds.
-			facing = max(facing, 1.0f - TESR_ShadowBiasAdaptive.w);
 
 			// sqrt(1-x*x)/x == tan(acos(x)), without the transcendentals and clamped. The unclamped
 			// form diverges at grazing angles, which is what the legacy path below still does.
