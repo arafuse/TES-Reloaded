@@ -44,7 +44,12 @@ float4 TESR_SunAmount;
 float4 TESR_ShadowLightDir;
 float4 TESR_ReciprocalResolution;
 float4 TESR_ShadowBiasDeferred;
-float4 TESR_ShadowBiasAdaptive; // x = terminator width, y = max slope clamp, z = adaptive enable, w = unused
+// w is the SUN-ACTIVE flag: 1 while the sun shadow maps are being updated this frame, 0 otherwise
+// (published every exterior frame by ShadowManager::RenderExteriorShadows, including sunless ones).
+// The apply effect runs on a broader condition than the shadow pass does, so the terminator ramp
+// below uses it to switch itself off when the maps are frozen. If nothing ever publishes it, 0 makes
+// the ramp disable itself -- the safe failure mode.
+float4 TESR_ShadowBiasAdaptive; // x = terminator width, y = max slope clamp, z = adaptive enable, w = sun active (0/1)
 float4 TESR_FogData;
 
 sampler2D TESR_RenderedBuffer : register(s0) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
@@ -261,7 +266,11 @@ float4 Shadow(VSOUT IN) : COLOR0{
 			// Resolve the reconstruction's sign: a visible surface must face the camera.
 			float3 viewRay = normalize(toWorld(IN.UVCoord));
 			float3 N = (dot(raw, viewRay) > 0.0f) ? -raw : raw;
-			float3 L = normalize(TESR_ShadowLightDir.xyz); // points TOWARD the sun; no abs()
+			// Published already normalized by the C++ side (every assignment to ShadowLightDir copies a
+			// normalized SunDir/MasserDir), so no normalize() here: besides the wasted ALU, it would turn
+			// the zero moon-direction ShaderManager publishes when !MoonsExist into NaN, where the raw
+			// dot below just yields a benign 0.
+			float3 L = TESR_ShadowLightDir.xyz; // points TOWARD the sun; no abs()
 			float ndl = dot(N, L);
 
 			// A surface pointing away from the sun is self-shadowed by its own geometry. Ramp it to
@@ -272,10 +281,15 @@ float4 Shadow(VSOUT IN) : COLOR0{
 			// smoothstep and produce NaN; at 1e-4 it degenerates to a hard cutoff, as intended.
 			facing = smoothstep(0.0f, max(TESR_ShadowBiasAdaptive.x, 1e-4f), ndl);
 
+			// TESR_ShadowBiasAdaptive.w is 1 while the sun shadow maps are being updated, 0 otherwise.
+			// When they are frozen the ramp must not force darkness -- there is no sun to be facing away
+			// from, and the map path already returns lit for everything out of bounds.
+			facing = max(facing, 1.0f - TESR_ShadowBiasAdaptive.w);
+
 			// sqrt(1-x*x)/x == tan(acos(x)), without the transcendentals and clamped. The unclamped
 			// form diverges at grazing angles, which is what the legacy path below still does.
 			float ndlSafe = max(ndl, 0.05f);
-			float slope = min(sqrt(1.0f - ndlSafe * ndlSafe) / ndlSafe, TESR_ShadowBiasAdaptive.y);
+			float slope = min(sqrt(saturate(1.0f - ndlSafe * ndlSafe)) / ndlSafe, TESR_ShadowBiasAdaptive.y);
 			biasNear = TESR_ShadowBiasDeferred.z * (1.0f + slope);
 			biasFar = TESR_ShadowBiasDeferred.w * (1.0f + slope);
 
@@ -312,7 +326,9 @@ float4 Shadow(VSOUT IN) : COLOR0{
 		float mapShadow = GetLightAmount(world_pos_trans, ShadowNear, ShadowFar, ShadowSkin, biasNear, biasFar);
 
 		// `darkness` is exactly what Lookup returns on its shadowed branch, so the forced-shadow
-		// path and the map path agree. facing == 1 collapses this to mapShadow.
+		// path and the map path agree. At facing == 1 this collapses to mapShadow to within a ULP
+		// (the branch is dynamic, so fxc emits a real `lrp` rather than folding it away) -- far
+		// below the quantization of the 8-bit output.
 		float Shadow = lerp(darkness, mapShadow, facing);
 		color.rgb *= saturate(Shadow * fogCoeff) * float3(1.0f, 1.0f, 1.0f);
 	}

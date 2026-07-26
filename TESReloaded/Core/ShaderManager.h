@@ -66,7 +66,10 @@ struct ShaderConstants {
 		D3DXVECTOR4		ShadowCastLightPosition[4];
 		D3DXVECTOR4		ShadowLightDir;
 		D3DXVECTOR4		ShadowBiasDeferred;
-		// x = terminator width, y = max slope clamp, z = adaptive enable (0/1), w = unused.
+		// x = terminator width, y = max slope clamp, z = adaptive enable (0/1),
+		// w = sun active (0/1) -- 1 while the sun shadow maps are being updated this frame. Published
+		// every exterior frame by ShadowManager::RenderExteriorShadows (NOT by PublishShadowBiasConstants,
+		// which only runs on sun frames); the apply shader disables its terminator ramp when it is 0.
 		D3DXVECTOR4		ShadowBiasAdaptive;
 	};
 
