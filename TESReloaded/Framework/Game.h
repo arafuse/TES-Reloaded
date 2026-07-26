@@ -2920,6 +2920,7 @@ public:
 	bool				IsThirdPersonView(bool CameraMode, bool FirstPersonView) { return (!CameraMode ? isThirdPerson : !FirstPersonView); }
 	bool				IsVanityView() { return *(bool*)0x011E07B8; }
 	TESWorldSpace*		GetWorldSpace() { return (parentCell != NULL ? parentCell->worldSpace : NULL); }
+	bool				IsExteriorLike() { return parentCell != NULL && (parentCell->worldSpace != NULL || (parentCell->flags0 & TESObjectCELL::kFlags0_BehaveLikeExterior)); }
 	TESRegion*			GetRegion() { return currentRegion; }
 	void				UpdateInventory() {}
 
@@ -6801,6 +6802,7 @@ public:
 	bool			IsThirdPersonView(bool CameraMode, bool FirstPersonView) { return (!CameraMode ? isThirdPerson : !FirstPersonView); }
 	bool			IsVanityView() { return *(bool*)0x00B3BB04; }
 	TESWorldSpace*  GetWorldSpace() { return (parentCell != NULL ? parentCell->worldSpace : NULL); }
+	bool			IsExteriorLike() { return parentCell != NULL && (parentCell->worldSpace != NULL || (parentCell->flags0 & TESObjectCELL::kFlags0_BehaveLikeExterior)); }
 	TESRegion*		GetRegion() { return currentRegion; }
 	void			UpdateInventory() { void (*UpdateInventoryMenu)() = (void(*)())0x005AADC0; ThisCall(0x00668CC0, this); ThisCall(0x006575B0, this->process, this, 1, 0, 0); ThisCall(0x0060E260, this); UpdateInventoryMenu(); }
 
@@ -11849,6 +11851,7 @@ public:
 						}
 	bool				IsVanityView() { return false; }
 	TESWorldSpace*		GetWorldSpace() { return (parentCell != NULL ? parentCell->worldSpace : NULL); }
+	bool				IsExteriorLike() { return GetWorldSpace() != NULL; } // SKYRIM's TESObjectCELL has no BehaveLikeExterior flag
 	TESRegion*			GetRegion() { return NULL; }
 	void				UpdateInventory() {}
 
