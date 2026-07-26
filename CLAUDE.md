@@ -26,6 +26,8 @@ powershell -Command "& 'C:\Development\Microsoft\Visual Studio\18\Community\MSBu
 
 There are no tests or linting tools configured.
 
+Shaders are automatically deployed via directory symbolic link in the game folder.
+
 ## Architecture
 
 ### Code Organization

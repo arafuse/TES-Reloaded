@@ -1,0 +1,1 @@
+- Don't offer to push or merge branches.
