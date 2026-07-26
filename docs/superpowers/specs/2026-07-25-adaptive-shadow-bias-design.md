@@ -208,6 +208,26 @@ deferredFarConstBias = 0.0004  ; was 0.001
 These are starting points for in-game tuning, not final values. The toggle exists so they
 can be landed by direct A/B comparison.
 
+**Landed values (in-game tuned, 2026-07-26).** The two const biases went UP, not down:
+
+```ini
+deferredConstBias    = 0.001   ; not 0.00015
+deferredFarConstBias = 0.001   ; not 0.0004
+```
+
+The prediction above was wrong, and the reason is worth recording. Lowering the
+constants assumed the `(1 + slope)` multiplier would make up the difference. It does
+not: `slope` is ~0 on surfaces facing the sun, which is exactly where the acne showed
+up. The legacy path's *unclamped* `tan(acos(cosTheta))` had been inflating bias on
+every surface — because its `cosTheta` came from an encoded normal and an `abs()`'d
+light dir and was meaningless — so the old constants were never doing the work
+attributed to them. Clamping the slope term correctly removed that blanket inflation
+and the constant had to rise to cover the sun-facing case on its own.
+
+Consequence for the VolumetricLight coupling noted below: at these values its near
+bias is 2.5x the legacy value and its far bias is unchanged, so the risk direction is
+delayed shadowing in its shafts rather than acne.
+
 Pre-change values, for reference when running the legacy path (`AdaptiveBias = 0`), since
 the normal-offset keys change meaning between paths:
 
