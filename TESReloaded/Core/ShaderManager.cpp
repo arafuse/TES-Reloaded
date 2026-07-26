@@ -1155,7 +1155,7 @@ void ShaderManager::InitializeConstants() {
 
 void ShaderManager::UpdateShaderStates() {
 
-	if (Player->GetWorldSpace()) {
+	if (Player->IsExteriorLike()) {
 		if (LocationState != CellLocation::Exterior) {
 			LocationState = CellLocation::Exterior;
 			DisposeShader("InteriorShadows");
@@ -2280,6 +2280,7 @@ void ShaderManager::UpdateConstants() {
 	TESWeather* previousWeather = WorldSky->secondWeather;
 	TESObjectCELL* currentCell = Player->parentCell;
 	TESWorldSpace* currentWorldSpace = Player->GetWorldSpace();
+	bool isExteriorLike = Player->IsExteriorLike();
 	TESRegion* currentRegion = Player->GetRegion();
 	float weatherPercent = WorldSky->weatherPercent;
 	float dayPercent = 0;
@@ -2300,7 +2301,7 @@ void ShaderManager::UpdateConstants() {
 	TheRenderManager->GetSceneCameraData();
 
 	//Is fully init'd after two frame passes due to time calculations with sundir
-	if (!isFullyInitialized && currentWorldSpace) {
+	if (!isFullyInitialized && isExteriorLike) {
 		if (InitFrameCount < InitFrameTarget) {
 			InitFrameCount++;
 		}
@@ -2316,7 +2317,7 @@ void ShaderManager::UpdateConstants() {
 		UpdateCelestialDirections(ShaderConst, SunRoot, Masser, Secunda, currentClimate, lastGameTime);
 		UpdateMoonPhaseCoeff(ShaderConst, currentClimate, GameDay);
 
-		if (currentWorldSpace)
+		if (isExteriorLike)
 			dayPercent = UpdateExteriorLighting(ShaderConst, currentWeather, previousWeather, weatherPercent);
 		else
 			UpdateInteriorLighting(ShaderConst, currentCell, InteriorLighting, isFullyInitialized, InitFrameCount);
@@ -3071,17 +3072,17 @@ void ShaderManager::ProfileBlitToSource(IDirect3DSurface9* RenderTarget) {
 void ShaderManager::RenderEffects(IDirect3DSurface9* RenderTarget) {
 	SettingsMainStruct::EffectsStruct* Effects = &TheSettingManager->SettingsMain.Effects;
 	IDirect3DDevice9* Device = TheRenderManager->device;
-	TESWorldSpace* currentWorldSpace = Player->GetWorldSpace();
+	bool isExteriorLike = Player->IsExteriorLike();
 	D3DXVECTOR4* SunDir = &TheShaderManager->ShaderConst.SunDir;
 
 	EffectProfileChainBegin(Device);
 
-	if (Effects->WetWorld && currentWorldSpace && ShaderConst.WetWorld.Data.x > 0.0f) {
+	if (Effects->WetWorld && isExteriorLike && ShaderConst.WetWorld.Data.x > 0.0f) {
 		ProfileBlitToSource(RenderTarget);
 		WetWorldEffect->SetCT();
 		WetWorldEffect->Render(Device, RenderTarget, RenderedSurface, false);
 	}
-	else if (Effects->SnowAccumulation && currentWorldSpace && ShaderConst.SnowAccumulation.Params.w > 0.0f) {
+	else if (Effects->SnowAccumulation && isExteriorLike && ShaderConst.SnowAccumulation.Params.w > 0.0f) {
 		ProfileBlitToSource(RenderTarget);
 		SnowAccumulationEffect->SetCT();
 		SnowAccumulationEffect->Render(Device, RenderTarget, RenderedSurface, false);
@@ -3107,7 +3108,7 @@ void ShaderManager::RenderEffects(IDirect3DSurface9* RenderTarget) {
 		else if (ShaderConst.WaterLens.Percent <= -1.0f)
 			ShaderConst.WaterLens.Percent = 0.0f;
 
-		if (Effects->Precipitations && currentWorldSpace) {
+		if (Effects->Precipitations && isExteriorLike) {
 			if (ShaderConst.Precipitations.RainData.x > 0.0f) {
 				RainEffect->SetCT();
 				RainEffect->Render(Device, RenderTarget, RenderedSurface, false);
@@ -3122,12 +3123,12 @@ void ShaderManager::RenderEffects(IDirect3DSurface9* RenderTarget) {
 			AmbientOcclusionEffect->SetCT();
 			AmbientOcclusionEffect->Render(Device, RenderTarget, RenderedSurface, false);
 		}
-		if (Effects->GodRays && currentWorldSpace && (ShaderConst.SunAmount.x >= 0.4 || ShaderConst.SunAmount.y > 0 || ShaderConst.SunAmount.z >= 0.3)) {
+		if (Effects->GodRays && isExteriorLike && (ShaderConst.SunAmount.x >= 0.4 || ShaderConst.SunAmount.y > 0 || ShaderConst.SunAmount.z >= 0.3)) {
 			ProfileBlitToSource(RenderTarget);
 			GodRaysEffect->SetCT();
 			GodRaysEffect->Render(Device, RenderTarget, RenderedSurface, false);
 		}
-		else if (ShaderConst.MoonsExist && Effects->KhajiitRays && currentWorldSpace && (ShaderConst.SunAmount.x < 0.4 || ShaderConst.SunAmount.z < 0.3)) {
+		else if (ShaderConst.MoonsExist && Effects->KhajiitRays && isExteriorLike && (ShaderConst.SunAmount.x < 0.4 || ShaderConst.SunAmount.z < 0.3)) {
 			ProfileBlitToSource(RenderTarget);
 			SecundaRaysEffect->SetCT();
 			SecundaRaysEffect->Render(Device, RenderTarget, RenderedSurface, false);
@@ -3135,14 +3136,14 @@ void ShaderManager::RenderEffects(IDirect3DSurface9* RenderTarget) {
 			MasserRaysEffect->SetCT();
 			MasserRaysEffect->Render(Device, RenderTarget, RenderedSurface, false);
 		}
-		if (Effects->VolumetricFog && currentWorldSpace && ShaderConst.VolumetricFog.Data.w) {
+		if (Effects->VolumetricFog && isExteriorLike && ShaderConst.VolumetricFog.Data.w) {
 			// VolumetricFog samples only TESR_RenderedBuffer/TESR_DepthBuffer, never
 			// TESR_SourceBuffer -- so the scene->SourceSurface blit was wasted work.
 			VolumetricFogEffect->SetCT();
 			VolumetricFogEffect->Render(Device, RenderTarget, RenderedSurface, false);
 		}
 	}
-	if (Effects->VolumetricLight && currentWorldSpace) {
+	if (Effects->VolumetricLight && isExteriorLike) {
 		ProfileBlitToSource(RenderTarget);
 		VolumetricLightEffect->SetCT();
 		VolumetricLightEffect->Render(Device, RenderTarget, RenderedSurface, false);
@@ -3272,7 +3273,7 @@ void ShaderManager::RenderEffectsPostHdr(IDirect3DSurface9* RenderTargetParam) {
 // block, restoring the exact device state the engine's state caches believe is current.
 void ShaderManager::RenderShadowsMidScene() {
 
-	bool DoSun = TheSettingManager->SettingsShadows.Exteriors.UsePostProcessing && ShadowsExteriorsEffect && Player->GetWorldSpace();
+	bool DoSun = TheSettingManager->SettingsShadows.Exteriors.UsePostProcessing && ShadowsExteriorsEffect && Player->IsExteriorLike();
 	bool DoPoint = TheSettingManager->SettingsShadows.Point.UsePostProcessing && ShadowsPointEffect
 		&& TheShadowManager && TheShadowManager->PointSlotsActive > 0;
 	if (!DoSun && !DoPoint) return;
@@ -3316,6 +3317,7 @@ void ShaderManager::RenderShadowsMidScene() {
 void ShaderManager::LoadEffectSettings() {
 	TESObjectCELL* currentCell = Player->parentCell;
 	TESWorldSpace* currentWorldSpace = Player->GetWorldSpace();
+	bool isExteriorLike = Player->IsExteriorLike();
 		//Color
 		if (!(scs = TheSettingManager->GetSettingsColoring(currentCell->GetEditorName())))
 			if (currentWorldSpace)
@@ -3344,14 +3346,14 @@ void ShaderManager::LoadEffectSettings() {
 
 
 		//Ambient Occlusion
-		if (currentWorldSpace)
+		if (isExteriorLike)
 			sas = TheSettingManager->GetSettingsAmbientOcclusion("Exterior");
 		else
 			sas = TheSettingManager->GetSettingsAmbientOcclusion("Interior");
 
 
 		//Interior Lighting
-		if (currentWorldSpace) {
+		if (isExteriorLike) {
 			//do nothing
 		}
 		else {

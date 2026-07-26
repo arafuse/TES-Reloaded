@@ -1149,7 +1149,7 @@ bool ShadowManager::OrthoNeeded() {
 bool ShadowManager::SunShadowNeeded() {
 	if (!TheSettingManager->SettingsShadows.Exteriors.UsePostProcessing) return false;
 	if (!TheShaderManager->isFullyInitialized) return false;
-	if (!Player->GetWorldSpace()) return false;
+	if (!Player->IsExteriorLike()) return false;
 	return TheShaderManager->ShaderConst.ShadowMap.ShadowLightDir.z > TheSettingManager->SettingsShadows.Exteriors.SunUpThreshold;
 }
 
@@ -1161,7 +1161,7 @@ bool ShadowManager::SunShadowNeeded() {
 //    space by ShadowsExteriors.fx, plus the MapSkin per-frame actor overlay (RenderActorOverlay).
 // Point-light cube shadows are a separate pass (RenderPointShadows, driven from RenderShadowMaps).
 void ShadowManager::RenderExteriorShadows() {
-	if (!Player->GetWorldSpace()) return;
+	if (!Player->IsExteriorLike()) return;
 	bool DoOrtho = OrthoNeeded();
 	bool DoSun   = SunShadowNeeded();
 	// Published every exterior frame, including ones with no sun: the apply shader runs on a
