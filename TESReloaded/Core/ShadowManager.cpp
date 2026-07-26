@@ -195,7 +195,9 @@ void ShadowManager::PublishShadowBiasConstants(SettingsShadowStruct::ExteriorsSt
 	Sm.ShadowBiasAdaptive.x = Ext.BiasTerminatorWidth;
 	Sm.ShadowBiasAdaptive.y = Ext.BiasMaxSlope;
 	Sm.ShadowBiasAdaptive.z = Ext.AdaptiveBias ? 1.0f : 0.0f;
-	Sm.ShadowBiasAdaptive.w = 0.0f;
+	// .w (sun-active flag) is deliberately NOT written here. It is owned by RenderExteriorShadows,
+	// which sets it every exterior frame BEFORE its no-work early return -- this function only runs
+	// on frames that already have sun, so writing .w here could never clear it.
 }
 
 // Startup publish. Uses the canonical Exteriors struct rather than SelectExteriorShadowSettings(),
@@ -285,6 +287,20 @@ ShadowManager::ShadowManager() {
 	SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors = &TheSettingManager->SettingsShadows.Exteriors;
 
 	InitShadowBiasConstants();
+
+	// Shadow.Data.y is the shadow "darkness" multiplier, and it is only written on a DoSun frame
+	// (RenderExteriorShadows). ShaderConst is a plain member that is never zeroed, so it must be
+	// given a sane value here: the apply shader reads it as `darkness` on the very first exterior
+	// frames after a load, and ShaderManager reads it as the LOWER bound of several std::clamp()
+	// calls on ShadowLightDir.w -- where a garbage value above 1.0 would be undefined behavior.
+	// 1.0 means "no darkening", the safe neutral default.
+	TheShaderManager->ShaderConst.Shadow.Data.y = 1.0f;
+
+	// Same reasoning for the sun-active flag: RenderExteriorShadows writes it on every worldspace
+	// frame (which is also the only condition under which the apply effect runs), so nothing should
+	// read it unwritten -- but since PublishShadowBiasConstants deliberately does not touch it, seed
+	// it explicitly rather than leaving it as uninitialized memory. 0 = terminator ramp off.
+	TheShaderManager->ShaderConst.ShadowMap.ShadowBiasAdaptive.w = 0.0f;
 
 	UINT ShadowCubeMapSize = TheSettingManager->SettingsShadows.Point.ShadowCubeMapSize;
 
@@ -1148,6 +1164,10 @@ void ShadowManager::RenderExteriorShadows() {
 	if (!Player->GetWorldSpace()) return;
 	bool DoOrtho = OrthoNeeded();
 	bool DoSun   = SunShadowNeeded();
+	// Published every exterior frame, including ones with no sun: the apply shader runs on a
+	// broader condition than this function's shadow work, and its terminator ramp must switch
+	// off when the maps stop updating (otherwise it darkens flat ground as the sun sets).
+	TheShaderManager->ShaderConst.ShadowMap.ShadowBiasAdaptive.w = DoSun ? 1.0f : 0.0f;
 	if (!DoOrtho && !DoSun) return;
 	ScopeTimer profile(Phase_ExtTotal);
 

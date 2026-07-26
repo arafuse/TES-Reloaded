@@ -62,8 +62,9 @@ Adds the settings, the new shader constant, and a per-frame publish that applies
 - Verify: build + in-game observation
 
 **Interfaces:**
-- Produces: `ShadowManager::PublishShadowBiasConstants(SettingsShadowStruct::ExteriorsStruct* Selected)` — publishes all four `ShadowBiasDeferred` components and all four `ShadowBiasAdaptive` components. Task 2's shader reads them.
-- Produces: `ShaderConst.ShadowMap.ShadowBiasAdaptive` (`D3DXVECTOR4`), bound to the HLSL name `TESR_ShadowBiasAdaptive`. Layout: `x` = terminator width, `y` = max slope clamp, `z` = enable (0 or 1), `w` = unused, always 0.
+- Produces: `ShadowManager::PublishShadowBiasConstants(SettingsShadowStruct::ExteriorsStruct* Selected)` — publishes all four `ShadowBiasDeferred` components and the `x`/`y`/`z` components of `ShadowBiasAdaptive`. Task 2's shader reads them.
+- Produces: `ShaderConst.ShadowMap.ShadowBiasAdaptive` (`D3DXVECTOR4`), bound to the HLSL name `TESR_ShadowBiasAdaptive`. Layout: `x` = terminator width, `y` = max slope clamp, `z` = enable (0 or 1), `w` = sun active (0 or 1).
+- `w` is NOT written by `PublishShadowBiasConstants` — that function only runs on frames that already have sun, so it could never clear the flag. It is owned by `RenderExteriorShadows`, which sets it from `DoSun` on every exterior frame, before its `if (!DoOrtho && !DoSun) return;` early return. The apply effect runs on a broader condition than the shadow pass, so the shader ANDs the terminator ramp against this flag (`facing = max(facing, 1 - w)`); with `w = 0` the ramp disables itself, which is also the safe failure mode if nothing publishes it.
 - Produces: `SettingsShadowStruct::ExteriorsStruct::AdaptiveBias` (`bool`), `::BiasTerminatorWidth` (`float`), `::BiasMaxSlope` (`float`).
 
 - [ ] **Step 1: Establish the baseline you expect NOT to change**
