@@ -162,6 +162,15 @@ float GetLightAmountFar(float4 ShadowPos, float bias) {
 
 }
 
+// How much of this cascade's ortho box the receiver is inside: 1 well within, ramping to 0 at the
+// border. Mirrors the bounds tests in GetLightAmount/GetLightAmountFar, which return "lit" outside
+// the box, but as a smooth ramp so the effect fades out instead of ending on a hard circle.
+float CascadeCoverage(float4 ShadowPos) {
+	float3 ndc = ShadowPos.xyz / ShadowPos.w;
+	if (ndc.z < 0.0f || ndc.z > 1.0f) return 0.0f;
+	return 1.0f - smoothstep(0.9f, 1.0f, max(abs(ndc.x), abs(ndc.y)));
+}
+
 float Lookup(float4 ShadowPos, float2 OffSet, float bias) {
 	float Shadow = tex2D(TESR_ShadowMapBufferNear, ShadowPos.xy + float2(OffSet.x * TESR_ShadowData.z, OffSet.y * TESR_ShadowData.z)).r;
 	if (Shadow < ShadowPos.z - bias) return darkness;
@@ -340,6 +349,26 @@ float4 Shadow(VSOUT IN) : COLOR0{
 		// (the branch is dynamic, so fxc emits a real `lrp` rather than folding it away) -- far
 		// below the quantization of the 8-bit output.
 		float Shadow = lerp(darkness, mapShadow, facing);
+
+		// Fade the whole term out where the maps have no data. The far cascade is an ortho box of
+		// half-width ShadowMapRadius[MapFar] (8192 by default) around the player, so every distant-LOD
+		// receiver -- LOD terrain, distant statics, tree billboards -- sits OUTSIDE it, and both bounds
+		// tests above already return "lit" there. The terminator ramp did not: it kept darkening those
+		// pixels straight from `facing`, i.e. purely from a screen-space normal, with no shadow map
+		// involved at all. At LOD range that normal is meaningless. Depth quantization terraces the far
+		// depth buffer (one 24-bit LSB is tens of world units out there, comparable to a pixel's own
+		// lateral footprint), so getRawNormal collapses to +/-viewRay in contour bands; and billboards
+		// are camera-facing by construction, so they reconstruct as facing the camera everywhere. Both
+		// make N.L swing with camera PITCH rather than with the surface, which is the striped shadowing
+		// that washes over distant mountains and their trees as you look up and down.
+		//
+		// Gating on coverage rather than on a distance constant keeps this exact under any
+		// ShadowMapRadius, and the ramp also softens the hard edge the bounds tests already had.
+		// max() because a receiver inside the near box is served by the near map even where it is at
+		// the far box's border (the two cascades snap to independently drifting anchors).
+		float coverage = max(CascadeCoverage(ShadowNear), CascadeCoverage(ShadowFar));
+		Shadow = lerp(1.0f, Shadow, coverage);
+
 		color.rgb *= saturate(Shadow * fogCoeff) * float3(1.0f, 1.0f, 1.0f);
 	}
 	return float4(color, 1.0f);
