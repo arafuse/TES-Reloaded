@@ -346,14 +346,8 @@ bool ShaderProgram::SetConstantTableValue1(LPCSTR Name, UInt32 Index) {
 		FloatShaderValues[Index].Value = (D3DXVECTOR4*)&TheShaderManager->ShaderConst.ShadowMap.ShadowCastLightPosition[2];
 	else if (!strcmp(Name, "TESR_ShadowLightPosition3"))
 		FloatShaderValues[Index].Value = (D3DXVECTOR4*)&TheShaderManager->ShaderConst.ShadowMap.ShadowCastLightPosition[3];
-	else if (!strcmp(Name, "TESR_ShadowLightColor0"))
-		FloatShaderValues[Index].Value = (D3DXVECTOR4*)&TheShaderManager->ShaderConst.ShadowMap.ShadowCastLightColor[0];
-	else if (!strcmp(Name, "TESR_ShadowLightColor1"))
-		FloatShaderValues[Index].Value = (D3DXVECTOR4*)&TheShaderManager->ShaderConst.ShadowMap.ShadowCastLightColor[1];
-	else if (!strcmp(Name, "TESR_ShadowLightColor2"))
-		FloatShaderValues[Index].Value = (D3DXVECTOR4*)&TheShaderManager->ShaderConst.ShadowMap.ShadowCastLightColor[2];
-	else if (!strcmp(Name, "TESR_ShadowLightColor3"))
-		FloatShaderValues[Index].Value = (D3DXVECTOR4*)&TheShaderManager->ShaderConst.ShadowMap.ShadowCastLightColor[3];
+	else if (!strcmp(Name, "TESR_ShadowLightLuminance"))
+		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.ShadowMap.ShadowCastLightLuminance;
 	else if (!strcmp(Name, "TESR_ShadowBiasDeferred"))
 		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.ShadowMap.ShadowBiasDeferred;
 	else if (!strcmp(Name, "TESR_ShadowBiasAdaptive"))

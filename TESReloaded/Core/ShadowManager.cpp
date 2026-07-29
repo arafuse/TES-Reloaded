@@ -1378,7 +1378,8 @@ void ShadowManager::SelectPointLights() {
 // w == 0 marks an inactive slot for the shader.
 void ShadowManager::PublishPointLightConstants() {
 	D3DXVECTOR4* Positions = TheShaderManager->ShaderConst.ShadowMap.ShadowCastLightPosition;
-	D3DXVECTOR4* Colors = TheShaderManager->ShaderConst.ShadowMap.ShadowCastLightColor;
+	// One component per slot, so index it as a float array (D3DXVECTOR4 converts implicitly).
+	float* Luminance = TheShaderManager->ShaderConst.ShadowMap.ShadowCastLightLuminance;
 	// Diff/Dimmer are read nowhere else in this fork (only Spec.r, which stores the radius), so log
 	// them once per slot occupant while shadow profiling is on: an unpopulated Diff or a zero Dimmer
 	// would silently produce no point shadows at all, with nothing else to point at the cause.
@@ -1388,7 +1389,7 @@ void ShadowManager::PublishPointLightConstants() {
 		NiPointLight* Light = PointSlots[s].Light;
 		if (!Light) {
 			Positions[s] = D3DXVECTOR4(0.0f, 0.0f, 0.0f, 0.0f);
-			Colors[s] = D3DXVECTOR4(0.0f, 0.0f, 0.0f, 0.0f);
+			Luminance[s] = 0.0f;
 			LastLoggedLight[s] = NULL;
 			continue;
 		}
@@ -1400,12 +1401,11 @@ void ShadowManager::PublishPointLightConstants() {
 		Positions[s].y = LightPos->y - TheRenderManager->CameraPosition.y;
 		Positions[s].z = LightPos->z - TheRenderManager->CameraPosition.z;
 		Positions[s].w = FarPlane;
-		// The shadow removes this light's own contribution, so the apply needs the colour the light
-		// adds — diffuse scaled by the dimmer, as the engine's own lighting shaders use it.
-		Colors[s].x = Light->Diff.r * Light->Dimmer;
-		Colors[s].y = Light->Diff.g * Light->Dimmer;
-		Colors[s].z = Light->Diff.b * Light->Dimmer;
-		Colors[s].w = 0.0f;
+		// The shadow removes this light's own contribution, so the apply needs how bright the light
+		// is — diffuse scaled by the dimmer, as the engine's own lighting shaders use it, reduced to
+		// a single luma (Rec. 601). Brightness only, deliberately not colour: removing the light's
+		// hue tinted shadows in a way that read wrong in game.
+		Luminance[s] = (0.299f * Light->Diff.r + 0.587f * Light->Diff.g + 0.114f * Light->Diff.b) * Light->Dimmer;
 		if (ProfilingEnabled && LastLoggedLight[s] != Light) {
 			LastLoggedLight[s] = Light;
 			Logger::Log("[ShadowProfile] point slot %d: Diff=(%.3f, %.3f, %.3f) Dimmer=%.3f Radius=%.1f CanCarry=%d",
@@ -1576,8 +1576,8 @@ void ShadowManager::RenderPointShadows() {
 			PointSlots[s].Light = NULL;
 			PointSlots[s].Valid = false;
 			TheShaderManager->ShaderConst.ShadowMap.ShadowCastLightPosition[s] = D3DXVECTOR4(0.0f, 0.0f, 0.0f, 0.0f);
-			TheShaderManager->ShaderConst.ShadowMap.ShadowCastLightColor[s] = D3DXVECTOR4(0.0f, 0.0f, 0.0f, 0.0f);
 		}
+		TheShaderManager->ShaderConst.ShadowMap.ShadowCastLightLuminance = D3DXVECTOR4(0.0f, 0.0f, 0.0f, 0.0f);
 		return;
 	}
 	ScopeTimer profile(Phase_PointTotal);
