@@ -343,7 +343,6 @@ struct SettingsShadowStruct {
 		bool				TorchesCastShadows;
 		int					ShadowCubeMapSize;
 		int					LightCount;			// active cube-map lights, clamped 1..PointLightMax(4)
-		float				Darkness;
 		float				LightRadiusMin;		// candidate light radius bounds (NiPointLight::Spec.r)
 		float				LightRadiusMax;
 		float				MaxDistance;		// max light distance from player to cast shadows
