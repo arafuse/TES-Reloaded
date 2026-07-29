@@ -1596,6 +1596,10 @@ void ShadowManager::RenderPointShadows() {
 	PublishPointLightConstants();
 
 	D3DXVECTOR4* PointData = &TheShaderManager->ShaderConst.ShadowPoint.PointData;
+	// Dead since darkness became light-derived, but a stale compiled ShadowsPoint.fx still reads .y
+	// as its darkness preshader (CompileShaders defaults off). 1.0 makes that case degrade to
+	// "no point shadows" rather than an unwritten read.
+	PointData->y = 1.0f;
 	PointData->z = 1.0f / (float)TheSettingManager->SettingsShadows.Point.ShadowCubeMapSize;
 	PointData->w = TheSettingManager->SettingsShadows.Point.Bias;
 

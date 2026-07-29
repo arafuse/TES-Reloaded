@@ -80,8 +80,10 @@ float readDepth(in float2 coord : TEXCOORD0)
 }
 
 // One light's contribution. Returns the per-channel factor to multiply scene color by: 1 = unshadowed.
-// A shadowed pixel loses exactly what this light was adding, so a torch's shadow reads cooler than
-// its lit surroundings and a dim light casts a correspondingly faint shadow.
+// This is an approximation, not a true light subtraction: the result multiplies the already-composited
+// scene colour, so a shadowed pixel loses a fraction of ambient and of every other light too, not just
+// this one -- it over-darkens where ambient dominates. It also ignores N.L. Still, a torch's shadow
+// reads cooler than its lit surroundings and a dim light casts a correspondingly faint shadow.
 float3 GetPointShadow(samplerCUBE cubeMap, float4 lightPos, float3 lightCol, float3 pixelPos)
 {
 	if (lightPos.w == 0.0f) return float3(1.0f, 1.0f, 1.0f); // empty slot
@@ -115,10 +117,15 @@ float3 GetPointShadow(samplerCUBE cubeMap, float4 lightPos, float3 lightCol, flo
 
 	// The engine's own falloff: its lighting shaders build attenuation UVs as compress(lightVec /
 	// radius) and combine them saturate(1 - att_xy - att_z), i.e. this quadratic ramp. dist is
-	// normalized by the CUBE FAR PLANE, so the contribution reaches zero exactly where the cube's
-	// coverage stops -- which is why no separate edge fade is needed here.
+	// normalized by the CUBE FAR PLANE, which equals the authored radius Spec.r for non-carried
+	// lights, so for those the contribution reaches zero exactly where the cube's coverage stops.
+	// Carried torches pin the far plane to a fixed 257.0 while the engine still attenuates by the
+	// (larger) authored radius, so for those the shadow fades out before the torch stops lighting.
+	// Either way the ramp is smooth, so no separate edge fade is needed here.
 	float att = saturate(1.0f - dist * dist);
-	float3 unlit = 1.0f - saturate(lightCol * att);
+	// Clamp the colour, not the product: a Dimmer > 1 would otherwise inflate lightCol * att past 1
+	// and flatten unlit to 0 (solid black) across a large fraction of the radius, not just at dist=0.
+	float3 unlit = 1.0f - saturate(lightCol) * att;
 	return lerp(unlit, float3(1.0f, 1.0f, 1.0f), lit);
 }
 
