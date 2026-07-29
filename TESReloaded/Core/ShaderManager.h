@@ -64,6 +64,9 @@ struct ShaderConstants {
 		// Size must stay in step with ShadowManager::PointLightMax (this header is included first,
 		// so it cannot reference it) and with the sampler count in ShadowsPoint.fx.
 		D3DXVECTOR4		ShadowCastLightPosition[4];
+		// Per point-light slot: xyz = Diff * Dimmer, the colour this light contributes and therefore
+		// the colour its shadow removes. w unused. Same size constraint as ShadowCastLightPosition.
+		D3DXVECTOR4		ShadowCastLightColor[4];
 		D3DXVECTOR4		ShadowLightDir;
 		D3DXVECTOR4		ShadowBiasDeferred;
 		// x = terminator width, y = max slope clamp, z = adaptive enable (0/1),

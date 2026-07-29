@@ -1378,11 +1378,18 @@ void ShadowManager::SelectPointLights() {
 // w == 0 marks an inactive slot for the shader.
 void ShadowManager::PublishPointLightConstants() {
 	D3DXVECTOR4* Positions = TheShaderManager->ShaderConst.ShadowMap.ShadowCastLightPosition;
+	D3DXVECTOR4* Colors = TheShaderManager->ShaderConst.ShadowMap.ShadowCastLightColor;
+	// Diff/Dimmer are read nowhere else in this fork (only Spec.r, which stores the radius), so log
+	// them once per slot occupant while shadow profiling is on: an unpopulated Diff or a zero Dimmer
+	// would silently produce no point shadows at all, with nothing else to point at the cause.
+	static NiPointLight* LastLoggedLight[PointLightMax] = { NULL };
 	int Active = 0;
 	for (int s = 0; s < PointLightMax; s++) {
 		NiPointLight* Light = PointSlots[s].Light;
 		if (!Light) {
 			Positions[s] = D3DXVECTOR4(0.0f, 0.0f, 0.0f, 0.0f);
+			Colors[s] = D3DXVECTOR4(0.0f, 0.0f, 0.0f, 0.0f);
+			LastLoggedLight[s] = NULL;
 			continue;
 		}
 		NiPoint3* LightPos = &Light->m_worldTransform.pos;
@@ -1393,6 +1400,17 @@ void ShadowManager::PublishPointLightConstants() {
 		Positions[s].y = LightPos->y - TheRenderManager->CameraPosition.y;
 		Positions[s].z = LightPos->z - TheRenderManager->CameraPosition.z;
 		Positions[s].w = FarPlane;
+		// The shadow removes this light's own contribution, so the apply needs the colour the light
+		// adds — diffuse scaled by the dimmer, as the engine's own lighting shaders use it.
+		Colors[s].x = Light->Diff.r * Light->Dimmer;
+		Colors[s].y = Light->Diff.g * Light->Dimmer;
+		Colors[s].z = Light->Diff.b * Light->Dimmer;
+		Colors[s].w = 0.0f;
+		if (ProfilingEnabled && LastLoggedLight[s] != Light) {
+			LastLoggedLight[s] = Light;
+			Logger::Log("[ShadowProfile] point slot %d: Diff=(%.3f, %.3f, %.3f) Dimmer=%.3f Radius=%.1f CanCarry=%d",
+				s, Light->Diff.r, Light->Diff.g, Light->Diff.b, Light->Dimmer, Light->Spec.r, (int)Light->CanCarry);
+		}
 		Active++;
 	}
 	PointSlotsActive = Active;
@@ -1558,6 +1576,7 @@ void ShadowManager::RenderPointShadows() {
 			PointSlots[s].Light = NULL;
 			PointSlots[s].Valid = false;
 			TheShaderManager->ShaderConst.ShadowMap.ShadowCastLightPosition[s] = D3DXVECTOR4(0.0f, 0.0f, 0.0f, 0.0f);
+			TheShaderManager->ShaderConst.ShadowMap.ShadowCastLightColor[s] = D3DXVECTOR4(0.0f, 0.0f, 0.0f, 0.0f);
 		}
 		return;
 	}
