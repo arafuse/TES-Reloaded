@@ -1267,8 +1267,6 @@ void SettingManager::LoadSettings() {
 	SettingsShadows.Point.LightCount = GetPrivateProfileIntA("Point", "LightCount", 4, Filename);
 	if (SettingsShadows.Point.LightCount < 1) SettingsShadows.Point.LightCount = 1;
 	if (SettingsShadows.Point.LightCount > 4) SettingsShadows.Point.LightCount = 4;
-	GetPrivateProfileStringA("Point", "Darkness", "0.2", value, SettingStringBuffer, Filename);
-	SettingsShadows.Point.Darkness = atof(value);
 	GetPrivateProfileStringA("Point", "LightRadiusMin", "64.0", value, SettingStringBuffer, Filename);
 	SettingsShadows.Point.LightRadiusMin = atof(value);
 	GetPrivateProfileStringA("Point", "LightRadiusMax", "8192.0", value, SettingStringBuffer, Filename);

@@ -15,7 +15,8 @@ public:
 		MapSkin     = 3,
 	};
 	// Compile-time cap on simultaneous shadow-casting point lights (cube maps allocated,
-	// sampler slots in ShadowsPoint.fx, TESR_ShadowLightPosition0..N-1 constants).
+	// sampler slots in ShadowsPoint.fx, TESR_ShadowLightPosition0..N-1 constants, and the
+	// component count of TESR_ShadowLightLuminance).
 	// [Point] LightCount can lower the active count at runtime but never exceed this.
 	static const int PointLightMax = 4;
 	enum PlaneEnum {

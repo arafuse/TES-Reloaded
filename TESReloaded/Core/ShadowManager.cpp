@@ -1378,11 +1378,19 @@ void ShadowManager::SelectPointLights() {
 // w == 0 marks an inactive slot for the shader.
 void ShadowManager::PublishPointLightConstants() {
 	D3DXVECTOR4* Positions = TheShaderManager->ShaderConst.ShadowMap.ShadowCastLightPosition;
+	// One component per slot, so index it as a float array (D3DXVECTOR4 converts implicitly).
+	float* Luminance = TheShaderManager->ShaderConst.ShadowMap.ShadowCastLightLuminance;
+	// Diff/Dimmer are read nowhere else in this fork (only Spec.r, which stores the radius), so log
+	// them once per slot occupant while shadow profiling is on: an unpopulated Diff or a zero Dimmer
+	// would silently produce no point shadows at all, with nothing else to point at the cause.
+	static NiPointLight* LastLoggedLight[PointLightMax] = { NULL };
 	int Active = 0;
 	for (int s = 0; s < PointLightMax; s++) {
 		NiPointLight* Light = PointSlots[s].Light;
 		if (!Light) {
 			Positions[s] = D3DXVECTOR4(0.0f, 0.0f, 0.0f, 0.0f);
+			Luminance[s] = 0.0f;
+			LastLoggedLight[s] = NULL;
 			continue;
 		}
 		NiPoint3* LightPos = &Light->m_worldTransform.pos;
@@ -1393,6 +1401,16 @@ void ShadowManager::PublishPointLightConstants() {
 		Positions[s].y = LightPos->y - TheRenderManager->CameraPosition.y;
 		Positions[s].z = LightPos->z - TheRenderManager->CameraPosition.z;
 		Positions[s].w = FarPlane;
+		// The shadow removes this light's own contribution, so the apply needs how bright the light
+		// is — diffuse scaled by the dimmer, as the engine's own lighting shaders use it, reduced to
+		// a single luma (Rec. 601). Brightness only, deliberately not colour: removing the light's
+		// hue tinted shadows in a way that read wrong in game.
+		Luminance[s] = (0.299f * Light->Diff.r + 0.587f * Light->Diff.g + 0.114f * Light->Diff.b) * Light->Dimmer;
+		if (ProfilingEnabled && LastLoggedLight[s] != Light) {
+			LastLoggedLight[s] = Light;
+			Logger::Log("[ShadowProfile] point slot %d: Diff=(%.3f, %.3f, %.3f) Dimmer=%.3f Radius=%.1f CanCarry=%d",
+				s, Light->Diff.r, Light->Diff.g, Light->Diff.b, Light->Dimmer, Light->Spec.r, (int)Light->CanCarry);
+		}
 		Active++;
 	}
 	PointSlotsActive = Active;
@@ -1559,6 +1577,7 @@ void ShadowManager::RenderPointShadows() {
 			PointSlots[s].Valid = false;
 			TheShaderManager->ShaderConst.ShadowMap.ShadowCastLightPosition[s] = D3DXVECTOR4(0.0f, 0.0f, 0.0f, 0.0f);
 		}
+		TheShaderManager->ShaderConst.ShadowMap.ShadowCastLightLuminance = D3DXVECTOR4(0.0f, 0.0f, 0.0f, 0.0f);
 		return;
 	}
 	ScopeTimer profile(Phase_PointTotal);
@@ -1577,7 +1596,10 @@ void ShadowManager::RenderPointShadows() {
 	PublishPointLightConstants();
 
 	D3DXVECTOR4* PointData = &TheShaderManager->ShaderConst.ShadowPoint.PointData;
-	PointData->y = TheSettingManager->SettingsShadows.Point.Darkness;
+	// Dead since darkness became light-derived, but a stale compiled ShadowsPoint.fx still reads .y
+	// as its darkness preshader (CompileShaders defaults off). 1.0 makes that case degrade to
+	// "no point shadows" rather than an unwritten read.
+	PointData->y = 1.0f;
 	PointData->z = 1.0f / (float)TheSettingManager->SettingsShadows.Point.ShadowCubeMapSize;
 	PointData->w = TheSettingManager->SettingsShadows.Point.Bias;
 

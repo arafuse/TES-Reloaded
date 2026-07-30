@@ -10,11 +10,12 @@
 
 float4x4 TESR_ViewTransform;
 float4x4 TESR_ProjectionTransform;
-float4 TESR_ShadowPointData;      // y = darkness, z = 1 / cube map size, w = depth bias
+float4 TESR_ShadowPointData;      // z = 1 / cube map size, w = depth bias
 float4 TESR_ShadowLightPosition0; // xyz = camera-relative light pos, w = far plane (0 = slot empty)
 float4 TESR_ShadowLightPosition1;
 float4 TESR_ShadowLightPosition2;
 float4 TESR_ShadowLightPosition3;
+float4 TESR_ShadowLightLuminance; // one component per slot (x=0..w=3): luma(Diff) * Dimmer
 
 sampler2D TESR_RenderedBuffer : register(s0) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
 sampler2D TESR_DepthBufferPreWater : register(s1) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
@@ -27,7 +28,6 @@ static const float nearZ = TESR_ProjectionTransform._43 / TESR_ProjectionTransfo
 static const float farZ = (TESR_ProjectionTransform._33 * nearZ) / (TESR_ProjectionTransform._33 - 1.0f);
 static const float Zmul = nearZ * farZ;
 static const float Zdiff = farZ - nearZ;
-static const float darkness = TESR_ShadowPointData.y; // INI [Point] Darkness. Preshader.
 static const float texelSize = TESR_ShadowPointData.z;
 static const float bias = TESR_ShadowPointData.w;
 
@@ -77,8 +77,12 @@ float readDepth(in float2 coord : TEXCOORD0)
 }
 
 // One light's contribution. Returns the factor to multiply scene color by: 1 = unshadowed.
-// `dir` is the camera-relative vector from the light to this pixel.
-float GetPointShadow(samplerCUBE cubeMap, float4 lightPos, float3 pixelPos)
+// Brightness only -- the shadow darkens all three channels equally and never tints them. This is an
+// approximation, not a true light subtraction: the result multiplies the already-composited scene
+// colour, so a shadowed pixel loses a fraction of ambient and of every other light too, not just this
+// one -- it over-darkens where ambient dominates. It also ignores N.L. Still, a dim light casts a
+// correspondingly faint shadow and a bright one a deep shadow.
+float GetPointShadow(samplerCUBE cubeMap, float4 lightPos, float lum, float3 pixelPos)
 {
 	if (lightPos.w == 0.0f) return 1.0f; // empty slot
 
@@ -109,10 +113,18 @@ float GetPointShadow(samplerCUBE cubeMap, float4 lightPos, float3 pixelPos)
 	}
 	lit /= SAMPLE_COUNT;
 
-	float shadow = lerp(darkness, 1.0f, lit);
-	// Fade the shadow out as the receiver approaches the light's radius, so the shadowed region
-	// does not end in a hard circle where the cube's coverage stops.
-	return lerp(shadow, 1.0f, smoothstep(0.85f, 1.0f, dist));
+	// The engine's own falloff: its lighting shaders build attenuation UVs as compress(lightVec /
+	// radius) and combine them saturate(1 - att_xy - att_z), i.e. this quadratic ramp. dist is
+	// normalized by the CUBE FAR PLANE, which equals the authored radius Spec.r for non-carried
+	// lights, so for those the contribution reaches zero exactly where the cube's coverage stops.
+	// Carried torches pin the far plane to a fixed 257.0 while the engine still attenuates by the
+	// (larger) authored radius, so for those the shadow fades out before the torch stops lighting.
+	// Either way the ramp is smooth, so no separate edge fade is needed here.
+	float att = saturate(1.0f - dist * dist);
+	// Clamp the brightness, not the product: a Dimmer > 1 would otherwise inflate lum * att past 1
+	// and flatten unlit to 0 (solid black) across a large fraction of the radius, not just at dist=0.
+	float unlit = 1.0f - saturate(lum) * att;
+	return lerp(unlit, 1.0f, lit);
 }
 
 float4 Shadow(VSOUT IN) : COLOR0{
@@ -129,10 +141,10 @@ float4 Shadow(VSOUT IN) : COLOR0{
 	float depth = readDepth(IN.UVCoord);
 	float3 pixelPos = toWorld(IN.UVCoord) * depth; // camera-relative, same space as the light positions
 
-	float shadow = GetPointShadow(TESR_ShadowCubeMapBuffer0, TESR_ShadowLightPosition0, pixelPos);
-	shadow *= GetPointShadow(TESR_ShadowCubeMapBuffer1, TESR_ShadowLightPosition1, pixelPos);
-	shadow *= GetPointShadow(TESR_ShadowCubeMapBuffer2, TESR_ShadowLightPosition2, pixelPos);
-	shadow *= GetPointShadow(TESR_ShadowCubeMapBuffer3, TESR_ShadowLightPosition3, pixelPos);
+	float shadow = GetPointShadow(TESR_ShadowCubeMapBuffer0, TESR_ShadowLightPosition0, TESR_ShadowLightLuminance.x, pixelPos);
+	shadow *= GetPointShadow(TESR_ShadowCubeMapBuffer1, TESR_ShadowLightPosition1, TESR_ShadowLightLuminance.y, pixelPos);
+	shadow *= GetPointShadow(TESR_ShadowCubeMapBuffer2, TESR_ShadowLightPosition2, TESR_ShadowLightLuminance.z, pixelPos);
+	shadow *= GetPointShadow(TESR_ShadowCubeMapBuffer3, TESR_ShadowLightPosition3, TESR_ShadowLightLuminance.w, pixelPos);
 
 	color.rgb *= saturate(shadow);
 	return float4(color, 1.0f);

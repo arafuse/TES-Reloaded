@@ -64,6 +64,12 @@ struct ShaderConstants {
 		// Size must stay in step with ShadowManager::PointLightMax (this header is included first,
 		// so it cannot reference it) and with the sampler count in ShadowsPoint.fx.
 		D3DXVECTOR4		ShadowCastLightPosition[4];
+		// One component per point-light slot (x = slot 0 .. w = slot 3): luma(Diff) * Dimmer, the
+		// brightness this light contributes and therefore the amount its shadow removes. Brightness
+		// only, never colour -- the shadow darkens all three channels equally. The component count
+		// must stay in step with ShadowManager::PointLightMax (this header is included first, so it
+		// cannot reference it).
+		D3DXVECTOR4		ShadowCastLightLuminance;
 		D3DXVECTOR4		ShadowLightDir;
 		D3DXVECTOR4		ShadowBiasDeferred;
 		// x = terminator width, y = max slope clamp, z = adaptive enable (0/1),
@@ -114,7 +120,9 @@ struct ShaderConstants {
 	// (the old system overloaded one TESR_ShadowCubeData between phases — a known trap).
 	struct ShadowPointStruct {
 		D3DXVECTOR4		BakeData;	// bake phase: x = skinned flag, y = alpha flag, z = far plane
-		D3DXVECTOR4		PointData;	// sample phase: y = darkness, z = 1 / cube map size
+		D3DXVECTOR4		PointData;	// sample phase: z = 1 / cube map size, w = depth bias (x unused;
+									// y is a neutral 1.0, kept only so a stale compiled ShadowsPoint.fx
+									// reading it as a darkness preshader degrades to "no point shadows")
 	};
 	struct PrecipitationsStruct {
 		D3DXVECTOR4		RainData;
