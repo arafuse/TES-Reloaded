@@ -272,6 +272,16 @@ void ShadowManager::CreateShadowMapSurfaces(IDirect3DDevice9* Device, SettingsSh
 			if (FAILED(Device->CreateTexture(Size, Size, 1, D3DUSAGE_RENDERTARGET, D3DFMT_R32F, D3DPOOL_DEFAULT, &ShadowMapTexturePrev[r], NULL))) { Ok = false; break; }
 			if (FAILED(ShadowMapTexturePrev[r]->GetSurfaceLevel(0, &ShadowMapSurfacePrev[r]))) { Ok = false; break; }
 		}
+		if (!Ok) {
+			// A partial allocation must not leave a live D3D9 interface behind: StaticFadeReady is about
+			// to go false, and TextureManager must never be able to hand a sampler a texture the feature
+			// itself believes doesn't exist. Release whatever the loop above managed to create and NULL
+			// it back out, so "failed" and "never attempted" are indistinguishable.
+			for (int r = 0; r < 2; r++) {
+				if (ShadowMapSurfacePrev[r]) { ShadowMapSurfacePrev[r]->Release(); ShadowMapSurfacePrev[r] = NULL; }
+				if (ShadowMapTexturePrev[r]) { ShadowMapTexturePrev[r]->Release(); ShadowMapTexturePrev[r] = NULL; }
+			}
+		}
 		StaticFadeReady = Ok;
 		Logger::Log("[ShadowFade] previous-bake copies %s (FadeTime %.2fs)", Ok ? "allocated" : "FAILED - fading disabled", ShadowsExteriors->FadeTime);
 	}
