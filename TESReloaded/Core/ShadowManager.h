@@ -109,6 +109,16 @@ public:
 	IDirect3DTexture9*		ShadowMapTexture[4];
 	IDirect3DSurface9*		ShadowMapSurface[4];
 	IDirect3DSurface9*		ShadowMapDepthSurface[4];
+	// --- Static-map crossfade ([Exteriors] FadeTime) ---------------------------------------------
+	// Copies of the cached Near/Far maps as they stood before the current bake, so the apply shader
+	// can crossfade the two shadow terms instead of switching between them in one frame. Indexed
+	// [0] = MapNear, [1] = MapFar. Same format and size as the map each shadows; no depth-stencil,
+	// because these are only ever a StretchRect destination and a sampler source.
+	IDirect3DTexture9*		ShadowMapTexturePrev[2];
+	IDirect3DSurface9*		ShadowMapSurfacePrev[2];
+	// True only when the feature is configured on AND both copies actually allocated.
+	bool					StaticFadeReady;
+	bool					StaticFadeEnabled() const { return StaticFadeReady; }
 	ShaderRecord*			ShadowMapVertex;
 	ShaderRecord*			ShadowMapPixel;
 	IDirect3DVertexShader9* ShadowMapVertexShader;
@@ -143,6 +153,11 @@ public:
 		D3DXVECTOR3 AnchorPos;       // snapped world center the map was baked around
 		D3DXVECTOR4 BakedSunDir;     // sun direction at last bake
 		bool        Valid;           // false => force rebake
+		// The bake this region held before the current one, kept as the crossfade's source. Only
+		// meaningful while StaticFadeT < 1; PrevValid is false when there is nothing to fade from.
+		D3DXMATRIX  PrevBakedViewProj;
+		D3DXVECTOR3 PrevAnchorPos;
+		bool        PrevValid;
 	};
 	CachedRegion			Regions[2];         // [0]=MapNear, [1]=MapFar
 

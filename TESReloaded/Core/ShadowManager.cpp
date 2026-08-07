@@ -253,6 +253,28 @@ void ShadowManager::CreateShadowMapSurfaces(IDirect3DDevice9* Device, SettingsSh
 		Device->CreateDepthStencilSurface(Size, Size, D3DFMT_D24S8, D3DMULTISAMPLE_NONE, 0, true, &ShadowMapDepthSurface[m], NULL);
 		ShadowMapViewPort[m] = { 0, 0, Size, Size, 0.0f, 1.0f };
 	}
+
+	// Previous-bake copies for the static crossfade. Allocated HERE, in the same function as the maps
+	// they shadow, because EffectRecord::LoadTexture resolves a sampler's texture pointer ONCE at
+	// effect load — the pointer must already exist by then, which is the same guarantee the main maps
+	// rely on. Skipped entirely when the feature is off, so nothing pays the ~32 MB.
+	ShadowMapTexturePrev[0] = ShadowMapTexturePrev[1] = NULL;
+	ShadowMapSurfacePrev[0] = ShadowMapSurfacePrev[1] = NULL;
+	StaticFadeReady = false;
+	// CacheStaticShadows = 0 rebakes every frame, so the maps are never stale and nothing pops; the
+	// rebake gate this feature installs would also silently turn caching back on there.
+	if (ShadowsExteriors->FadeTime > 0.0f && ShadowsExteriors->CacheStaticShadows) {
+		bool Ok = true;
+		for (int m = ShadowMapTypeEnum::MapNear; m <= ShadowMapTypeEnum::MapFar; m++) {
+			int r = m - ShadowMapTypeEnum::MapNear;
+			UINT Size = ShadowsExteriors->ShadowMapSize[m];
+			if (!Size) { Ok = false; break; }
+			if (FAILED(Device->CreateTexture(Size, Size, 1, D3DUSAGE_RENDERTARGET, D3DFMT_R32F, D3DPOOL_DEFAULT, &ShadowMapTexturePrev[r], NULL))) { Ok = false; break; }
+			if (FAILED(ShadowMapTexturePrev[r]->GetSurfaceLevel(0, &ShadowMapSurfacePrev[r]))) { Ok = false; break; }
+		}
+		StaticFadeReady = Ok;
+		Logger::Log("[ShadowFade] previous-bake copies %s (FadeTime %.2fs)", Ok ? "allocated" : "FAILED - fading disabled", ShadowsExteriors->FadeTime);
+	}
 }
 
 void ShadowManager::CreateCubeMapSurfaces(IDirect3DDevice9* Device, UINT CubeMapSize) {
@@ -318,7 +340,10 @@ ShadowManager::ShadowManager() {
 	CollectSkinnedOnly = false;
 	CollectAnchor = D3DXVECTOR3(0.0f, 0.0f, 0.0f);
 
-	for (int i = 0; i < 2; i++) { Regions[i].Valid = false; D3DXMatrixIdentity(&Regions[i].BakedViewProj); Regions[i].AnchorPos = D3DXVECTOR3(0.0f, 0.0f, 0.0f); Regions[i].BakedSunDir = D3DXVECTOR4(0.0f, 0.0f, 0.0f, 0.0f); }
+	for (int i = 0; i < 2; i++) {
+		Regions[i].Valid = false; D3DXMatrixIdentity(&Regions[i].BakedViewProj); Regions[i].AnchorPos = D3DXVECTOR3(0.0f, 0.0f, 0.0f); Regions[i].BakedSunDir = D3DXVECTOR4(0.0f, 0.0f, 0.0f, 0.0f);
+		D3DXMatrixIdentity(&Regions[i].PrevBakedViewProj); Regions[i].PrevAnchorPos = D3DXVECTOR3(0.0f, 0.0f, 0.0f); Regions[i].PrevValid = false;
+	}
 
 	LoadShadowShaders(Device);
 	CreateShadowMapSurfaces(Device, ShadowsExteriors);

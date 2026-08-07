@@ -320,6 +320,7 @@ struct SettingsShadowStruct {
 		float				RebakeMarginFar;
 		float				RebakeSunInterval;
 		bool				CacheStaticShadows;
+		float				FadeTime;				// [Exteriors] FadeTime: static-map crossfade seconds (0 = off)
 		bool                UsePostProcessing;
 		bool				UseIntervalUpdate;
 		bool				UseInstancing;
