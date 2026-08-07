@@ -138,8 +138,15 @@ float3 getRawNormal(float2 UVCoord)
 }
 
 
+// Explicit LOD 0 rather than tex2D: the shadow maps are created with a single mip level
+// (CreateShadowMapSurfaces passes Levels=1), so LOD 0 is the only LOD that exists and this is
+// lossless -- MAGFILTER/MINFILTER=LINEAR still give bilinear filtering within it, and MIPFILTER has
+// nothing to interpolate between. tex2D's implicit derivatives are what forced fxc to flatten the
+// crossfade's `if (TESR_ShadowFadeData.x < 1.0f)` into an unconditional double evaluation (ddx/ddy
+// cannot be computed inside divergent flow control); tex2Dlod has no derivative dependency, so it
+// lets that branch survive as real flow control instead.
 float LookupFar(sampler2D mapFar, float4 ShadowPos, float2 OffSet, float bias) {
-	float Shadow = tex2D(mapFar, ShadowPos.xy + float2(OffSet.x * TESR_ShadowData.w, OffSet.y * TESR_ShadowData.w)).r;
+	float Shadow = tex2Dlod(mapFar, float4(ShadowPos.xy + float2(OffSet.x * TESR_ShadowData.w, OffSet.y * TESR_ShadowData.w), 0, 0)).r;
 	if (Shadow < ShadowPos.z - bias) return darkness;
 	return clamp(TESR_ShadowLightDir.w, darkness, 1.0f);
 }
@@ -179,7 +186,7 @@ float CascadeCoverage(float4 ShadowPos) {
 }
 
 float Lookup(sampler2D mapNear, float4 ShadowPos, float2 OffSet, float bias) {
-	float Shadow = tex2D(mapNear, ShadowPos.xy + float2(OffSet.x * TESR_ShadowData.z, OffSet.y * TESR_ShadowData.z)).r;
+	float Shadow = tex2Dlod(mapNear, float4(ShadowPos.xy + float2(OffSet.x * TESR_ShadowData.z, OffSet.y * TESR_ShadowData.z), 0, 0)).r;
 	if (Shadow < ShadowPos.z - bias) return darkness;
 	return clamp(TESR_ShadowLightDir.w, darkness, 1.0f);
 }
@@ -212,7 +219,7 @@ float GetLightAmountSkin(float4 ShadowPosSkin, float bias) {
 		for (x = -1.5f; x <= 1.5f; x += 1.0f) {
 			// TESR_ShadowData.z is the near map's texel size; the skin overlay map is allocated at the same
 			// (near) resolution (see CreateShadowMapSurfaces), so it is the correct PCF step here too.
-			float s = tex2D(TESR_ShadowMapBufferSkin, ShadowPosSkin.xy + float2(x, y) * TESR_ShadowData.z).r;
+			float s = tex2Dlod(TESR_ShadowMapBufferSkin, float4(ShadowPosSkin.xy + float2(x, y) * TESR_ShadowData.z, 0, 0)).r;
 			Shadow += (s < ShadowPosSkin.z - bias) ? darkness : 1.0f;
 		}
 	return Shadow / 16.0f;
