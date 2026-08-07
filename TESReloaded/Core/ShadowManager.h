@@ -119,6 +119,20 @@ public:
 	// True only when the feature is configured on AND both copies actually allocated.
 	bool					StaticFadeReady;
 	bool					StaticFadeEnabled() const { return StaticFadeReady; }
+	// Crossfade progress, 0..1; 1 = none in flight. ONE clock for the PAIR of regions, not one each:
+	// the apply's near->far fallback is per-pixel, so a receiver outside the near box reads the far
+	// map. Independent clocks would let a pixel mix a fresh near term with a half-faded far term
+	// across the cascade boundary, which shows up as a seam.
+	float					StaticFadeT;
+	double					StaticFadeLastMs;	// FrameRateManager::GetPerformance() at last advance
+	// Set when something outside the drift/sun heuristics requires a rebake (currently a cell
+	// change). Bypasses the fade gate but still goes through the crossfade.
+	bool					ForceRebake;
+
+	void					AdvanceStaticFade();
+	void					BeginStaticCrossfade();
+	void					SnapStaticFadeIfTeleported(SettingsShadowStruct::ExteriorsStruct* S);
+	void					PublishStaticFadeConstants();
 	ShaderRecord*			ShadowMapVertex;
 	ShaderRecord*			ShadowMapPixel;
 	IDirect3DVertexShader9* ShadowMapVertexShader;
