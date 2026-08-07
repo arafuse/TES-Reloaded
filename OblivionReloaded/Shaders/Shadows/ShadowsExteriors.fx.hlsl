@@ -219,11 +219,13 @@ float GetLightAmountSkin(float4 ShadowPosSkin, float bias) {
 }
 
 // The cascade term for ONE map set. `applySkin` is a compile-time literal at both call sites, so fxc
-// folds it: the current set keeps the per-frame actor overlay exactly where it has always been --
-// min-combined on the NEAR-IN-BOUNDS PATH ONLY, since the out-of-bounds branch returns before it --
-// while the crossfade's previous set skips it. The overlay is redrawn every frame and is never
-// crossfaded: a fade cannot tell "this actor unloaded" from "this actor walked two feet", so fading
-// it would drag a FadeTime-long ghost behind every moving NPC.
+// folds it. There is no previous-bake skin map -- MapSkin is redrawn every frame in its own
+// camera-relative light space, and both the current and previous StaticTerm calls are handed the
+// SAME current-frame ShadowSkin/GetLightAmountSkin term. Applying it on both sets (min-combined on
+// the NEAR-IN-BOUNDS PATH ONLY, since the out-of-bounds branch returns before it) keeps actor
+// shadows at full strength across the whole crossfade; applying it on only one set would put the
+// term on one side of the lerp and not the other, making every actor's shadow blink out and ramp
+// back in over FadeTime on every rebake, which is not the intended effect.
 float GetLightAmount(sampler2D mapNear, sampler2D mapFar, float4 ShadowPos, float4 ShadowPosFar, float4 ShadowPosSkin, float biasNear, float biasFar, bool applySkin) {
 
 	float Shadow = 0.0f;
@@ -380,7 +382,7 @@ float4 Shadow(VSOUT IN) : COLOR0{
 		if (TESR_ShadowFadeData.x < 1.0f) {
 			float prevShadow = StaticTerm(TESR_ShadowMapBufferNearPrev, TESR_ShadowMapBufferFarPrev,
 			                              TESR_ShadowCameraToLightTransformNearPrev, TESR_ShadowCameraToLightTransformFarPrev,
-			                              posNear, posFar, ShadowSkin, biasNear, biasFar, facing, false);
+			                              posNear, posFar, ShadowSkin, biasNear, biasFar, facing, true);
 			Shadow = lerp(prevShadow, Shadow, TESR_ShadowFadeData.x);
 		}
 
