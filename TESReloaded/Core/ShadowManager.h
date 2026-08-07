@@ -128,6 +128,12 @@ public:
 	// Set when something outside the drift/sun heuristics requires a rebake (currently a cell
 	// change). Bypasses the fade gate but still goes through the crossfade.
 	bool					ForceRebake;
+	// Which region baked last, so the steady-state picker below can alternate rather than run
+	// near-first. Near-first starves MapFar once the fade gate collapses its evaluation window to
+	// one frame per FadeTime: sustained movement keeps near due on exactly that frame, so far is
+	// never picked and its anchor goes stale. Seeded to MapFar in the constructor so near gets the
+	// first pick, matching the pre-fade behaviour's implicit near-first bias on the very first rebake.
+	ShadowMapTypeEnum		LastBakedRegion;
 
 	void					AdvanceStaticFade();
 	void					BeginStaticCrossfade();

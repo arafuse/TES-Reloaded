@@ -1,6 +1,5 @@
 // Image space shadows shader for Oblivion Reloaded
 
-float4x4 TESR_WorldTransform;
 float4x4 TESR_WorldViewProjectionTransform;
 float4x4 TESR_ViewTransform;
 float4x4 TESR_ProjectionTransform;
@@ -225,15 +224,12 @@ float GetLightAmountSkin(float4 ShadowPosSkin, float bias) {
 	return Shadow / 16.0f;
 }
 
-// The cascade term for ONE map set. `applySkin` is a compile-time literal at both call sites, so fxc
-// folds it. There is no previous-bake skin map -- MapSkin is redrawn every frame in its own
-// camera-relative light space, and both the current and previous StaticTerm calls are handed the
-// SAME current-frame ShadowSkin/GetLightAmountSkin term. Applying it on both sets (min-combined on
-// the NEAR-IN-BOUNDS PATH ONLY, since the out-of-bounds branch returns before it) keeps actor
-// shadows at full strength across the whole crossfade; applying it on only one set would put the
-// term on one side of the lerp and not the other, making every actor's shadow blink out and ramp
-// back in over FadeTime on every rebake, which is not the intended effect.
-float GetLightAmount(sampler2D mapNear, sampler2D mapFar, float4 ShadowPos, float4 ShadowPosFar, float4 ShadowPosSkin, float biasNear, float biasFar, bool applySkin) {
+// The cascade term for ONE map set. There is no previous-bake skin map -- MapSkin is redrawn every
+// frame in its own camera-relative light space, and both the current and previous StaticTerm calls
+// are handed the SAME current-frame ShadowSkin/GetLightAmountSkin term, so it applies to both and is
+// always min-combined below (on the NEAR-IN-BOUNDS PATH ONLY, since the out-of-bounds branch returns
+// before it).
+float GetLightAmount(sampler2D mapNear, sampler2D mapFar, float4 ShadowPos, float4 ShadowPosFar, float4 ShadowPosSkin, float biasNear, float biasFar) {
 
 	float Shadow = 0.0f;
 	float x;
@@ -256,7 +252,8 @@ float GetLightAmount(sampler2D mapNear, sampler2D mapFar, float4 ShadowPos, floa
 	}
 	Shadow /= 16.0f;
 
-	if (applySkin) Shadow = min(Shadow, GetLightAmountSkin(ShadowPosSkin, biasNear));
+	// Both crossfade sets apply the same current-frame skin overlay -- see the function comment.
+	Shadow = min(Shadow, GetLightAmountSkin(ShadowPosSkin, biasNear));
 
 	return saturate(Shadow);
 
@@ -268,10 +265,10 @@ float GetLightAmount(sampler2D mapNear, sampler2D mapFar, float4 ShadowPos, floa
 // per map set without duplicating the cascade logic.
 float StaticTerm(sampler2D mapNear, sampler2D mapFar, float4x4 toNear, float4x4 toFar,
                  float4 posNear, float4 posFar, float4 ShadowPosSkin,
-                 float biasNear, float biasFar, float facing, bool applySkin) {
+                 float biasNear, float biasFar, float facing) {
 	float4 ShadowNear = mul(posNear, toNear);
 	float4 ShadowFar  = mul(posFar,  toFar);
-	float mapShadow = GetLightAmount(mapNear, mapFar, ShadowNear, ShadowFar, ShadowPosSkin, biasNear, biasFar, applySkin);
+	float mapShadow = GetLightAmount(mapNear, mapFar, ShadowNear, ShadowFar, ShadowPosSkin, biasNear, biasFar);
 	float s = lerp(darkness, mapShadow, facing);
 	float coverage = max(CascadeCoverage(ShadowNear), CascadeCoverage(ShadowFar));
 	return lerp(1.0f, s, coverage);
@@ -380,7 +377,7 @@ float4 Shadow(VSOUT IN) : COLOR0{
 		// tree billboards all sit outside the far box, where a screen-space normal is meaningless).
 		float Shadow = StaticTerm(TESR_ShadowMapBufferNear, TESR_ShadowMapBufferFar,
 		                          TESR_ShadowCameraToLightTransformNear, TESR_ShadowCameraToLightTransformFar,
-		                          posNear, posFar, ShadowSkin, biasNear, biasFar, facing, true);
+		                          posNear, posFar, ShadowSkin, biasNear, biasFar, facing);
 
 		// Crossfade against the previous static bake while one is in flight, so a rebake -- whatever
 		// triggered it: cell load/unload, drift past the guard band, sun rotation -- ramps in over
@@ -389,7 +386,7 @@ float4 Shadow(VSOUT IN) : COLOR0{
 		if (TESR_ShadowFadeData.x < 1.0f) {
 			float prevShadow = StaticTerm(TESR_ShadowMapBufferNearPrev, TESR_ShadowMapBufferFarPrev,
 			                              TESR_ShadowCameraToLightTransformNearPrev, TESR_ShadowCameraToLightTransformFarPrev,
-			                              posNear, posFar, ShadowSkin, biasNear, biasFar, facing, true);
+			                              posNear, posFar, ShadowSkin, biasNear, biasFar, facing);
 			Shadow = lerp(prevShadow, Shadow, TESR_ShadowFadeData.x);
 		}
 
