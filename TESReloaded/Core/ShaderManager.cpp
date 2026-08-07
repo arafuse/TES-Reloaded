@@ -330,6 +330,12 @@ bool ShaderProgram::SetConstantTableValue1(LPCSTR Name, UInt32 Index) {
 		FloatShaderValues[Index].Value = (D3DXVECTOR4*)&TheShaderManager->ShaderConst.ShadowMap.ShadowCameraToLight[2];
 	else if (!strcmp(Name, "TESR_ShadowCameraToLightTransformSkin"))
 		FloatShaderValues[Index].Value = (D3DXVECTOR4*)&TheShaderManager->ShaderConst.ShadowMap.ShadowCameraToLight[3];
+	else if (!strcmp(Name, "TESR_ShadowCameraToLightTransformNearPrev"))
+		FloatShaderValues[Index].Value = (D3DXVECTOR4*)&TheShaderManager->ShaderConst.ShadowMap.ShadowCameraToLightPrev[0];
+	else if (!strcmp(Name, "TESR_ShadowCameraToLightTransformFarPrev"))
+		FloatShaderValues[Index].Value = (D3DXVECTOR4*)&TheShaderManager->ShaderConst.ShadowMap.ShadowCameraToLightPrev[1];
+	else if (!strcmp(Name, "TESR_ShadowFadeData"))
+		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.ShadowMap.ShadowFadeData;
 	else if (!strcmp(Name, "TESR_PointLightPosition"))
 		FloatShaderValues[Index].Value = (D3DXVECTOR4*)&TheShaderManager->ShaderConst.PointLights.LightPosition;
 	else if (!strcmp(Name, "TESR_PointLightColor"))

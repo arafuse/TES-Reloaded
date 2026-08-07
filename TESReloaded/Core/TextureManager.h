@@ -8,6 +8,8 @@
 #define WordShadowMapBufferNear "TESR_ShadowMapBufferNear"
 #define WordShadowMapBufferFar "TESR_ShadowMapBufferFar"
 #define WordShadowMapBufferSkin "TESR_ShadowMapBufferSkin"
+#define WordShadowMapBufferNearPrev "TESR_ShadowMapBufferNearPrev"
+#define WordShadowMapBufferFarPrev "TESR_ShadowMapBufferFarPrev"
 #define WordOrthoMapBuffer "TESR_OrthoMapBuffer"
 #define WordShadowCubeMapBuffer0 "TESR_ShadowCubeMapBuffer0"
 #define WordShadowCubeMapBuffer1 "TESR_ShadowCubeMapBuffer1"
@@ -27,6 +29,8 @@ enum TextureRecordType {
 	TextureRecordType_ShadowMapBufferNear,
 	TextureRecordType_ShadowMapBufferFar,
 	TextureRecordType_ShadowMapBufferSkin,
+	TextureRecordType_ShadowMapBufferNearPrev,
+	TextureRecordType_ShadowMapBufferFarPrev,
 	TextureRecordType_OrthoMapBuffer,
 	TextureRecordType_ShadowCubeMapBuffer0,
 	TextureRecordType_ShadowCubeMapBuffer1,
