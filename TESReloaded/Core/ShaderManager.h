@@ -438,8 +438,10 @@ public:
 	void					RenderEffectsPostHdr(IDirect3DSurface9* RenderTarget);
 	void					RenderEffects(IDirect3DSurface9* RenderTarget);
 	void					RenderShadowsMidScene(); // sun + point shadow apply, run mid-scene before the first near-water draw
-	void					FlattenShellDepth();	 // near shell: rewrite TESR_DepthBuffer to "at M" over shell-covered pixels
-	bool					CreateShellFlatten();	 // lazily builds what FlattenShellDepth needs; false = feature stays off
+	void					FlattenShellDepth();	 // near shell: rewrite TESR_DepthBuffer to "at M" over shell-covered pixels, after the shell
+	void					FlattenShellPreWaterDepth(); // same over TESR_DepthBufferPreWater, DURING the shell, before its first near water
+	void					FlattenShellDepthInto(IDirect3DTexture9* Target, IDirect3DSurface9** TargetSurface); // shared body of the two above
+	bool					CreateShellFlatten(IDirect3DTexture9* Target, IDirect3DSurface9** TargetSurface); // lazily builds what the flatten needs; false = feature stays off
 	void					ProfileBlitToSource(IDirect3DSurface9* RenderTarget); // counted scene->SourceSurface copy
 	void					SwitchShaderStatus(const char* Name);
 	void					SetCustomConstant(const char* Name, D3DXVECTOR4 Value);
@@ -504,6 +506,7 @@ public:
 	// runs, so a disabled shell costs neither the full-screen INTZ surface nor the shader loads.
 	IDirect3DTexture9*		ShellMaskTexture;			// post-shell depth resolve = the shell's coverage mask
 	IDirect3DSurface9*		ShellFlattenDepthSurface;	// level 0 of RenderManager::DepthTexture, bound as the target
+	IDirect3DSurface9*		ShellFlattenPreWaterSurface;// level 0 of RenderManager::DepthTexturePreWater, ditto
 	ShaderRecord*			ShellFlattenVertex;
 	ShaderRecord*			ShellFlattenPixel;
 	IDirect3DVertexShader9*	ShellFlattenVertexShader;
