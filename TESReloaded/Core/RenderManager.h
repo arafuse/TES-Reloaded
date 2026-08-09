@@ -56,6 +56,7 @@ public:
 	static void			UpdateNearShell();
 	static void			ApplyPass(ScenePass Pass);
 	static void			StampPassProjection(D3DMATRIX* Proj);
+	static void			StampFarProjection(D3DMATRIX* Proj);
 
 	static ScenePass	CurrentPass;
 	static bool			ShellActive;

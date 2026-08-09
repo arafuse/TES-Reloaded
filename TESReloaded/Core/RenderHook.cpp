@@ -314,13 +314,8 @@ static bool	GrassOrderCapture = false;
 // camera-tracking caster silhouettes floating in the water.
 static bool	InMainScenePass = false;
 
-// Sky suppression for the near shell. In the shell the depth buffer has just been cleared to 1.0,
-// and sky shaders emit z == w (SKYT.vso.hlsl), so the sky lands at depth 1.0 and its LESSEQUAL test
-// passes everywhere - it would paint over the entire far pass. No clear value fixes this, because
-// the sky always lands on MaxZ: any value that rejects the sky also rejects real shell geometry
-// near M. Sky draws already have ZWrite=0, so suppressing colour writes makes them complete no-ops.
-static bool		SkyColorWriteSuppressed = false;
-static UInt32	SkyColorWriteSaved		= 15;
+// 1 - 2^-24: the largest float32 strictly below 1.0, and exactly D24 0xFFFFFE.
+static const float ShellClearDepth = 0.99999994f;
 
 // Diagnostic for the one open question in the spec: does the engine rebuild projMatrix from the
 // frustum at pass start? These capture projMatrix as the ENGINE left it at the first draw of each
@@ -401,10 +396,6 @@ UInt32 RenderHook::TrackSetupShaderPrograms(NiGeometry* Geometry, NiSkinInstance
 	NiD3DPixelShaderEx* PixelShader = (NiD3DPixelShaderEx*)Pass->PixelShader;
 	NiNode* RenderWindowRootNode = *RenderWindowNode;
 
-	bool IsSky = (VertexShader && VertexShader->ShaderName && !memcmp(VertexShader->ShaderName, "SKY", 3))
-		|| (PixelShader && PixelShader->ShaderName && !memcmp(PixelShader->ShaderName, "SKY", 3))
-		|| (VertexShader && VertexShader->isSun);
-
 	// Sample the engine's own projMatrix at the first draw of each pass, before we stamp it. This is
 	// the spec's open question: if these already match the pass frustum, the engine rebuilds
 	// projMatrix per pass and StampPassProjection is redundant.
@@ -423,12 +414,28 @@ UInt32 RenderHook::TrackSetupShaderPrograms(NiGeometry* Geometry, NiSkinInstance
 	// are inside one of the two shell passes.
 	RenderManager::StampPassProjection(Proj);
 	if (RenderManager::CurrentPass == RenderManager::PassNear) {
+
+		// [NearShellDebug=3] PROBE for the water defect, not a fix. During the shell, TESR_DepthBuffer
+		// still holds the far pass's (M, F) resolve, but the stamp just above wrote the shell's (n, M)
+		// row into projMatrix - which IS TESR_ProjectionTransform - so WATER007.pso.hlsl decodes every
+		// depth sample into [n, M] and near water renders as vanishingly shallow (shell-defect-analysis
+		// Defect 2). This overwrites the row with the far-pass encoding for water draws only, AFTER
+		// the stamp, to measure whether projMatrix feeds only the shader constant or also rasterises
+		// the shell geometry:
+		//   near water renders correctly => projMatrix feeds only the shader constant, not the vertex
+		//     transform, and this becomes the real fix (publish (M, F) for shell draws that sample
+		//     TESR_DepthBuffer).
+		//   near water disappears entirely => projMatrix feeds rasterisation too, the shell draw is
+		//     pushed behind its own near plane, and the limitation is genuine.
+		if (TheSettingManager->SettingsMain.Develop.NearShellDebug == 3 &&
+			PixelShader && PixelShader->ShaderName && !memcmp(PixelShader->ShaderName, "WATER", 5)) {
+			RenderManager::StampFarProjection(Proj);
+		}
+
 		RenderManager::ShellDraws++;
 
-		// [ShellDraw] Evidence capture for the shell-pass defects: what is drawn in the shell, is it
-		// classified as sky, and what colour-write/Z state does it see on entry - i.e. the state left
-		// behind by the PREVIOUS draw, which is why this reads before the suppression block below
-		// touches anything.
+		// [ShellDraw] Evidence capture for the shell-pass defects: what is drawn in the shell and what
+		// colour-write/Z state does it see on entry - i.e. the state left behind by the PREVIOUS draw.
 		if (TheSettingManager->SettingsMain.Develop.NearShellDebug && ShellDrawLogCount < 40) {
 			ShellDrawLogCount++;
 			float Dist = 0.0f;
@@ -439,28 +446,20 @@ UInt32 RenderHook::TrackSetupShaderPrograms(NiGeometry* Geometry, NiSkinInstance
 				float dz = WorldTransform->pos.z - CamPos.z;
 				Dist = sqrtf(dx * dx + dy * dy + dz * dz);
 			}
-			Logger::Log("[ShellDraw] %04d VS=%s PS=%s Geo=%s sky=%d cweIn=%d supp=%d dist=%.1f ZEnable=%d ZWrite=%d ZFunc=%d",
+			// pin=1 when the vertex shader is one of the z==w sky/cloud/sun shaders (SKY*.vso) that the
+			// depth-clear fix (ShellClearDepth) now rejects; label only, not used for any decision.
+			bool Pin = VertexShader && VertexShader->ShaderName && !memcmp(VertexShader->ShaderName, "SKY", 3);
+			Logger::Log("[ShellDraw] %04d VS=%s PS=%s Geo=%s pin=%d cweIn=%d dist=%.1f ZEnable=%d ZWrite=%d ZFunc=%d",
 				ShellDrawLogCount,
 				VertexShader && VertexShader->ShaderName ? VertexShader->ShaderName : "-",
 				PixelShader && PixelShader->ShaderName ? PixelShader->ShaderName : "-",
 				Geometry && Geometry->m_pcName ? Geometry->m_pcName : "-",
-				IsSky ? 1 : 0,
+				Pin ? 1 : 0,
 				RenderState->GetRenderState(D3DRS_COLORWRITEENABLE),
-				SkyColorWriteSuppressed ? 1 : 0,
 				Dist,
 				RenderState->GetRenderState(D3DRS_ZENABLE),
 				RenderState->GetRenderState(D3DRS_ZWRITEENABLE),
 				RenderState->GetRenderState(D3DRS_ZFUNC));
-		}
-
-		if (IsSky && !SkyColorWriteSuppressed) {
-			SkyColorWriteSaved = RenderState->GetRenderState(D3DRS_COLORWRITEENABLE);
-			RenderState->SetRenderState(D3DRS_COLORWRITEENABLE, 0, 0);
-			SkyColorWriteSuppressed = true;
-		}
-		else if (!IsSky && SkyColorWriteSuppressed) {
-			RenderState->SetRenderState(D3DRS_COLORWRITEENABLE, SkyColorWriteSaved, 0);
-			SkyColorWriteSuppressed = false;
 		}
 	}
 	else if (RenderManager::CurrentPass == RenderManager::PassFar) {
@@ -478,14 +477,14 @@ UInt32 RenderHook::TrackSetupShaderPrograms(NiGeometry* Geometry, NiSkinInstance
 				float dz = WorldTransform->pos.z - CamPos.z;
 				Dist = sqrtf(dx * dx + dy * dy + dz * dz);
 			}
-			Logger::Log("[ShellWater] %04d VS=%s PS=%s Geo=%s sky=%d cweIn=%d supp=%d dist=%.1f ZEnable=%d ZWrite=%d ZFunc=%d",
+			bool Pin = VertexShader && VertexShader->ShaderName && !memcmp(VertexShader->ShaderName, "SKY", 3);
+			Logger::Log("[ShellWater] %04d VS=%s PS=%s Geo=%s pin=%d cweIn=%d dist=%.1f ZEnable=%d ZWrite=%d ZFunc=%d",
 				FarWaterLogCount,
 				VertexShader && VertexShader->ShaderName ? VertexShader->ShaderName : "-",
 				PixelShader && PixelShader->ShaderName ? PixelShader->ShaderName : "-",
 				Geometry && Geometry->m_pcName ? Geometry->m_pcName : "-",
-				IsSky ? 1 : 0,
+				Pin ? 1 : 0,
 				RenderState->GetRenderState(D3DRS_COLORWRITEENABLE),
-				SkyColorWriteSuppressed ? 1 : 0,
 				Dist,
 				RenderState->GetRenderState(D3DRS_ZENABLE),
 				RenderState->GetRenderState(D3DRS_ZWRITEENABLE),
@@ -732,17 +731,19 @@ void __cdecl TrackRenderObject(NiCamera* Camera, NiNode* Object, NiCullingProces
 			// Debug 2 skips the shell, rendering it as a hole - the quickest way to see what it holds.
 			if (Debug != 2) {
 				RenderManager::ApplyPass(RenderManager::PassNear);
-				TheRenderManager->Clear(NULL, NiRenderer::kClear_ZBUFFER);
+				// Clear to one ULP below 1.0, not 1.0. Sky, cloud and sun shaders pin z == w
+				// (SKYCLOUDS.vso, SKYT.vso), landing at depth exactly 1.0 (D24 0xFFFFFF); against a
+				// 1.0 clear their LESSEQUAL test passes and they paint over the entire far pass.
+				// 0xFFFFFE rejects them with no name matching, and catches ANY z == w shader rather
+				// than a hardcoded list. Cost to real geometry: depth in the shell is
+				// d(z) = M/(M-n) * (1 - n/z), so d = 0.99999994 is z ~ 14.99999 at n=1, M=15 - the
+				// shell loses its final 0.00001 units, far below the depth buffer's resolution there.
+				// The engine's Clear() gives no control of the clear value, hence the device call.
+				TheRenderManager->device->Clear(0, NULL, D3DCLEAR_ZBUFFER, 0, ShellClearDepth, 0);
 				RenderObject(Camera, Object, CullingProcess, VisibleArray);
 			}
 
 			RenderManager::ApplyPass(RenderManager::PassFull);
-
-			// The shell may have ended on a sky draw; never leave colour writes disabled.
-			if (SkyColorWriteSuppressed) {
-				TheRenderManager->renderState->SetRenderState(D3DRS_COLORWRITEENABLE, SkyColorWriteSaved, 0);
-				SkyColorWriteSuppressed = false;
-			}
 
 			if (Debug) {
 				// engineFar/engineShell are projMatrix._33 as the engine left it at each pass's first

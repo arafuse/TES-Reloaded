@@ -116,6 +116,17 @@ void RenderManager::StampPassProjection(D3DMATRIX* Proj) {
 
 }
 
+// [NearShellDebug=3] Stamps the FAR pass's (M, F) depth row, regardless of CurrentPass. Exists for
+// RenderHook's water probe: TESR_DepthBuffer during the shell is still the far pass's (M, F)
+// resolve, so a shell draw that samples it (near water) needs its published projMatrix row to match
+// that encoding, not the shell's own (n, M). See RenderHook.cpp's TrackSetupShaderPrograms for the
+// call site and the two measurable outcomes.
+void RenderManager::StampFarProjection(D3DMATRIX* Proj) {
+
+	DepthRow(ShellBoundary, RealFar, &Proj->_33, &Proj->_43);
+
+}
+
 void RenderManager::GetSceneCameraData() {
 
 	NiCamera* Camera = WorldSceneGraph->camera;
