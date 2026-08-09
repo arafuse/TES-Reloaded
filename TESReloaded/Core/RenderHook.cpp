@@ -313,6 +313,23 @@ static bool	GrassOrderCapture = false;
 // reflection render re-fired the mid-scene sun-shadow apply INTO the reflection map, leaving
 // camera-tracking caster silhouettes floating in the water.
 static bool	InMainScenePass = false;
+
+// Sky suppression for the near shell. In the shell the depth buffer has just been cleared to 1.0,
+// and sky shaders emit z == w (SKYT.vso.hlsl), so the sky lands at depth 1.0 and its LESSEQUAL test
+// passes everywhere - it would paint over the entire far pass. No clear value fixes this, because
+// the sky always lands on MaxZ: any value that rejects the sky also rejects real shell geometry
+// near M. Sky draws already have ZWrite=0, so suppressing colour writes makes them complete no-ops.
+static bool		SkyColorWriteSuppressed = false;
+static UInt32	SkyColorWriteSaved		= 15;
+
+// Diagnostic for the one open question in the spec: does the engine rebuild projMatrix from the
+// frustum at pass start? These capture projMatrix as the ENGINE left it at the first draw of each
+// pass, before StampPassProjection touches it.
+static bool		FarProjSeen				= false;
+static bool		ShellProjSeen			= false;
+static float	FarProj33Seen			= 0.0f;
+static float	ShellProj33Seen			= 0.0f;
+
 static int	GrassOrderSeq = 0;
 static int	GrassOrderGrassTraces = 0;
 static int	GrassOrderWaterTraces = 0;
@@ -378,6 +395,41 @@ UInt32 RenderHook::TrackSetupShaderPrograms(NiGeometry* Geometry, NiSkinInstance
 	NiD3DVertexShaderEx* VertexShader = (NiD3DVertexShaderEx*)Pass->VertexShader;
 	NiD3DPixelShaderEx* PixelShader = (NiD3DPixelShaderEx*)Pass->PixelShader;
 	NiNode* RenderWindowRootNode = *RenderWindowNode;
+
+	// Sample the engine's own projMatrix at the first draw of each pass, before we stamp it. This is
+	// the spec's open question: if these already match the pass frustum, the engine rebuilds
+	// projMatrix per pass and StampPassProjection is redundant.
+	if (RenderManager::ShellActive && TheSettingManager->SettingsMain.Develop.NearShellDebug) {
+		if (RenderManager::CurrentPass == RenderManager::PassFar && !FarProjSeen) {
+			FarProj33Seen = Proj->_33;
+			FarProjSeen = true;
+		}
+		else if (RenderManager::CurrentPass == RenderManager::PassNear && !ShellProjSeen) {
+			ShellProj33Seen = Proj->_33;
+			ShellProjSeen = true;
+		}
+	}
+
+	// Between passes projMatrix belongs to whoever set it up; StampPassProjection is inert unless we
+	// are inside one of the two shell passes.
+	RenderManager::StampPassProjection(Proj);
+	if (RenderManager::CurrentPass == RenderManager::PassNear) {
+		RenderManager::ShellDraws++;
+
+		bool IsSky = (VertexShader && VertexShader->ShaderName && !memcmp(VertexShader->ShaderName, "SKY", 3))
+			|| (PixelShader && PixelShader->ShaderName && !memcmp(PixelShader->ShaderName, "SKY", 3))
+			|| (VertexShader && VertexShader->isSun);
+
+		if (IsSky && !SkyColorWriteSuppressed) {
+			SkyColorWriteSaved = RenderState->GetRenderState(D3DRS_COLORWRITEENABLE);
+			RenderState->SetRenderState(D3DRS_COLORWRITEENABLE, 0, 0);
+			SkyColorWriteSuppressed = true;
+		}
+		else if (!IsSky && SkyColorWriteSuppressed) {
+			RenderState->SetRenderState(D3DRS_COLORWRITEENABLE, SkyColorWriteSaved, 0);
+			SkyColorWriteSuppressed = false;
+		}
+	}
 
 	if (VertexShader && PixelShader) {
 		if (GrassOrderCapture) { // [GrassOrderDbg]
@@ -576,6 +628,10 @@ void __cdecl TrackRenderObject(NiCamera* Camera, NiNode* Object, NiCullingProces
 			Logger::Log("[GrassOrderDbg] ==== capture start (WorldSceneGraph render) ====");
 		}
 	}
+	if (MainScenePass && RenderManager::ShellActive) {
+		FarProjSeen = ShellProjSeen = false;
+		RenderManager::ApplyPass(RenderManager::PassFar);
+	}
 	RenderObject(Camera, Object, CullingProcess, VisibleArray);
 	if (MainScenePass) InMainScenePass = false;
 	if (Object == WorldSceneGraph && GrassOrderCapture) { // [GrassOrderDbg]
@@ -590,7 +646,44 @@ void __cdecl TrackRenderObject(NiCamera* Camera, NiNode* Object, NiCullingProces
 			TheShaderManager->RenderShadowsMidScene();
 			TheShaderManager->PreWaterDepthBufferFilled = true;
 		}
+		// Resolves the FAR pass depth - deliberately before the clear, so post-processing gets whole-
+		// scene depth. Shell pixels then carry the depth of whatever is behind them; that is the
+		// accepted ~20 cm limitation.
 		TheRenderManager->ResolveDepthBuffer();
+
+		if (RenderManager::ShellActive) {
+			UInt8 Debug = TheSettingManager->SettingsMain.Develop.NearShellDebug;
+
+			// Debug 2 skips the shell, rendering it as a hole - the quickest way to see what it holds.
+			if (Debug != 2) {
+				RenderManager::ApplyPass(RenderManager::PassNear);
+				TheRenderManager->Clear(NULL, NiRenderer::kClear_ZBUFFER);
+				RenderObject(Camera, Object, CullingProcess, VisibleArray);
+			}
+
+			RenderManager::ApplyPass(RenderManager::PassFull);
+
+			// The shell may have ended on a sky draw; never leave colour writes disabled.
+			if (SkyColorWriteSuppressed) {
+				TheRenderManager->renderState->SetRenderState(D3DRS_COLORWRITEENABLE, SkyColorWriteSaved, 0);
+				SkyColorWriteSuppressed = false;
+			}
+
+			if (Debug) {
+				// engineFar/engineShell are projMatrix._33 as the engine left it at each pass's first
+				// draw. wantFar/wantShell are what that pass needs; full is the un-rebuilt (n, F) row.
+				// engine == want  => the engine rebuilds per pass, StampPassProjection is redundant.
+				// engine == full  => it does not, and the stamp is load-bearing.
+				Logger::Log("[NearShell] n=%.3f M=%.3f F=%.1f shellDraws=%d skipShell=%d | engineFar=%.7f wantFar=%.7f full=%.7f | engineShell=%.7f wantShell=%.7f",
+					RenderManager::RealNear, RenderManager::ShellBoundary, RenderManager::RealFar,
+					RenderManager::ShellDraws, Debug == 2 ? 1 : 0,
+					FarProj33Seen,
+					RenderManager::RealFar / (RenderManager::RealFar - RenderManager::ShellBoundary),
+					RenderManager::RealFar / (RenderManager::RealFar - RenderManager::RealNear),
+					ShellProj33Seen,
+					RenderManager::ShellBoundary / (RenderManager::ShellBoundary - RenderManager::RealNear));
+			}
+		}
 	}
 	else if (Object == Player->firstPersonNiNode) {
 		TheRenderManager->ResolveDepthBuffer();
