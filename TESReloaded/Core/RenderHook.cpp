@@ -327,6 +327,11 @@ static float	ShellProj33Seen			= 0.0f;
 static int		ShellDrawLogCount	= 0;
 static int		FarWaterLogCount	= 0;
 
+// Sampler register that a shell-pass water draw had TESR_DepthBufferPreWater bound to in place of
+// TESR_DepthBuffer, so it can be put back when the shell ends. 0xFFFFFFFF = nothing swapped.
+#define ShellWaterDepthSamplerNone 0xFFFFFFFF
+static UInt32	ShellWaterDepthSampler	= ShellWaterDepthSamplerNone;
+
 static int	GrassOrderSeq = 0;
 static int	GrassOrderGrassTraces = 0;
 static int	GrassOrderWaterTraces = 0;
@@ -557,6 +562,42 @@ UInt32 RenderHook::TrackSetupShaderPrograms(NiGeometry* Geometry, NiSkinInstance
 		}
 
 		if (PixelShader->ShaderProg && TheRenderManager->renderState->GetPixelShader() != PixelShader->ShaderHandle) PixelShader->ShaderProg->SetCT();
+
+		// Water must never sample a depth buffer that contains water. TESR_DepthBuffer is the far
+		// pass's END-of-pass resolve, so during the shell it carries the far pass's own near-water
+		// SURFACES - with a hole punched in them below the band boundary, where that surface was
+		// clipped away by the far pass's near plane at M. WATER*.pso reconstructs world positions
+		// from readDepth() at OFFSET texture coordinates (refract at +0.01 UV, reflect at +0.05), so
+		// for pixels within that offset of the boundary the sample lands on the far pass's water
+		// surface instead of the lake bottom: the reconstructed point sits at water level, the
+		// extinction and volume-colour terms (both keyed on refract_uw_pos) collapse to nothing, and
+		// the water renders as if it were not there. The offset is a SCREEN-space constant, which is
+		// why the strip measured the same pixel height at M = 8, 15 and 30 - the observation that
+		// ruled out every geometric explanation.
+		//
+		// TESR_DepthBufferPreWater is resolved during the far pass BEFORE any near water is drawn
+		// (the first near-water bind above, or the end-of-main-pass fallback in TrackRenderObject),
+		// so it holds the scene behind the water with no surface in it and no cliff at M. It is
+		// resolved from the same far-pass depth-stencil, so it carries the same (M, F) encoding as
+		// TESR_DepthBuffer and the fa7f347 decode through TESR_DepthProjectionTransform stays
+		// correct unchanged. It is always this frame's content by the time the shell runs, because
+		// the fallback fills it before the shell starts.
+		//
+		// Per-draw rather than inside SetCT: SetCT only runs when the pixel shader handle changes,
+		// and the shell can re-issue the same water shader the far pass ended with.
+		// PassNear implies ShellActive, so this is inert with the near shell off, and the far pass
+		// is left byte-identical.
+		if (RenderManager::CurrentPass == RenderManager::PassNear && PixelShader->ShaderProg &&
+			TheRenderManager->DepthTexturePreWater && !memcmp(PixelShader->ShaderName, "WATER", 5)) {
+			ShaderValue* Values = PixelShader->ShaderProg->TextureShaderValues;
+			for (UInt32 c = 0; c < PixelShader->ShaderProg->TextureShaderValuesCount; c++) {
+				if (Values[c].Texture && Values[c].Texture->Texture == TheRenderManager->DepthTexture) {
+					TheRenderManager->device->SetTexture(Values[c].RegisterIndex, TheRenderManager->DepthTexturePreWater);
+					ShellWaterDepthSampler = Values[c].RegisterIndex;
+				}
+			}
+		}
+
 		if (RenderWindowRootNode) {
 			char Name[256];
 			NiNode* Node = (NiNode*)MemoryAlloc(sizeof(NiNode)); Node->New(2);			
@@ -721,6 +762,15 @@ void __cdecl TrackRenderObject(NiCamera* Camera, NiNode* Object, NiCullingProces
 				// The engine's Clear() gives no control of the clear value, hence the device call.
 				TheRenderManager->device->Clear(0, NULL, D3DCLEAR_ZBUFFER, 0, RenderManager::ShellClearDepth, 0);
 				RenderObject(Camera, Object, CullingProcess, VisibleArray);
+				// Shell water draws leave TESR_DepthBufferPreWater bound to the sampler that
+				// TESR_DepthBuffer normally occupies (TrackSetupShaderPrograms). Put it back before
+				// anything else can inherit that binding - notably the water REFLECTION render, which
+				// runs after the main pass with its own camera and re-binds water shaders, and where
+				// SetCT does not necessarily re-run.
+				if (ShellWaterDepthSampler != ShellWaterDepthSamplerNone) {
+					TheRenderManager->device->SetTexture(ShellWaterDepthSampler, TheRenderManager->DepthTexture);
+					ShellWaterDepthSampler = ShellWaterDepthSamplerNone;
+				}
 				// Flatten TESR_DepthBuffer to "exactly at M" wherever the shell drew. HERE and nowhere
 				// earlier: water pixel shaders sample TESR_DepthBuffer DURING the shell and need the
 				// untouched far-pass resolve to compute water depth (commit fa7f347) - flattening before
