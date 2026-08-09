@@ -87,6 +87,9 @@ SettingManager::SettingManager() {
 	SettingsMain.Main.AnisotropicFilter = GetPrivateProfileIntA("Main", "AnisotropicFilter", 0, Filename);
 	GetPrivateProfileStringA("Main", "FarPlaneDistance", "0.0", value, SettingStringBuffer, Filename);
 	SettingsMain.Main.FarPlaneDistance = atof(value);
+	SettingsMain.Main.NearShellEnabled = GetPrivateProfileIntA("Main", "NearShellEnabled", 1, Filename);
+	GetPrivateProfileStringA("Main", "NearShellBoundary", "15.0", value, SettingStringBuffer, Filename);
+	SettingsMain.Main.NearShellBoundary = atof(value);
 	GetPrivateProfileStringA("Main", "ScreenshotPath", CurrentPath, value, SettingStringBuffer, Filename);
 	if (value[0] == '\\') {
 		strcpy(SettingsMain.Main.ScreenshotPath, CurrentPath);
@@ -424,6 +427,7 @@ SettingManager::SettingManager() {
 	SettingsMain.Develop.LogShaders = GetPrivateProfileIntA("Develop", "LogShaders", 0, Filename);
 	SettingsMain.Develop.ProfileShadows = GetPrivateProfileIntA("Develop", "ProfileShadows", 0, Filename);
 	SettingsMain.Develop.ProfileEffects = GetPrivateProfileIntA("Develop", "ProfileEffects", 0, Filename);
+	SettingsMain.Develop.NearShellDebug = GetPrivateProfileIntA("Develop", "NearShellDebug", 0, Filename);
 
 	GameLoading = false;
 

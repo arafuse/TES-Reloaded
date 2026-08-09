@@ -99,6 +99,8 @@ struct SettingsMainStruct {
 		int		WaterReflectionMapSize;
 		float	FarPlaneDistance;
 		float	FoV;
+		bool	NearShellEnabled;
+		float	NearShellBoundary;
 	};
 	
 	struct CameraModeStruct {
@@ -271,6 +273,7 @@ struct SettingsMainStruct {
 		UInt8	LogShaders;
 		UInt8	ProfileShadows;
 		UInt8	ProfileEffects;
+		UInt8	NearShellDebug;
 	};
 
 	MainStruct					Main;

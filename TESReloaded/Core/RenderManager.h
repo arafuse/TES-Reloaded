@@ -37,6 +37,33 @@ public:
 	void				SetupSceneCamera();
 	void				SetSceneGraph();
 
+	// --- Near shell via depth clear ------------------------------------------------------------
+	// Pass 1 renders frustum [M, F] with the depth range untouched; depth is resolved; the depth
+	// buffer is cleared; pass 2 renders frustum [n, M], also untouched, compositing over pass 1.
+	// That is correct because anything inside M is geometrically in front of everything beyond it.
+	// See docs/superpowers/specs/2026-08-08-near-shell-depth-clear-design.md
+	//
+	// ALL state here is static ON PURPOSE. TheRenderManager is the engine's own NiDX9Renderer
+	// reinterpret-cast to RenderManager (Framework/Game.cpp:37), and sizeof(NiDX9Renderer) is 0xB00
+	// (GameNi.h:3198), so every non-static member this class declares lands past the end of the
+	// engine's allocation. Statics leave the object layout untouched.
+	enum ScenePass {
+		PassFull = 0,	// not inside a shell pass - the real (n, F) frustum
+		PassFar  = 1,	// [M, F]
+		PassNear = 2,	// [n, M], drawn on a cleared depth buffer
+	};
+
+	static void			UpdateNearShell();
+	static void			ApplyPass(ScenePass Pass);
+	static void			StampPassProjection(D3DMATRIX* Proj);
+
+	static ScenePass	CurrentPass;
+	static bool			ShellActive;
+	static float		ShellBoundary;	// M
+	static float		RealNear;		// n, latched at frame start
+	static float		RealFar;		// F, latched at frame start
+	static int			ShellDraws;		// diagnostics: draws submitted in the shell pass
+
 	D3DXMATRIX			InvViewProjMatrix;
 	D3DXMATRIX			WorldViewProjMatrix;
 	D3DXVECTOR4			CameraForward;

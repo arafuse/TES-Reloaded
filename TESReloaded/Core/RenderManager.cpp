@@ -7,6 +7,91 @@
 #endif
 #define RESZ_CODE 0x7FA05000
 
+RenderManager::ScenePass	RenderManager::CurrentPass		= RenderManager::PassFull;
+bool						RenderManager::ShellActive		= false;
+float						RenderManager::ShellBoundary	= 0.0f;
+float						RenderManager::RealNear			= 0.0f;
+float						RenderManager::RealFar			= 0.0f;
+int							RenderManager::ShellDraws		= 0;
+
+// z-row of a standard D3D projection, matching what SetupSceneCamera writes into
+// Proj->_33 / Proj->_43.
+static void DepthRow(float Near, float Far, float* Row33, float* Row43) {
+	float InvFmN = 1.0f / (Far - Near);
+	*Row33 = Far * InvFmN;
+	*Row43 = -(Near * Far * InvFmN);
+}
+
+// Once per frame, before the scene render. Latches the frustum values we treat as the source of
+// truth and decides whether the shell is worth rendering at all.
+void RenderManager::UpdateNearShell() {
+
+	NiCamera* Camera = WorldSceneGraph ? WorldSceneGraph->camera : NULL;
+
+	ShellActive = false;
+	CurrentPass = PassFull;
+	ShellDraws = 0;
+	// RealNear/RealFar/ShellBoundary keep last frame's values on this path. Harmless: ShellActive is
+	// false, and every reader of them is gated behind it.
+	if (!Camera) return;
+
+	RealNear = Camera->Frustum.Near;
+	RealFar = Camera->Frustum.Far;
+	ShellBoundary = TheSettingManager->SettingsMain.Main.NearShellBoundary;
+
+	if (!TheSettingManager->SettingsMain.Main.NearShellEnabled) return;
+	if (RealNear <= 0.0f) return;
+	if (RealNear >= ShellBoundary) return;	// near is already safe - nothing to gain
+	if (ShellBoundary >= RealFar) return;	// degenerate frustum
+
+	ShellActive = true;
+
+}
+
+// Switches the camera into a pass. Frustum only - the depth range is deliberately never touched;
+// leaving it alone is what keeps the far pass byte-identical to vanilla.
+void RenderManager::ApplyPass(ScenePass Pass) {
+
+	NiCamera* Camera = WorldSceneGraph ? WorldSceneGraph->camera : NULL;
+	if (!Camera) return;
+
+	CurrentPass = Pass;
+
+	float Near = RealNear;
+	float Far = RealFar;
+
+	if (Pass == PassFar)
+		Near = ShellBoundary;
+	else if (Pass == PassNear)
+		Far = ShellBoundary;
+
+	Camera->Frustum.Near = Near;
+	Camera->Frustum.Far = Far;
+
+	// NiDX9Renderer::NearDepth/DepthRange (GameNi.h:678/67C) are the frustum's near and
+	// (far - near) in VIEW space, not the viewport depth range - measured 1.0 / 399999.0 for an
+	// n=1, f=400000 frustum while the viewport read 0 / 1. Keep them consistent with the pass.
+	TheRenderManager->NearDepth = Near;
+	TheRenderManager->DepthRange = Far - Near;
+
+}
+
+// Writes the pass's projection depth row. Called per draw as a belt-and-braces measure in case the
+// engine does not rebuild projMatrix from the frustum at pass start; Task 2's diagnostic measures
+// whether it does. INERT at PassFull: outside the two passes the engine, ShadowManager and the
+// off-screen water-reflection render own their own cameras and matrices, and writing the main
+// camera's depth row into them corrupts the result.
+void RenderManager::StampPassProjection(D3DMATRIX* Proj) {
+
+	if (!ShellActive) return;
+
+	if (CurrentPass == PassFar)
+		DepthRow(ShellBoundary, RealFar, &Proj->_33, &Proj->_43);
+	else if (CurrentPass == PassNear)
+		DepthRow(RealNear, ShellBoundary, &Proj->_33, &Proj->_43);
+
+}
+
 void RenderManager::GetSceneCameraData() {
 
 	NiCamera* Camera = WorldSceneGraph->camera;
@@ -174,6 +259,8 @@ void RenderManager::SetSceneGraph() {
 			WorldSceneGraph->camera->MaxFarNearRatio = FarPlaneDistance / *SettingNearDistance;
 		}
 	}
+
+	UpdateNearShell();
 
 }
 
