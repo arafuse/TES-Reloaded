@@ -253,6 +253,38 @@ void ShadowManager::CreateShadowMapSurfaces(IDirect3DDevice9* Device, SettingsSh
 		Device->CreateDepthStencilSurface(Size, Size, D3DFMT_D24S8, D3DMULTISAMPLE_NONE, 0, true, &ShadowMapDepthSurface[m], NULL);
 		ShadowMapViewPort[m] = { 0, 0, Size, Size, 0.0f, 1.0f };
 	}
+
+	// Previous-bake copies for the static crossfade. Allocated HERE, in the same function as the maps
+	// they shadow, because EffectRecord::LoadTexture resolves a sampler's texture pointer ONCE at
+	// effect load — the pointer must already exist by then, which is the same guarantee the main maps
+	// rely on. Skipped entirely when the feature is off, so nothing pays the ~32 MB.
+	ShadowMapTexturePrev[0] = ShadowMapTexturePrev[1] = NULL;
+	ShadowMapSurfacePrev[0] = ShadowMapSurfacePrev[1] = NULL;
+	StaticFadeReady = false;
+	// CacheStaticShadows = 0 rebakes every frame, so the maps are never stale and nothing pops; the
+	// rebake gate this feature installs would also silently turn caching back on there.
+	if (ShadowsExteriors->FadeTime > 0.0f && ShadowsExteriors->CacheStaticShadows) {
+		bool Ok = true;
+		for (int m = ShadowMapTypeEnum::MapNear; m <= ShadowMapTypeEnum::MapFar; m++) {
+			int r = m - ShadowMapTypeEnum::MapNear;
+			UINT Size = ShadowsExteriors->ShadowMapSize[m];
+			if (!Size) { Ok = false; break; }
+			if (FAILED(Device->CreateTexture(Size, Size, 1, D3DUSAGE_RENDERTARGET, D3DFMT_R32F, D3DPOOL_DEFAULT, &ShadowMapTexturePrev[r], NULL))) { Ok = false; break; }
+			if (FAILED(ShadowMapTexturePrev[r]->GetSurfaceLevel(0, &ShadowMapSurfacePrev[r]))) { Ok = false; break; }
+		}
+		if (!Ok) {
+			// A partial allocation must not leave a live D3D9 interface behind: StaticFadeReady is about
+			// to go false, and TextureManager must never be able to hand a sampler a texture the feature
+			// itself believes doesn't exist. Release whatever the loop above managed to create and NULL
+			// it back out, so "failed" and "never attempted" are indistinguishable.
+			for (int r = 0; r < 2; r++) {
+				if (ShadowMapSurfacePrev[r]) { ShadowMapSurfacePrev[r]->Release(); ShadowMapSurfacePrev[r] = NULL; }
+				if (ShadowMapTexturePrev[r]) { ShadowMapTexturePrev[r]->Release(); ShadowMapTexturePrev[r] = NULL; }
+			}
+		}
+		StaticFadeReady = Ok;
+		Logger::Log("[ShadowFade] previous-bake copies %s (FadeTime %.2fs)", Ok ? "allocated" : "FAILED - fading disabled", ShadowsExteriors->FadeTime);
+	}
 }
 
 void ShadowManager::CreateCubeMapSurfaces(IDirect3DDevice9* Device, UINT CubeMapSize) {
@@ -318,7 +350,21 @@ ShadowManager::ShadowManager() {
 	CollectSkinnedOnly = false;
 	CollectAnchor = D3DXVECTOR3(0.0f, 0.0f, 0.0f);
 
-	for (int i = 0; i < 2; i++) { Regions[i].Valid = false; D3DXMatrixIdentity(&Regions[i].BakedViewProj); Regions[i].AnchorPos = D3DXVECTOR3(0.0f, 0.0f, 0.0f); Regions[i].BakedSunDir = D3DXVECTOR4(0.0f, 0.0f, 0.0f, 0.0f); }
+	StaticFadeT = 1.0f;
+	StaticFadeLastMs = 0.0;
+	ForceRebake = false;
+	// Seeded to MapFar so the fair steady-state picker gives MapNear the first pick, matching this
+	// codebase's existing near-first convention on the very first rebake.
+	LastBakedRegion = MapFar;
+	// Seeded for the same reason as Shadow.Data.y above: ShaderConst is a plain member that is never
+	// zeroed, and 1.0 is the neutral "no crossfade" value the apply shader must see before the first
+	// sun frame publishes anything.
+	TheShaderManager->ShaderConst.ShadowMap.ShadowFadeData = D3DXVECTOR4(1.0f, 0.0f, 0.0f, 0.0f);
+
+	for (int i = 0; i < 2; i++) {
+		Regions[i].Valid = false; D3DXMatrixIdentity(&Regions[i].BakedViewProj); Regions[i].AnchorPos = D3DXVECTOR3(0.0f, 0.0f, 0.0f); Regions[i].BakedSunDir = D3DXVECTOR4(0.0f, 0.0f, 0.0f, 0.0f);
+		D3DXMatrixIdentity(&Regions[i].PrevBakedViewProj); Regions[i].PrevAnchorPos = D3DXVECTOR3(0.0f, 0.0f, 0.0f); Regions[i].PrevValid = false;
+	}
 
 	LoadShadowShaders(Device);
 	CreateShadowMapSurfaces(Device, ShadowsExteriors);
@@ -743,6 +789,77 @@ void ShadowManager::PublishCachedRegionSampleMatrix(ShadowMapTypeEnum ShadowMapT
 	TheShaderManager->ShaderConst.ShadowMap.ShadowCameraToLight[ShadowMapType] = TheRenderManager->InvViewProjMatrix * Trans * Regions[r].BakedViewProj;
 }
 
+// Advance the static crossfade on REAL time, not game time. An accelerated timescale is one of the
+// cases this fade exists to smooth, so the fade must still last FadeTime wall-clock seconds there.
+void ShadowManager::AdvanceStaticFade() {
+	double Now = TheFrameRateManager->GetPerformance(); // milliseconds since startup
+	if (StaticFadeT >= 1.0f) { StaticFadeLastMs = Now; return; }
+	double Delta = Now - StaticFadeLastMs;
+	StaticFadeLastMs = Now;
+	if (Delta <= 0.0) return; // clock hiccup / same-millisecond frame
+	float FadeTime = TheSettingManager->SettingsShadows.Exteriors.FadeTime;
+	if (FadeTime <= 0.0f) { StaticFadeT = 1.0f; return; }
+	StaticFadeT += (float)(Delta / (1000.0 * (double)FadeTime));
+	if (StaticFadeT > 1.0f) StaticFadeT = 1.0f;
+}
+
+// Snapshot BOTH cached maps and their matrices as the crossfade's source, then restart the clock.
+// Both, even when only one region is about to rebake, for the reason given on StaticFadeT: the pair
+// has to stay consistent or the near->far fallback mixes states across the cascade boundary.
+void ShadowManager::BeginStaticCrossfade() {
+	if (!StaticFadeEnabled()) return;
+	IDirect3DDevice9* Device = TheRenderManager->device;
+	for (int i = 0; i < 2; i++) {
+		if (!Regions[i].Valid || !ShadowMapSurfacePrev[i]) { Regions[i].PrevValid = false; continue; }
+		// The Prev surface is a D3DPOOL_DEFAULT render target with undefined contents until this blit
+		// actually populates it. If it fails, leave PrevValid false rather than fading against
+		// whatever garbage was left in VRAM reinterpreted as R32F depth.
+		if (FAILED(Device->StretchRect(ShadowMapSurface[MapNear + i], NULL, ShadowMapSurfacePrev[i], NULL, D3DTEXF_NONE))) {
+			Regions[i].PrevValid = false;
+			continue;
+		}
+		Regions[i].PrevBakedViewProj = Regions[i].BakedViewProj;
+		Regions[i].PrevAnchorPos     = Regions[i].AnchorPos;
+		Regions[i].PrevValid         = true;
+	}
+	// Nothing to fade FROM unless both halves of the pair have history.
+	StaticFadeT = (Regions[0].PrevValid && Regions[1].PrevValid) ? 0.0f : 1.0f;
+}
+
+// A rebake that follows a big jump — fast travel, coc, a load door — has no ground in common with the
+// previous maps, so crossfading would drape the old location's shadows over the new one for FadeTime
+// seconds. Snap instead. Each region is compared against ITS OWN radius, not a shared one: MapNear's
+// radius (2048 by default) is far smaller than MapFar's (8192), and normal drift can never trip
+// either -- near's rebake trigger is RebakeMarginNear * its radius (0.25 * 2048 = 512, well under
+// 2048) and far's is RebakeMarginFar * its radius (0.5 * 8192 = 4096, under 8192) -- so a per-region
+// test still only fires on an actual teleport, not on drift, while correctly catching a jump that
+// clears near's smaller box but not far's larger one (e.g. a mine exit a few cells away).
+void ShadowManager::SnapStaticFadeIfTeleported(SettingsShadowStruct::ExteriorsStruct* S) {
+	if (!StaticFadeEnabled() || StaticFadeT >= 1.0f) return;
+	for (int i = 0; i < 2; i++) {
+		if (!Regions[i].PrevValid) { StaticFadeT = 1.0f; return; }
+		D3DXVECTOR3 D = Regions[i].AnchorPos - Regions[i].PrevAnchorPos;
+		float Len = D3DXVec3Length(&D);
+		if (Len > S->ShadowMapRadius[MapNear + i]) { StaticFadeT = 1.0f; return; }
+	}
+}
+
+// Publish the crossfade scalar and, only while one is in flight, the previous bake's sample matrices.
+// The matrix math mirrors PublishCachedRegionSampleMatrix exactly — current clip -> camera-relative
+// world, translated by (Camera - Anchor) to reach anchor-relative world, then the baked projection —
+// but reads the Prev* fields.
+void ShadowManager::PublishStaticFadeConstants() {
+	auto& Sm = TheShaderManager->ShaderConst.ShadowMap; // as PublishShadowBiasConstants does
+	Sm.ShadowFadeData.x = StaticFadeEnabled() ? StaticFadeT : 1.0f;
+	if (Sm.ShadowFadeData.x >= 1.0f) return;
+	for (int i = 0; i < 2; i++) {
+		D3DXVECTOR3& A = Regions[i].PrevAnchorPos;
+		D3DXMATRIX Trans;
+		D3DXMatrixTranslation(&Trans, TheRenderManager->CameraPosition.x - A.x, TheRenderManager->CameraPosition.y - A.y, TheRenderManager->CameraPosition.z - A.z);
+		Sm.ShadowCameraToLightPrev[i] = TheRenderManager->InvViewProjMatrix * Trans * Regions[i].PrevBakedViewProj;
+	}
+}
+
 // A cached region is due for a rebake when it is invalid, the look-at focus has left the guard band
 // the map was baked to cover, or the sun has rotated past the interval. Near uses a small margin
 // (rebakes more often); far uses a large one (rarely).
@@ -750,6 +867,12 @@ bool ShadowManager::RegionNeedsRebake(ShadowMapTypeEnum ShadowMapType) {
 	int r = ShadowMapType - MapNear;
 	CachedRegion& Reg = Regions[r];
 	if (!Reg.Valid) return true;
+
+	// No rebake while a crossfade is in flight. A second rebake cannot be folded into one already
+	// running: both buffers hold DEPTHS, and a lerp of two depths is meaningless, so there is nowhere
+	// to put the partially faded state. Deferring by at most FadeTime is bounded staleness on top of
+	// caching that is already deliberately stale. Forced bakes bypass this by not calling here.
+	if (StaticFadeEnabled() && StaticFadeT < 1.0f) return false;
 
 	SettingsShadowStruct::ExteriorsStruct* S = SelectExteriorShadowSettings();
 	float Radius = S->ShadowMapRadius[ShadowMapType];
@@ -1168,6 +1291,18 @@ void ShadowManager::RenderExteriorShadows() {
 	// broader condition than this function's shadow work, and its terminator ramp must switch
 	// off when the maps stop updating (otherwise it darkens flat ground as the sun sets).
 	TheShaderManager->ShaderConst.ShadowMap.ShadowBiasAdaptive.w = DoSun ? 1.0f : 0.0f;
+	// The clock only advances on sun frames, so a gap would otherwise resume a stale crossfade
+	// against maps from before the gap. The only gap that reaches this point is exterior-like with
+	// the sun below SunUpThreshold (dusk/dawn/night) -- true interiors already returned above, at
+	// the IsExteriorLike() check, so no bakes happen while this function is skipping its body and
+	// there is nothing here for interiors to leave stale. (Even without this pin, the large real-time
+	// delta accumulated across such a gap would clamp AdvanceStaticFade's clock straight to 1 on
+	// resume; this just makes that explicit and immediate instead of one more frame of drift.)
+	if (!DoSun) {
+		StaticFadeT = 1.0f;
+		Regions[0].PrevValid = Regions[1].PrevValid = false;
+		TheShaderManager->ShaderConst.ShadowMap.ShadowFadeData.x = 1.0f;
+	}
 	if (!DoOrtho && !DoSun) return;
 	ScopeTimer profile(Phase_ExtTotal);
 
@@ -1197,15 +1332,19 @@ void ShadowManager::RenderExteriorShadows() {
 
 	if (CurrentCell != Player->parentCell) {
 		CurrentCell = Player->parentCell;
-		Regions[0].Valid = Regions[1].Valid = false;
+		// This used to clear Valid on both regions, which forced an immediate UNFADED bake — exactly
+		// the cell load/unload pop the crossfade exists to remove. Route it through the normal rebake
+		// path instead, so the outgoing maps survive as the fade's source. With fading off, the
+		// force flag reaches the same two BakeStaticRegion calls the invalidation used to cause.
+		ForceRebake = true;
 	}
 
 	if (DoSun) {
 		D3DXVECTOR4* SunDir = &TheShaderManager->ShaderConst.ShadowMap.ShadowLightDir;
 		// A never-baked region (first frame / cell change) bakes immediately so it is never sampled unbaked
 		// (its AnchorPos + surface would be garbage). Both may bake on a cell-change frame — a one-time cost
-		// during an already-hitchy load. Once both are valid, round-robin steady-state refreshes (rebake near
-		// if due, else far; never two refreshes in one frame).
+		// during an already-hitchy load. Once both are valid, steady-state refreshes pick whichever of
+		// Near/Far is due and did NOT bake last (see LastBakedRegion); never two refreshes in one frame.
 		if (!ShadowsExteriors->CacheStaticShadows) {
 			// Caching disabled (INI opt-out): rebake BOTH static regions every frame. Slower — the full
 			// scene walk + static draws happen every frame instead of on invalidation — but the shadow is
@@ -1214,11 +1353,38 @@ void ShadowManager::RenderExteriorShadows() {
 			BakeStaticRegion(MapFar,  ShadowsExteriors, SunDir);
 		}
 		else {
-			if (!Regions[0].Valid) BakeStaticRegion(MapNear, ShadowsExteriors, SunDir);
-			if (!Regions[1].Valid) BakeStaticRegion(MapFar,  ShadowsExteriors, SunDir);
-			if (Regions[0].Valid && Regions[1].Valid) {
-				if (RegionNeedsRebake(MapNear))      BakeStaticRegion(MapNear, ShadowsExteriors, SunDir);
-				else if (RegionNeedsRebake(MapFar))  BakeStaticRegion(MapFar,  ShadowsExteriors, SunDir);
+			if (StaticFadeEnabled()) AdvanceStaticFade();
+			if (!Regions[0].Valid || !Regions[1].Valid) {
+				// First bake after load: there is no previous state, so nothing to fade from.
+				if (!Regions[0].Valid) BakeStaticRegion(MapNear, ShadowsExteriors, SunDir);
+				if (!Regions[1].Valid) BakeStaticRegion(MapFar,  ShadowsExteriors, SunDir);
+				Regions[0].PrevValid = Regions[1].PrevValid = false;
+				StaticFadeT = 1.0f;
+				ForceRebake = false;
+			}
+			else if (ForceRebake) {
+				// Cell change: both regions rebake together, as the old invalidation path did.
+				ForceRebake = false;
+				BeginStaticCrossfade();
+				BakeStaticRegion(MapNear, ShadowsExteriors, SunDir);
+				BakeStaticRegion(MapFar,  ShadowsExteriors, SunDir);
+				LastBakedRegion = MapFar; // both baked; harmless which one "last" means here
+				SnapStaticFadeIfTeleported(ShadowsExteriors);
+			}
+			else {
+				bool NearDue = RegionNeedsRebake(MapNear);   // the fade gate lives inside; both are false while t < 1
+				bool FarDue  = RegionNeedsRebake(MapFar);
+				if (NearDue || FarDue) {
+					// Prefer whichever region did NOT bake last. A near-first chain starves MapFar once the
+					// fade gate is in play: the gate collapses far's evaluation windows to the single frame
+					// per FadeTime where t reaches 1, and sustained movement keeps near due on exactly those
+					// frames -- so far's anchor is abandoned and every distant shadow drops out mid-travel.
+					ShadowMapTypeEnum Pick = (FarDue && (!NearDue || LastBakedRegion == MapNear)) ? MapFar : MapNear;
+					BeginStaticCrossfade();
+					BakeStaticRegion(Pick, ShadowsExteriors, SunDir);
+					LastBakedRegion = Pick;
+					SnapStaticFadeIfTeleported(ShadowsExteriors);
+				}
 			}
 		}
 
@@ -1227,6 +1393,7 @@ void ShadowManager::RenderExteriorShadows() {
 		// Per-frame sample matrices from the CURRENT camera (the cached maps may be stale/world-anchored).
 		PublishCachedRegionSampleMatrix(MapNear);
 		PublishCachedRegionSampleMatrix(MapFar);
+		PublishStaticFadeConstants();
 
 		ShadowData->y = ShadowsExteriors->Darkness;
 		ShadowData->z = 1.0f / (float)ShadowsExteriors->ShadowMapSize[MapNear];

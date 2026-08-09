@@ -109,6 +109,36 @@ public:
 	IDirect3DTexture9*		ShadowMapTexture[4];
 	IDirect3DSurface9*		ShadowMapSurface[4];
 	IDirect3DSurface9*		ShadowMapDepthSurface[4];
+	// --- Static-map crossfade ([Exteriors] FadeTime) ---------------------------------------------
+	// Copies of the cached Near/Far maps as they stood before the current bake, so the apply shader
+	// can crossfade the two shadow terms instead of switching between them in one frame. Indexed
+	// [0] = MapNear, [1] = MapFar. Same format and size as the map each shadows; no depth-stencil,
+	// because these are only ever a StretchRect destination and a sampler source.
+	IDirect3DTexture9*		ShadowMapTexturePrev[2];
+	IDirect3DSurface9*		ShadowMapSurfacePrev[2];
+	// True only when the feature is configured on AND both copies actually allocated.
+	bool					StaticFadeReady;
+	bool					StaticFadeEnabled() const { return StaticFadeReady; }
+	// Crossfade progress, 0..1; 1 = none in flight. ONE clock for the PAIR of regions, not one each:
+	// the apply's near->far fallback is per-pixel, so a receiver outside the near box reads the far
+	// map. Independent clocks would let a pixel mix a fresh near term with a half-faded far term
+	// across the cascade boundary, which shows up as a seam.
+	float					StaticFadeT;
+	double					StaticFadeLastMs;	// FrameRateManager::GetPerformance() at last advance
+	// Set when something outside the drift/sun heuristics requires a rebake (currently a cell
+	// change). Bypasses the fade gate but still goes through the crossfade.
+	bool					ForceRebake;
+	// Which region baked last, so the steady-state picker below can alternate rather than run
+	// near-first. Near-first starves MapFar once the fade gate collapses its evaluation window to
+	// one frame per FadeTime: sustained movement keeps near due on exactly that frame, so far is
+	// never picked and its anchor goes stale. Seeded to MapFar in the constructor so near gets the
+	// first pick, matching the pre-fade behaviour's implicit near-first bias on the very first rebake.
+	ShadowMapTypeEnum		LastBakedRegion;
+
+	void					AdvanceStaticFade();
+	void					BeginStaticCrossfade();
+	void					SnapStaticFadeIfTeleported(SettingsShadowStruct::ExteriorsStruct* S);
+	void					PublishStaticFadeConstants();
 	ShaderRecord*			ShadowMapVertex;
 	ShaderRecord*			ShadowMapPixel;
 	IDirect3DVertexShader9* ShadowMapVertexShader;
@@ -143,6 +173,11 @@ public:
 		D3DXVECTOR3 AnchorPos;       // snapped world center the map was baked around
 		D3DXVECTOR4 BakedSunDir;     // sun direction at last bake
 		bool        Valid;           // false => force rebake
+		// The bake this region held before the current one, kept as the crossfade's source. Only
+		// meaningful while StaticFadeT < 1; PrevValid is false when there is nothing to fade from.
+		D3DXMATRIX  PrevBakedViewProj;
+		D3DXVECTOR3 PrevAnchorPos;
+		bool        PrevValid;
 	};
 	CachedRegion			Regions[2];         // [0]=MapNear, [1]=MapFar
 

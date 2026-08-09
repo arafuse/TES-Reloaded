@@ -64,6 +64,12 @@ bool TextureRecord::LoadTexture(TextureRecordType Type, const char* Filename) {
 		case TextureRecordType_ShadowMapBufferSkin:
 			Texture = TheShadowManager->ShadowMapTexture[ShadowManager::ShadowMapTypeEnum::MapSkin];
 			break;
+		case TextureRecordType_ShadowMapBufferNearPrev:
+			Texture = TheShadowManager->ShadowMapTexturePrev[0];
+			break;
+		case TextureRecordType_ShadowMapBufferFarPrev:
+			Texture = TheShadowManager->ShadowMapTexturePrev[1];
+			break;
 		case TextureRecordType_ShadowCubeMapBuffer0:
 			Texture = TheShadowManager->ShadowCubeMapTexture[0];
 			break;
@@ -180,6 +186,24 @@ TextureRecord* TextureManager::LoadTexture(const char* ShaderSource, UInt32 Regi
 					if (SamplerParser && SamplerParser < strstr(Sampler, WordSamplerDelimeter)) {
 						Type = TextureRecordType_DepthBuffer;
 						strcpy(Filename, WordDepthBuffer);
+					}
+				}
+				// MUST precede the Near/Far blocks below: this parser matches with strstr, and
+				// "TESR_ShadowMapBufferNear" is a prefix of "TESR_ShadowMapBufferNearPrev", so
+				// testing the shorter name first would claim the Prev sampler and bind it to the
+				// live map. Same reason WordDepthBufferPreWater is tested before WordDepthBuffer.
+				if (!Type) {
+					SamplerParser = strstr(Sampler, WordShadowMapBufferNearPrev);
+					if (SamplerParser && SamplerParser < strstr(Sampler, WordSamplerDelimeter)) {
+						Type = TextureRecordType_ShadowMapBufferNearPrev;
+						strcpy(Filename, WordShadowMapBufferNearPrev);
+					}
+				}
+				if (!Type) {
+					SamplerParser = strstr(Sampler, WordShadowMapBufferFarPrev);
+					if (SamplerParser && SamplerParser < strstr(Sampler, WordSamplerDelimeter)) {
+						Type = TextureRecordType_ShadowMapBufferFarPrev;
+						strcpy(Filename, WordShadowMapBufferFarPrev);
 					}
 				}
 				if (!Type) {

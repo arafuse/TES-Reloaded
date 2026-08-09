@@ -1,12 +1,13 @@
 // Image space shadows shader for Oblivion Reloaded
 
-float4x4 TESR_WorldTransform;
 float4x4 TESR_WorldViewProjectionTransform;
 float4x4 TESR_ViewTransform;
 float4x4 TESR_ProjectionTransform;
 float4x4 TESR_ShadowCameraToLightTransformNear;
 float4x4 TESR_ShadowCameraToLightTransformFar;
 float4x4 TESR_ShadowCameraToLightTransformSkin;
+float4x4 TESR_ShadowCameraToLightTransformNearPrev;
+float4x4 TESR_ShadowCameraToLightTransformFarPrev;
 float4 TESR_CameraPosition;
 float4 TESR_WaterSettings;
 float4 TESR_ShadowData;
@@ -50,6 +51,9 @@ float4 TESR_ShadowBiasDeferred;
 // below uses it to switch itself off when the maps are frozen. If nothing ever publishes it, 0 makes
 // the ramp disable itself -- the safe failure mode.
 float4 TESR_ShadowBiasAdaptive; // x = terminator width, y = max slope clamp, z = adaptive enable, w = sun active (0/1)
+// x = static-map crossfade progress: 0 = fully on the previous bake, 1 = fully on the current one.
+// 1 is the steady state and the value this shader branches on to skip the previous map set entirely.
+float4 TESR_ShadowFadeData;
 float4 TESR_FogData;
 
 sampler2D TESR_RenderedBuffer : register(s0) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
@@ -59,6 +63,8 @@ sampler2D TESR_ShadowMapBufferFar : register(s3) = sampler_state { ADDRESSU = CL
 sampler2D TESR_SourceBuffer : register(s4) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
 sampler2D TESR_DepthBufferPreWater : register(s5) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
 sampler2D TESR_ShadowMapBufferSkin : register(s6) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
+sampler2D TESR_ShadowMapBufferNearPrev : register(s7) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
+sampler2D TESR_ShadowMapBufferFarPrev : register(s8) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
 
 static const float nearZ = TESR_ProjectionTransform._43 / TESR_ProjectionTransform._33;
 static const float farZ = (TESR_ProjectionTransform._33 * nearZ) / (TESR_ProjectionTransform._33 - 1.0f);
@@ -131,13 +137,20 @@ float3 getRawNormal(float2 UVCoord)
 }
 
 
-float LookupFar(float4 ShadowPos, float2 OffSet, float bias) {
-	float Shadow = tex2D(TESR_ShadowMapBufferFar, ShadowPos.xy + float2(OffSet.x * TESR_ShadowData.w, OffSet.y * TESR_ShadowData.w)).r;
+// Explicit LOD 0 rather than tex2D: the shadow maps are created with a single mip level
+// (CreateShadowMapSurfaces passes Levels=1), so LOD 0 is the only LOD that exists and this is
+// lossless -- MAGFILTER/MINFILTER=LINEAR still give bilinear filtering within it, and MIPFILTER has
+// nothing to interpolate between. tex2D's implicit derivatives are what forced fxc to flatten the
+// crossfade's `if (TESR_ShadowFadeData.x < 1.0f)` into an unconditional double evaluation (ddx/ddy
+// cannot be computed inside divergent flow control); tex2Dlod has no derivative dependency, so it
+// lets that branch survive as real flow control instead.
+float LookupFar(sampler2D mapFar, float4 ShadowPos, float2 OffSet, float bias) {
+	float Shadow = tex2Dlod(mapFar, float4(ShadowPos.xy + float2(OffSet.x * TESR_ShadowData.w, OffSet.y * TESR_ShadowData.w), 0, 0)).r;
 	if (Shadow < ShadowPos.z - bias) return darkness;
 	return clamp(TESR_ShadowLightDir.w, darkness, 1.0f);
 }
 
-float GetLightAmountFar(float4 ShadowPos, float bias) {
+float GetLightAmountFar(sampler2D mapFar, float4 ShadowPos, float bias) {
 
 	float Shadow = 0.0f;
 	float x;
@@ -154,7 +167,7 @@ float GetLightAmountFar(float4 ShadowPos, float bias) {
 	// Perf: 2x2 = 4 taps (was 3x3 = 9). Aggressive quality trade.
 	for (x = -0.5f; x <= 0.5f; x += 1.0f) {
 		for (y = -0.5f; y <= 0.5f; y += 1.0f) {
-			Shadow += LookupFar(ShadowPos, float2(x, y), bias);
+			Shadow += LookupFar(mapFar, ShadowPos, float2(x, y), bias);
 		}
 	}
 	Shadow /= 4.0f;
@@ -171,8 +184,8 @@ float CascadeCoverage(float4 ShadowPos) {
 	return 1.0f - smoothstep(0.9f, 1.0f, max(abs(ndc.x), abs(ndc.y)));
 }
 
-float Lookup(float4 ShadowPos, float2 OffSet, float bias) {
-	float Shadow = tex2D(TESR_ShadowMapBufferNear, ShadowPos.xy + float2(OffSet.x * TESR_ShadowData.z, OffSet.y * TESR_ShadowData.z)).r;
+float Lookup(sampler2D mapNear, float4 ShadowPos, float2 OffSet, float bias) {
+	float Shadow = tex2Dlod(mapNear, float4(ShadowPos.xy + float2(OffSet.x * TESR_ShadowData.z, OffSet.y * TESR_ShadowData.z), 0, 0)).r;
 	if (Shadow < ShadowPos.z - bias) return darkness;
 	return clamp(TESR_ShadowLightDir.w, darkness, 1.0f);
 }
@@ -205,24 +218,28 @@ float GetLightAmountSkin(float4 ShadowPosSkin, float bias) {
 		for (x = -1.5f; x <= 1.5f; x += 1.0f) {
 			// TESR_ShadowData.z is the near map's texel size; the skin overlay map is allocated at the same
 			// (near) resolution (see CreateShadowMapSurfaces), so it is the correct PCF step here too.
-			float s = tex2D(TESR_ShadowMapBufferSkin, ShadowPosSkin.xy + float2(x, y) * TESR_ShadowData.z).r;
+			float s = tex2Dlod(TESR_ShadowMapBufferSkin, float4(ShadowPosSkin.xy + float2(x, y) * TESR_ShadowData.z, 0, 0)).r;
 			Shadow += (s < ShadowPosSkin.z - bias) ? darkness : 1.0f;
 		}
 	return Shadow / 16.0f;
 }
 
-float GetLightAmount(float4 WorldPos, float4 ShadowPos, float4 ShadowPosFar, float4 ShadowPosSkin, float biasNear, float biasFar) {
+// The cascade term for ONE map set. There is no previous-bake skin map -- MapSkin is redrawn every
+// frame in its own camera-relative light space, and both the current and previous StaticTerm calls
+// are handed the SAME current-frame ShadowSkin/GetLightAmountSkin term, so it applies to both and is
+// always min-combined below (on the NEAR-IN-BOUNDS PATH ONLY, since the out-of-bounds branch returns
+// before it).
+float GetLightAmount(sampler2D mapNear, sampler2D mapFar, float4 ShadowPos, float4 ShadowPosFar, float4 ShadowPosSkin, float biasNear, float biasFar) {
 
 	float Shadow = 0.0f;
 	float x;
 	float y;
-	float distToExternalLight;
 
 	ShadowPos.xyz /= ShadowPos.w;
 	if (ShadowPos.x < -1.0f || ShadowPos.x > 1.0f ||
 		ShadowPos.y < -1.0f || ShadowPos.y > 1.0f ||
 		ShadowPos.z < 0.0f || ShadowPos.z > 1.0f)
-		return GetLightAmountFar(ShadowPosFar, biasFar);
+		return GetLightAmountFar(mapFar, ShadowPosFar, biasFar);
 
 	ShadowPos.x = ShadowPos.x * 0.5f + 0.5f;
 	ShadowPos.y = ShadowPos.y * -0.5f + 0.5f;
@@ -230,17 +247,31 @@ float GetLightAmount(float4 WorldPos, float4 ShadowPos, float4 ShadowPosFar, flo
 	// Perf: 4x4 = 16 taps (was 6x6 = 36). Aggressive quality trade.
 	for (y = -1.5f; y <= 1.5f; y += 1.0f) {
 		for (x = -1.5f; x <= 1.5f; x += 1.0f) {
-			Shadow += Lookup(ShadowPos, float2(x, y), biasNear);
+			Shadow += Lookup(mapNear, ShadowPos, float2(x, y), biasNear);
 		}
 	}
 	Shadow /= 16.0f;
 
-	// Per-frame actor overlay: MapSkin is drawn dynamically each frame in its own camera-relative light
-	// space; min-combine its shadow term with the cached static near term.
+	// Both crossfade sets apply the same current-frame skin overlay -- see the function comment.
 	Shadow = min(Shadow, GetLightAmountSkin(ShadowPosSkin, biasNear));
 
 	return saturate(Shadow);
 
+}
+
+// The complete static shadow term for one map set: project into that set's light space, cascade
+// lookup, terminator ramp, then the coverage fade-out -- the same order, and for the current set the
+// same arithmetic, the shader has always applied. Factored out so the crossfade can evaluate it once
+// per map set without duplicating the cascade logic.
+float StaticTerm(sampler2D mapNear, sampler2D mapFar, float4x4 toNear, float4x4 toFar,
+                 float4 posNear, float4 posFar, float4 ShadowPosSkin,
+                 float biasNear, float biasFar, float facing) {
+	float4 ShadowNear = mul(posNear, toNear);
+	float4 ShadowFar  = mul(posFar,  toFar);
+	float mapShadow = GetLightAmount(mapNear, mapFar, ShadowNear, ShadowFar, ShadowPosSkin, biasNear, biasFar);
+	float s = lerp(darkness, mapShadow, facing);
+	float coverage = max(CascadeCoverage(ShadowNear), CascadeCoverage(ShadowFar));
+	return lerp(1.0f, s, coverage);
 }
 
 float4 Shadow(VSOUT IN) : COLOR0{
@@ -276,7 +307,6 @@ float4 Shadow(VSOUT IN) : COLOR0{
 	// 285 to 497. Same branch count, no new sampling context.
 	if (TESR_ShadowBiasAdaptive.w >= 0.5f) {
 		float fogCoeff = (saturate((distance(world_pos, TESR_CameraPosition.xyz) - ((TESR_FogData.y - 2000))) / 1000)) + 1.0f;
-		float4 world_pos_trans = mul(world_pos, TESR_WorldTransform);
 		float3 raw = getRawNormal(IN.UVCoord);
 
 		float4 posNear;
@@ -339,35 +369,26 @@ float4 Shadow(VSOUT IN) : COLOR0{
 			facing = 1.0f; // no terminator ramp: lerp below collapses to the raw map term
 		}
 
-		float4 ShadowNear = mul(posNear, TESR_ShadowCameraToLightTransformNear);
-		float4 ShadowFar = mul(posFar, TESR_ShadowCameraToLightTransformFar);
 		float4 ShadowSkin = mul(posNear, TESR_ShadowCameraToLightTransformSkin);
-		float mapShadow = GetLightAmount(world_pos_trans, ShadowNear, ShadowFar, ShadowSkin, biasNear, biasFar);
 
-		// `darkness` is exactly what Lookup returns on its shadowed branch, so the forced-shadow
-		// path and the map path agree. At facing == 1 this collapses to mapShadow to within a ULP
-		// (the branch is dynamic, so fxc emits a real `lrp` rather than folding it away) -- far
-		// below the quantization of the 8-bit output.
-		float Shadow = lerp(darkness, mapShadow, facing);
+		// Current map set. The comments that used to sit on the lerps below now live in StaticTerm:
+		// the terminator ramp collapses to the raw map term at facing == 1, and the coverage ramp
+		// fades the whole term out where the cascades hold no data (LOD terrain, distant statics,
+		// tree billboards all sit outside the far box, where a screen-space normal is meaningless).
+		float Shadow = StaticTerm(TESR_ShadowMapBufferNear, TESR_ShadowMapBufferFar,
+		                          TESR_ShadowCameraToLightTransformNear, TESR_ShadowCameraToLightTransformFar,
+		                          posNear, posFar, ShadowSkin, biasNear, biasFar, facing);
 
-		// Fade the whole term out where the maps have no data. The far cascade is an ortho box of
-		// half-width ShadowMapRadius[MapFar] (8192 by default) around the player, so every distant-LOD
-		// receiver -- LOD terrain, distant statics, tree billboards -- sits OUTSIDE it, and both bounds
-		// tests above already return "lit" there. The terminator ramp did not: it kept darkening those
-		// pixels straight from `facing`, i.e. purely from a screen-space normal, with no shadow map
-		// involved at all. At LOD range that normal is meaningless. Depth quantization terraces the far
-		// depth buffer (one 24-bit LSB is tens of world units out there, comparable to a pixel's own
-		// lateral footprint), so getRawNormal collapses to +/-viewRay in contour bands; and billboards
-		// are camera-facing by construction, so they reconstruct as facing the camera everywhere. Both
-		// make N.L swing with camera PITCH rather than with the surface, which is the striped shadowing
-		// that washes over distant mountains and their trees as you look up and down.
-		//
-		// Gating on coverage rather than on a distance constant keeps this exact under any
-		// ShadowMapRadius, and the ramp also softens the hard edge the bounds tests already had.
-		// max() because a receiver inside the near box is served by the near map even where it is at
-		// the far box's border (the two cascades snap to independently drifting anchors).
-		float coverage = max(CascadeCoverage(ShadowNear), CascadeCoverage(ShadowFar));
-		Shadow = lerp(1.0f, Shadow, coverage);
+		// Crossfade against the previous static bake while one is in flight, so a rebake -- whatever
+		// triggered it: cell load/unload, drift past the guard band, sun rotation -- ramps in over
+		// [Exteriors] FadeTime instead of switching in one frame. TESR_ShadowFadeData.x is 1 in
+		// steady state, so this branch is not taken and the previous set costs nothing but the test.
+		if (TESR_ShadowFadeData.x < 1.0f) {
+			float prevShadow = StaticTerm(TESR_ShadowMapBufferNearPrev, TESR_ShadowMapBufferFarPrev,
+			                              TESR_ShadowCameraToLightTransformNearPrev, TESR_ShadowCameraToLightTransformFarPrev,
+			                              posNear, posFar, ShadowSkin, biasNear, biasFar, facing);
+			Shadow = lerp(prevShadow, Shadow, TESR_ShadowFadeData.x);
+		}
 
 		color.rgb *= saturate(Shadow * fogCoeff) * float3(1.0f, 1.0f, 1.0f);
 	}

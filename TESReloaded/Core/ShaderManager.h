@@ -77,6 +77,14 @@ struct ShaderConstants {
 		// every exterior frame by ShadowManager::RenderExteriorShadows (NOT by PublishShadowBiasConstants,
 		// which only runs on sun frames); the apply shader disables its terminator ramp when it is 0.
 		D3DXVECTOR4		ShadowBiasAdaptive;
+		// Camera->light sample matrices for the PREVIOUS static bake, built exactly like
+		// ShadowCameraToLight[MapNear]/[MapFar] but from the region's Prev* fields. [0] = Near,
+		// [1] = Far. Only published, and only read by the apply shader, while ShadowFadeData.x < 1.
+		D3DXMATRIX		ShadowCameraToLightPrev[2];
+		// x = static-map crossfade progress, 0 (fully on the previous bake) .. 1 (fully on the
+		// current one). 1 means no crossfade is in flight, which is the steady state and the value
+		// the apply shader branches on to skip the previous map set entirely. y/z/w unused.
+		D3DXVECTOR4		ShadowFadeData;
 	};
 
 	struct PointLightStruct {
