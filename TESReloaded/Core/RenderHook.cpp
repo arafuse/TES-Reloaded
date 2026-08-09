@@ -427,7 +427,10 @@ UInt32 RenderHook::TrackSetupShaderPrograms(NiGeometry* Geometry, NiSkinInstance
 
 		// [ShellDraw] Evidence capture for the shell-pass defects: what is drawn in the shell and what
 		// colour-write/Z state does it see on entry - i.e. the state left behind by the PREVIOUS draw.
-		if (TheSettingManager->SettingsMain.Develop.NearShellDebug && ShellDrawLogCount < 40) {
+		// Cap raised from 40 to 64: the previous capture logged 40 of 44 shell draws, which left open
+		// whether the WATERHMAP* height-map pre-pass is re-issued inside the shell. 64 covers the
+		// whole stream with headroom.
+		if (TheSettingManager->SettingsMain.Develop.NearShellDebug && ShellDrawLogCount < 64) {
 			ShellDrawLogCount++;
 			float Dist = 0.0f;
 			if (WorldTransform) {
