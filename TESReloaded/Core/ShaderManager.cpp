@@ -312,6 +312,11 @@ bool ShaderProgram::SetConstantTableValue1(LPCSTR Name, UInt32 Index) {
 		FloatShaderValues[Index].Value = (D3DXVECTOR4*)&TheRenderManager->viewMatrix;
 	else if (!strcmp(Name, "TESR_ProjectionTransform"))
 		FloatShaderValues[Index].Value = (D3DXVECTOR4*)&TheRenderManager->projMatrix;
+	// Same matrix, but with the depth row of whatever is currently in TESR_DepthBuffer rather than of
+	// the matrix we are rasterising with. Use it to linearize that buffer; use the one above for
+	// rasterisation-space work. The two differ only inside the near shell's second pass.
+	else if (!strcmp(Name, "TESR_DepthProjectionTransform"))
+		FloatShaderValues[Index].Value = (D3DXVECTOR4*)&RenderManager::DepthProjMatrix;
 	else if (!strcmp(Name, "TESR_WorldViewProjectionTransform"))
 		FloatShaderValues[Index].Value = (D3DXVECTOR4*)&TheRenderManager->WorldViewProjMatrix;
 	else if (!strcmp(Name, "TESR_InvViewProjectionTransform"))

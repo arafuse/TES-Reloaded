@@ -56,7 +56,6 @@ public:
 	static void			UpdateNearShell();
 	static void			ApplyPass(ScenePass Pass);
 	static void			StampPassProjection(D3DMATRIX* Proj);
-	static void			StampFarProjection(D3DMATRIX* Proj);
 
 	static ScenePass	CurrentPass;
 	static bool			ShellActive;
@@ -64,6 +63,14 @@ public:
 	static float		RealNear;		// n, latched at frame start
 	static float		RealFar;		// F, latched at frame start
 	static int			ShellDraws;		// diagnostics: draws submitted in the shell pass
+
+	// Published to shaders as TESR_DepthProjectionTransform. A copy of projMatrix whose depth row
+	// carries the encoding of whatever is currently in TESR_DepthBuffer - (M, F) while the shell is
+	// active, since that buffer always holds the far pass's resolve - so a shader can linearize the
+	// depth buffer no matter which pass it is rasterising in. projMatrix cannot serve both jobs: the
+	// shell MUST rasterise with (n, M) or nothing inside M draws at all. Identical to projMatrix when
+	// the shell is off, so the constant is correct and inert there. Written by SetupSceneCamera.
+	static D3DMATRIX	DepthProjMatrix;
 
 	D3DXMATRIX			InvViewProjMatrix;
 	D3DXMATRIX			WorldViewProjMatrix;

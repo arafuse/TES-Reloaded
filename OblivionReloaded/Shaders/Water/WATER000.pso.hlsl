@@ -29,6 +29,7 @@ float4 TESR_Tick : register(c19);
 float4x4 TESR_ViewTransform : register(c20);
 float4x4 TESR_ProjectionTransform : register(c24);
 float4 TESR_WaterShorelineParams : register(c28);
+float4x4 TESR_DepthProjectionTransform : register(c29);
 
 sampler2D ReflectionMap : register(s0);
 sampler2D NormalMap : register(s1);
@@ -38,8 +39,10 @@ sampler2D DisplacementMap : register(s4);
 sampler2D TESR_RenderedBuffer : register(s5) = sampler_state { };
 sampler2D TESR_DepthBuffer : register(s6) = sampler_state { };
 
-static const float nearZ = TESR_ProjectionTransform._34 / TESR_ProjectionTransform._33;
-static const float farZ = (TESR_ProjectionTransform._33 * nearZ) / (TESR_ProjectionTransform._33 - 1.0f);
+// TESR_DepthBuffer holds the far pass's resolve while the near shell is active, encoded with a
+// different near/far than the matrix this draw rasterises with. Decode it with its own matrix.
+static const float nearZ = TESR_DepthProjectionTransform._34 / TESR_DepthProjectionTransform._33;
+static const float farZ = (TESR_DepthProjectionTransform._33 * nearZ) / (TESR_DepthProjectionTransform._33 - 1.0f);
 static const float Zmul = nearZ * farZ;
 static const float Zdiff = farZ - nearZ;
 static const float depthRange = nearZ - farZ;

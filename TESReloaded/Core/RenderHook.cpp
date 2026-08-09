@@ -415,23 +415,6 @@ UInt32 RenderHook::TrackSetupShaderPrograms(NiGeometry* Geometry, NiSkinInstance
 	RenderManager::StampPassProjection(Proj);
 	if (RenderManager::CurrentPass == RenderManager::PassNear) {
 
-		// [NearShellDebug=3] PROBE for the water defect, not a fix. During the shell, TESR_DepthBuffer
-		// still holds the far pass's (M, F) resolve, but the stamp just above wrote the shell's (n, M)
-		// row into projMatrix - which IS TESR_ProjectionTransform - so WATER007.pso.hlsl decodes every
-		// depth sample into [n, M] and near water renders as vanishingly shallow (shell-defect-analysis
-		// Defect 2). This overwrites the row with the far-pass encoding for water draws only, AFTER
-		// the stamp, to measure whether projMatrix feeds only the shader constant or also rasterises
-		// the shell geometry:
-		//   near water renders correctly => projMatrix feeds only the shader constant, not the vertex
-		//     transform, and this becomes the real fix (publish (M, F) for shell draws that sample
-		//     TESR_DepthBuffer).
-		//   near water disappears entirely => projMatrix feeds rasterisation too, the shell draw is
-		//     pushed behind its own near plane, and the limitation is genuine.
-		if (TheSettingManager->SettingsMain.Develop.NearShellDebug == 3 &&
-			PixelShader && PixelShader->ShaderName && !memcmp(PixelShader->ShaderName, "WATER", 5)) {
-			RenderManager::StampFarProjection(Proj);
-		}
-
 		RenderManager::ShellDraws++;
 
 		// [ShellDraw] Evidence capture for the shell-pass defects: what is drawn in the shell and what

@@ -13,6 +13,7 @@ float						RenderManager::ShellBoundary	= 0.0f;
 float						RenderManager::RealNear			= 0.0f;
 float						RenderManager::RealFar			= 0.0f;
 int							RenderManager::ShellDraws		= 0;
+D3DMATRIX					RenderManager::DepthProjMatrix	= {};
 
 // z-row of a standard D3D projection, matching what SetupSceneCamera writes into
 // Proj->_33 / Proj->_43.
@@ -98,13 +99,13 @@ void RenderManager::ApplyPass(ScenePass Pass) {
 // camera's depth row into them corrupts the result. (ApplyPass writes the pass's row once at each
 // pass boundary; that is where the real (n, F) row is restored when the shell ends.)
 //
-// KNOWN LIMITATION, PassNear: this row is (n, M), but any raw shader that samples TESR_DepthBuffer
-// during the shell is reading the FAR pass's resolve, which is encoded (M, F). In practice that is
-// WATER000-014 - the near water surface - at pixels closer than M. One matrix cannot serve both:
-// the shell MUST rasterise with (n, M) (an (M, F) row puts every shell vertex behind the near plane
-// and nothing draws at all), and TESR_ProjectionTransform is a live pointer to this same matrix.
-// Recorded in the spec's Known limitations; fixing it means decoupling the published matrix from
-// projMatrix, which is a design change rather than a fix.
+// At PassNear this row is (n, M), but any raw shader that samples TESR_DepthBuffer during the shell
+// is reading the FAR pass's resolve, which is encoded (M, F). One matrix cannot serve both: the
+// shell MUST rasterise with (n, M) (an (M, F) row puts every shell vertex behind the near plane and
+// nothing draws at all - measured, via the NearShellDebug=3 probe, as near water vanishing
+// entirely), and TESR_ProjectionTransform is a live pointer to this same matrix. Depth-buffer
+// consumers therefore read TESR_DepthProjectionTransform (DepthProjMatrix) instead, which always
+// carries the buffer's own encoding. See SetupSceneCamera.
 void RenderManager::StampPassProjection(D3DMATRIX* Proj) {
 
 	if (!ShellActive) return;
@@ -113,17 +114,6 @@ void RenderManager::StampPassProjection(D3DMATRIX* Proj) {
 		DepthRow(ShellBoundary, RealFar, &Proj->_33, &Proj->_43);
 	else if (CurrentPass == PassNear)
 		DepthRow(RealNear, ShellBoundary, &Proj->_33, &Proj->_43);
-
-}
-
-// [NearShellDebug=3] Stamps the FAR pass's (M, F) depth row, regardless of CurrentPass. Exists for
-// RenderHook's water probe: TESR_DepthBuffer during the shell is still the far pass's (M, F)
-// resolve, so a shell draw that samples it (near water) needs its published projMatrix row to match
-// that encoding, not the shell's own (n, M). See RenderHook.cpp's TrackSetupShaderPrograms for the
-// call site and the two measurable outcomes.
-void RenderManager::StampFarProjection(D3DMATRIX* Proj) {
-
-	DepthRow(ShellBoundary, RealFar, &Proj->_33, &Proj->_43);
 
 }
 
@@ -272,6 +262,21 @@ void RenderManager::SetupSceneCamera() {
 		// Never fires when the shell is off, so vanilla behaviour is byte-identical.
 		if (ShellActive && CurrentPass == PassFull)
 			DepthRow(ShellBoundary, RealFar, &Proj->_33, &Proj->_43);
+
+		// TESR_DepthProjectionTransform: the matrix that decodes TESR_DepthBuffer, for the shaders
+		// that sample it. Same layout as projMatrix - a straight copy - with only the depth row forced
+		// to the buffer's encoding, so a shader switching from TESR_ProjectionTransform to this one is
+		// a pure symbol substitution with no packing or handedness question.
+		//
+		// TESR_DepthBuffer is always the FAR pass's resolve: RenderHook resolves it at [M, F], then
+		// clears depth and draws the shell over it. So while the shell is active its encoding is
+		// (M, F) in EVERY pass - including PassNear, where projMatrix itself must carry (n, M) to
+		// rasterise the shell at all. That divergence is the whole reason this constant exists.
+		// With the shell off the copy is byte-identical to projMatrix (plain (n, F)), so the constant
+		// is correct and inert.
+		DepthProjMatrix = *Proj;
+		if (ShellActive)
+			DepthRow(ShellBoundary, RealFar, &DepthProjMatrix._33, &DepthProjMatrix._43);
 
 		memcpy(&JitterProj, (D3DXMATRIX*)Proj, sizeof(JitterProj));
 		JitterProj._31 += TheShaderManager->ShaderConst.Jitter.x;
