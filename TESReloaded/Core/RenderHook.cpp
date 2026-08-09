@@ -330,6 +330,11 @@ static bool		ShellProjSeen			= false;
 static float	FarProj33Seen			= 0.0f;
 static float	ShellProj33Seen			= 0.0f;
 
+// [ShellDraw] / [ShellWater] evidence capture. Reset per frame at far-pass entry; both gated behind
+// Develop.NearShellDebug so they cost nothing in normal play.
+static int		ShellDrawLogCount	= 0;
+static int		FarWaterLogCount	= 0;
+
 static int	GrassOrderSeq = 0;
 static int	GrassOrderGrassTraces = 0;
 static int	GrassOrderWaterTraces = 0;
@@ -396,6 +401,10 @@ UInt32 RenderHook::TrackSetupShaderPrograms(NiGeometry* Geometry, NiSkinInstance
 	NiD3DPixelShaderEx* PixelShader = (NiD3DPixelShaderEx*)Pass->PixelShader;
 	NiNode* RenderWindowRootNode = *RenderWindowNode;
 
+	bool IsSky = (VertexShader && VertexShader->ShaderName && !memcmp(VertexShader->ShaderName, "SKY", 3))
+		|| (PixelShader && PixelShader->ShaderName && !memcmp(PixelShader->ShaderName, "SKY", 3))
+		|| (VertexShader && VertexShader->isSun);
+
 	// Sample the engine's own projMatrix at the first draw of each pass, before we stamp it. This is
 	// the spec's open question: if these already match the pass frustum, the engine rebuilds
 	// projMatrix per pass and StampPassProjection is redundant.
@@ -416,9 +425,33 @@ UInt32 RenderHook::TrackSetupShaderPrograms(NiGeometry* Geometry, NiSkinInstance
 	if (RenderManager::CurrentPass == RenderManager::PassNear) {
 		RenderManager::ShellDraws++;
 
-		bool IsSky = (VertexShader && VertexShader->ShaderName && !memcmp(VertexShader->ShaderName, "SKY", 3))
-			|| (PixelShader && PixelShader->ShaderName && !memcmp(PixelShader->ShaderName, "SKY", 3))
-			|| (VertexShader && VertexShader->isSun);
+		// [ShellDraw] Evidence capture for the shell-pass defects: what is drawn in the shell, is it
+		// classified as sky, and what colour-write/Z state does it see on entry - i.e. the state left
+		// behind by the PREVIOUS draw, which is why this reads before the suppression block below
+		// touches anything.
+		if (TheSettingManager->SettingsMain.Develop.NearShellDebug && ShellDrawLogCount < 40) {
+			ShellDrawLogCount++;
+			float Dist = 0.0f;
+			if (WorldTransform) {
+				NiPoint3& CamPos = WorldSceneGraph->camera->m_worldTransform.pos;
+				float dx = WorldTransform->pos.x - CamPos.x;
+				float dy = WorldTransform->pos.y - CamPos.y;
+				float dz = WorldTransform->pos.z - CamPos.z;
+				Dist = sqrtf(dx * dx + dy * dy + dz * dz);
+			}
+			Logger::Log("[ShellDraw] %04d VS=%s PS=%s Geo=%s sky=%d cweIn=%d supp=%d dist=%.1f ZEnable=%d ZWrite=%d ZFunc=%d",
+				ShellDrawLogCount,
+				VertexShader && VertexShader->ShaderName ? VertexShader->ShaderName : "-",
+				PixelShader && PixelShader->ShaderName ? PixelShader->ShaderName : "-",
+				Geometry && Geometry->m_pcName ? Geometry->m_pcName : "-",
+				IsSky ? 1 : 0,
+				RenderState->GetRenderState(D3DRS_COLORWRITEENABLE),
+				SkyColorWriteSuppressed ? 1 : 0,
+				Dist,
+				RenderState->GetRenderState(D3DRS_ZENABLE),
+				RenderState->GetRenderState(D3DRS_ZWRITEENABLE),
+				RenderState->GetRenderState(D3DRS_ZFUNC));
+		}
 
 		if (IsSky && !SkyColorWriteSuppressed) {
 			SkyColorWriteSaved = RenderState->GetRenderState(D3DRS_COLORWRITEENABLE);
@@ -428,6 +461,35 @@ UInt32 RenderHook::TrackSetupShaderPrograms(NiGeometry* Geometry, NiSkinInstance
 		else if (!IsSky && SkyColorWriteSuppressed) {
 			RenderState->SetRenderState(D3DRS_COLORWRITEENABLE, SkyColorWriteSaved, 0);
 			SkyColorWriteSuppressed = false;
+		}
+	}
+	else if (RenderManager::CurrentPass == RenderManager::PassFar) {
+		// [ShellWater] Same shape as [ShellDraw], for the far pass, gated to water draws only. Paired
+		// with [ShellDraw] this answers whether a given near-water draw appears in the far pass, the
+		// shell pass, both, or neither.
+		if (TheSettingManager->SettingsMain.Develop.NearShellDebug && FarWaterLogCount < 12 &&
+			PixelShader && PixelShader->ShaderName && !memcmp(PixelShader->ShaderName, "WATER", 5)) {
+			FarWaterLogCount++;
+			float Dist = 0.0f;
+			if (WorldTransform) {
+				NiPoint3& CamPos = WorldSceneGraph->camera->m_worldTransform.pos;
+				float dx = WorldTransform->pos.x - CamPos.x;
+				float dy = WorldTransform->pos.y - CamPos.y;
+				float dz = WorldTransform->pos.z - CamPos.z;
+				Dist = sqrtf(dx * dx + dy * dy + dz * dz);
+			}
+			Logger::Log("[ShellWater] %04d VS=%s PS=%s Geo=%s sky=%d cweIn=%d supp=%d dist=%.1f ZEnable=%d ZWrite=%d ZFunc=%d",
+				FarWaterLogCount,
+				VertexShader && VertexShader->ShaderName ? VertexShader->ShaderName : "-",
+				PixelShader && PixelShader->ShaderName ? PixelShader->ShaderName : "-",
+				Geometry && Geometry->m_pcName ? Geometry->m_pcName : "-",
+				IsSky ? 1 : 0,
+				RenderState->GetRenderState(D3DRS_COLORWRITEENABLE),
+				SkyColorWriteSuppressed ? 1 : 0,
+				Dist,
+				RenderState->GetRenderState(D3DRS_ZENABLE),
+				RenderState->GetRenderState(D3DRS_ZWRITEENABLE),
+				RenderState->GetRenderState(D3DRS_ZFUNC));
 		}
 	}
 
@@ -630,6 +692,7 @@ void __cdecl TrackRenderObject(NiCamera* Camera, NiNode* Object, NiCullingProces
 	}
 	if (MainScenePass && RenderManager::ShellActive) {
 		FarProjSeen = ShellProjSeen = false;
+		ShellDrawLogCount = FarWaterLogCount = 0;
 		RenderManager::ApplyPass(RenderManager::PassFar);
 	}
 	RenderObject(Camera, Object, CullingProcess, VisibleArray);
