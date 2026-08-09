@@ -438,6 +438,8 @@ public:
 	void					RenderEffectsPostHdr(IDirect3DSurface9* RenderTarget);
 	void					RenderEffects(IDirect3DSurface9* RenderTarget);
 	void					RenderShadowsMidScene(); // sun + point shadow apply, run mid-scene before the first near-water draw
+	void					FlattenShellDepth();	 // near shell: rewrite TESR_DepthBuffer to "at M" over shell-covered pixels
+	bool					CreateShellFlatten();	 // lazily builds what FlattenShellDepth needs; false = feature stays off
 	void					ProfileBlitToSource(IDirect3DSurface9* RenderTarget); // counted scene->SourceSurface copy
 	void					SwitchShaderStatus(const char* Name);
 	void					SetCustomConstant(const char* Name, D3DXVECTOR4 Value);
@@ -498,6 +500,15 @@ public:
 	SettingsColoringStruct* scs;
 	ShaderConstants::SimpleLightingStruct	InteriorLighting;
 	IDirect3DVertexBuffer9*	EffectVertex;
+	// Near-shell depth flatten. All of it is built on first use and left NULL when the shell never
+	// runs, so a disabled shell costs neither the full-screen INTZ surface nor the shader loads.
+	IDirect3DTexture9*		ShellMaskTexture;			// post-shell depth resolve = the shell's coverage mask
+	IDirect3DSurface9*		ShellFlattenDepthSurface;	// level 0 of RenderManager::DepthTexture, bound as the target
+	ShaderRecord*			ShellFlattenVertex;
+	ShaderRecord*			ShellFlattenPixel;
+	IDirect3DVertexShader9*	ShellFlattenVertexShader;
+	IDirect3DPixelShader9*	ShellFlattenPixelShader;
+	bool					ShellFlattenFailed;			// latched on the first failure so it is not retried per frame
 	EffectRecord*			UnderwaterEffect;
 	EffectRecord*			WaterLensEffect;
 	EffectRecord*			GodRaysEffect;

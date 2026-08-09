@@ -314,9 +314,6 @@ static bool	GrassOrderCapture = false;
 // camera-tracking caster silhouettes floating in the water.
 static bool	InMainScenePass = false;
 
-// 1 - 2^-24: the largest float32 strictly below 1.0, and exactly D24 0xFFFFFE.
-static const float ShellClearDepth = 0.99999994f;
-
 // Diagnostic for the one open question in the spec: does the engine rebuild projMatrix from the
 // frustum at pass start? These capture projMatrix as the ENGINE left it at the first draw of each
 // pass, before StampPassProjection touches it.
@@ -722,8 +719,17 @@ void __cdecl TrackRenderObject(NiCamera* Camera, NiNode* Object, NiCullingProces
 				// d(z) = M/(M-n) * (1 - n/z), so d = 0.99999994 is z ~ 14.99999 at n=1, M=15 - the
 				// shell loses its final 0.00001 units, far below the depth buffer's resolution there.
 				// The engine's Clear() gives no control of the clear value, hence the device call.
-				TheRenderManager->device->Clear(0, NULL, D3DCLEAR_ZBUFFER, 0, ShellClearDepth, 0);
+				TheRenderManager->device->Clear(0, NULL, D3DCLEAR_ZBUFFER, 0, RenderManager::ShellClearDepth, 0);
 				RenderObject(Camera, Object, CullingProcess, VisibleArray);
+				// Flatten TESR_DepthBuffer to "exactly at M" wherever the shell drew. HERE and nowhere
+				// earlier: water pixel shaders sample TESR_DepthBuffer DURING the shell and need the
+				// untouched far-pass resolve to compute water depth (commit fa7f347) - flattening before
+				// the last shell draw would undo that fix and make near water shallow again. And it must
+				// happen before TrackProcessImageSpaceShaders, which is where the ~16 image-space effects
+				// that sample the buffer actually run. Nothing between the two touches the texture: the
+				// SetCT resolve latch is closed (DepthBufferFilled, set above) and the first-person node
+				// branch below skips its own resolve while the shell is active.
+				TheShaderManager->FlattenShellDepth();
 			}
 
 			RenderManager::ApplyPass(RenderManager::PassFull);

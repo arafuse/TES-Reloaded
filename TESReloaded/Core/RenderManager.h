@@ -57,6 +57,18 @@ public:
 	static void			ApplyPass(ScenePass Pass);
 	static void			StampPassProjection(D3DMATRIX* Proj);
 
+	// The shell's depth clear value: 1 - 2^-24, the largest float32 strictly below 1.0, and exactly
+	// D24 0xFFFFFE. Sky, cloud and sun shaders pin z == w and land at depth exactly 1.0 (0xFFFFFF);
+	// clearing one ULP below 1.0 fails their LESSEQUAL test and keeps them out of the shell without
+	// any name matching. Real shell geometry loses only its final ~0.00001 units before M.
+	static constexpr float	ShellClearDepth = 0.99999994f;
+	// Coverage threshold for the depth flatten (ShaderManager::FlattenShellDepth). A resolved
+	// post-shell depth sample strictly below this means the shell wrote depth at that pixel; a pixel
+	// the shell never touched reads back at ShellClearDepth. Backed off ~16 D24 units so the compare
+	// cannot be upset by rounding in the resolve. The shell geometry that falls inside that band
+	// sits within ~0.0002 units of M, i.e. exactly where flattening to M is already a no-op.
+	static constexpr float	ShellCoveredMax = 0.99999894f;
+
 	static ScenePass	CurrentPass;
 	static bool			ShellActive;
 	static float		ShellBoundary;	// M
