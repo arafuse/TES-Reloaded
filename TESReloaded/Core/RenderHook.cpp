@@ -633,6 +633,10 @@ void __cdecl TrackRenderObject(NiCamera* Camera, NiNode* Object, NiCullingProces
 		RenderManager::ApplyPass(RenderManager::PassFar);
 	}
 	RenderObject(Camera, Object, CullingProcess, VisibleArray);
+	// Load-bearing HERE, before the shell render below - not just bookkeeping. It disarms the
+	// near-water mid-scene trigger (line ~510), which would otherwise re-fire on the shell's copy of
+	// the water surface and run a second shadow apply over an already-applied frame. Do not move
+	// this after the shell block.
 	if (MainScenePass) InMainScenePass = false;
 	if (Object == WorldSceneGraph && GrassOrderCapture) { // [GrassOrderDbg]
 		GrassOrderCapture = false;
@@ -646,10 +650,18 @@ void __cdecl TrackRenderObject(NiCamera* Camera, NiNode* Object, NiCullingProces
 			TheShaderManager->RenderShadowsMidScene();
 			TheShaderManager->PreWaterDepthBufferFilled = true;
 		}
-		// Resolves the FAR pass depth - deliberately before the clear, so post-processing gets whole-
-		// scene depth. Shell pixels then carry the depth of whatever is behind them; that is the
-		// accepted ~20 cm limitation.
+		// Resolves the FAR pass depth - deliberately before the clear, because the clear destroys it.
+		// What post-processing therefore gets is the [M, F] band only: shell pixels carry the depth
+		// of whatever is behind them, and anything the far pass never covered stays at 1.0. That is
+		// the accepted ~20 cm limitation. The buffer is encoded with near = M, which is why
+		// SetupSceneCamera republishes the (M, F) depth row at PassFull.
 		TheRenderManager->ResolveDepthBuffer();
+		// Close the SetCT depth latch (ShaderRecord::SetCT) for the rest of the frame. It resets once
+		// per BeginScene and fires on the first HasDB shader bind; if no such shader bound during the
+		// far pass but one binds inside the shell - a water body wholly within M, an interior water
+		// feature - it would resolve AFTER the clear and hand post-processing a blank depth buffer.
+		// This resolve is the only valid one for this frame.
+		TheShaderManager->DepthBufferFilled = true;
 
 		if (RenderManager::ShellActive) {
 			UInt8 Debug = TheSettingManager->SettingsMain.Develop.NearShellDebug;
@@ -686,7 +698,12 @@ void __cdecl TrackRenderObject(NiCamera* Camera, NiNode* Object, NiCullingProces
 		}
 	}
 	else if (Object == Player->firstPersonNiNode) {
-		TheRenderManager->ResolveDepthBuffer();
+		// This is a separate, LATER top-level call: the main pass has already resolved and then
+		// cleared depth, and the depth buffer now holds only the shell (1.0 almost everywhere at
+		// M = 15). Re-resolving it would overwrite the good far-pass depth with a blank one and blind
+		// every image-space effect in first person. Before the shell existed this was a harmless
+		// duplicate of the main-pass resolve; the clear is what made it destructive.
+		if (!RenderManager::ShellActive) TheRenderManager->ResolveDepthBuffer();
 		TheRenderManager->Clear(NULL, NiRenderer::kClear_ZBUFFER);
 		RenderObject(Camera, Object, CullingProcess, VisibleArray);
 	}
