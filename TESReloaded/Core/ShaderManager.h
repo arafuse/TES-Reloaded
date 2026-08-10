@@ -439,9 +439,13 @@ public:
 	void					RenderEffects(IDirect3DSurface9* RenderTarget);
 	void					RenderShadowsMidScene(); // sun + point shadow apply, run mid-scene before the first near-water draw
 	void					FlattenShellDepth();	 // near shell: rewrite TESR_DepthBuffer to "at M" over shell-covered pixels, after the shell
-	void					FlattenShellPreWaterDepth(); // same over TESR_DepthBufferPreWater, DURING the shell, before its first near water
-	void					FlattenShellDepthInto(IDirect3DTexture9* Target, IDirect3DSurface9** TargetSurface); // shared body of the two above
+	void					FlattenShellPreWaterDepth(bool MaskResolved); // same over TESR_DepthBufferPreWater, DURING the shell, before its first near water
+	void					FlattenShellDepthInto(IDirect3DTexture9* Target, IDirect3DSurface9** TargetSurface, bool ResolveMask); // shared body of the two above
+	bool					CaptureShellRenderedBuffer(); // near shell: refresh TESR_RenderedBuffer over shell coverage only; true = ShellMaskTexture now holds it
+	bool					CreateShellMask();		 // ShellMaskTexture, shared by the flatten and the capture
+	bool					CreateShellQuadVertexShader(); // ShellFlatten.vso, likewise shared
 	bool					CreateShellFlatten(IDirect3DTexture9* Target, IDirect3DSurface9** TargetSurface); // lazily builds what the flatten needs; false = feature stays off
+	bool					CreateShellCopy();		 // lazily builds what the masked capture needs; false = caller falls back to a blind blit
 	void					ProfileBlitToSource(IDirect3DSurface9* RenderTarget); // counted scene->SourceSurface copy
 	void					SwitchShaderStatus(const char* Name);
 	void					SetCustomConstant(const char* Name, D3DXVECTOR4 Value);
@@ -520,8 +524,10 @@ public:
 	IDirect3DSurface9*		ShellFlattenPreWaterSurface;// level 0 of RenderManager::DepthTexturePreWater, ditto
 	ShaderRecord*			ShellFlattenVertex;
 	ShaderRecord*			ShellFlattenPixel;
-	IDirect3DVertexShader9*	ShellFlattenVertexShader;
+	ShaderRecord*			ShellCopyPixel;
+	IDirect3DVertexShader9*	ShellFlattenVertexShader;	// shared: the flatten quad and the masked colour copy use the same one
 	IDirect3DPixelShader9*	ShellFlattenPixelShader;
+	IDirect3DPixelShader9*	ShellCopyPixelShader;		// masked TESR_RenderedBuffer capture (CaptureShellRenderedBuffer)
 	bool					ShellFlattenFailed;			// latched on the first failure so it is not retried per frame;
 														// SHARED by both flatten targets - see CreateShellFlatten for why
 	EffectRecord*			UnderwaterEffect;

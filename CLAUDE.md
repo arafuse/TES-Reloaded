@@ -105,3 +105,8 @@ Game-specific code uses `#if defined(OBLIVION)` / `#elif defined(NEWVEGAS)` / `#
 ### Debugging
 
 Set `#define WaitForDebugger 1` in `Main.cpp` to spin until a debugger attaches. Enable `Develop.LogShaders` in the INI to activate D3D9 shader logging hooks.
+
+### Coding style
+
+- Public symbols should have appropriate documentation comments.
+- If inline code comments are needed, they should be 1-3 lines maximum.
