@@ -3379,18 +3379,15 @@ void ShaderManager::RenderShadowsMidScene() {
 // driver that refuses one refuses the other. A per-target latch would buy a distinction the hardware
 // does not make, and would risk retrying a doomed operation once per frame forever.
 //
-// Two resources are shared between the depth flatten and the masked colour capture below, so they
-// are built by their own helpers rather than by either caller: the coverage mask, and the full-screen
-// quad's vertex shader. Both callers want exactly the same mask - "which pixels did the shell write
-// depth at" - and the capture uses it at the same instant the pre-water clamp does.
+// Builds ShellMaskTexture, the shell's coverage mask. Shared by the depth flatten and the masked
+// colour capture, which want the identical mask at the identical instant. False = creation failed.
 bool ShaderManager::CreateShellMask() {
 
 	if (ShellMaskTexture) return true;
 
-	// Same format and size as the depth textures it is resolved from - ResolveDepthInto's RESZ
-	// path requires an exact match, and its NvAPI path requires the resource to be registered.
-	// Registration is done here rather than in ResolveDepthInto's one-shot block, which has
-	// already run by the time this texture exists.
+	// Format and size must match the depth textures it is resolved from: ResolveDepthInto's RESZ path
+	// requires an exact match, and its NvAPI path requires the resource to be registered - done here
+	// because that function's one-shot block has already run by the time this texture exists.
 	if (FAILED(TheRenderManager->device->CreateTexture(TheRenderManager->width, TheRenderManager->height, 1, D3DUSAGE_DEPTHSTENCIL, (D3DFORMAT)MAKEFOURCC('I','N','T','Z'), D3DPOOL_DEFAULT, &ShellMaskTexture, NULL))) {
 		Logger::Log("ERROR: Cannot create the near shell coverage buffer. The near shell depth flatten is disabled.");
 		return false;
@@ -3400,13 +3397,14 @@ bool ShaderManager::CreateShellMask() {
 
 }
 
-// The records exist only to carry the compiled bytecode into Create*Shader, so on any failure drop
-// them again rather than leaving them hanging off the members - same shape as the failure path in
-// ShaderManager::LoadShader.
+// Builds ShellFlatten.vso, the full-screen quad shared by the flatten and the masked colour capture.
+// False = the shader is unavailable; enable CompileShaders once to build it.
 bool ShaderManager::CreateShellQuadVertexShader() {
 
 	if (ShellFlattenVertexShader) return true;
 
+	// The record exists only to carry the bytecode into CreateVertexShader, so drop it again on
+	// failure rather than leaving it hanging off the member - same shape as ShaderManager::LoadShader.
 	ShellFlattenVertex = new ShaderRecord();
 	if (ShellFlattenVertex->LoadShader("ShellFlatten.vso")) TheRenderManager->device->CreateVertexShader((const DWORD*)ShellFlattenVertex->Function, &ShellFlattenVertexShader);
 	if (!ShellFlattenVertexShader) {
@@ -3459,12 +3457,12 @@ bool ShaderManager::CreateShellFlatten(IDirect3DTexture9* Target, IDirect3DSurfa
 
 }
 
-// Resources for the masked TESR_RenderedBuffer capture. Deliberately NOT latched on
-// ShellFlattenFailed: unlike the flatten, whose only fallback is to do nothing, this one has a real
-// one - the blind full-frame blit the shell used before - which still fixes the submerged arms and
-// merely leaves the boundary strip. So a failure here degrades the capture rather than disabling it,
-// and CaptureShellRenderedBuffer reports it by returning false. It does still refuse to retry once
-// ShellFlattenFailed is set, because that latch means the shared mask or vertex shader is gone.
+// Builds what the masked TESR_RenderedBuffer capture needs. False = the caller falls back to a blind
+// blit, which still fixes the submerged arms and only leaves the boundary strip.
+//
+// A missing ShellCopy.pso deliberately does NOT latch ShellFlattenFailed: unlike the flatten, whose
+// only alternative is to do nothing, this pass has a real fallback. It still refuses to retry once
+// that latch is set, because then the shared mask or vertex shader is gone.
 bool ShaderManager::CreateShellCopy() {
 
 	if (ShellFlattenFailed) return false;
@@ -3523,41 +3521,15 @@ void ShaderManager::FlattenShellDepth() {
 
 }
 
-// Near shell: refresh TESR_RenderedBuffer over the shell's coverage AND NOWHERE ELSE.
+// Near shell: refresh TESR_RenderedBuffer over the shell's coverage AND NOWHERE ELSE, so shell water
+// refracts the far pass's PRE-water frame everywhere else rather than its already-shaded water. A
+// blind blit of the live target instead leaves a strip of doubly-extinguished water along the
+// boundary. Called at the shell's first near-water draw - the last moment its depth-stencil holds all
+// of its geometry and none of its water, which is also what the pre-water clamp needs. See the
+// near-shell design doc, "A fresh TESR_RenderedBuffer capture" and "A fifth defect".
 //
-// Water refracts the scene behind it by sampling TESR_RenderedBuffer, so that texture has to hold the
-// frame as it stood immediately before the water surface went down. For the far pass it does. For the
-// shell it cannot be taken the same way, and the difference is the whole reason this function exists.
-//
-// The shell needs the buffer refreshed at all because of what the far pass could not contain: the far
-// pass's near plane is M, so anything nearer - the player's own arms while treading water - was
-// clipped away, and the shell's near water then overwrote those arms with a refraction of a buffer
-// they were not in. The obvious fix, and the one this replaces, is a StretchRect of the live scene
-// target at the shell's first near-water draw.
-//
-// That blit is right about WHEN and wrong about WHAT. It reproduces vanilla's position in the draw
-// order exactly - after the shell's opaque, EQUAL-depth detail and grass draws, before any of its
-// water - but vanilla's capture contains no water at all, whereas by this instant the FAR pass has
-// already shaded its own water into the scene target, everywhere beyond M. Shell water then refracts
-// that through WATER*.pso's +0.01 UV tap, and for pixels within that offset of the boundary line the
-// tap crosses into already-shaded far water and applies extinction and volume colour a second time,
-// over themselves. Measured in game (3840x2160, treading water): an ~11 px strip along the boundary,
-// R x0.76, G x0.93, B x0.95 - the ordering of TESR_WaterCoefficients - which disappears in deep water
-// because re-extinguishing fully extinct water is a fixed point. 11 px is 0.01 x 2160 x |normal|,
-// the refraction tap; the 0.05 reflection tap would be ~5x that and reads ReflectionMap, not this
-// buffer.
-//
-// So copy the live target only where the shell actually drew. Outside the mask the buffer keeps the
-// far pass's pre-water frame - which is exactly what the far pass's own water refracted - so the two
-// halves of a surface crossing M refract the same content and there is no seam to sample across.
-//
-// The mask is the same shell-coverage resolve the pre-water clamp uses, and this is the same instant,
-// which is not a coincidence: both need the last moment at which the shell's depth-stencil holds all
-// of its geometry and none of its water. The resolve is therefore done once, here, and the clamp is
-// told to reuse it (MaskResolved).
-//
-// Returns true when ShellMaskTexture holds that resolve. False means the caller must fall back to the
-// blind blit and then let the clamp take its own resolve.
+// Returns true when ShellMaskTexture holds this instant's coverage resolve, which the clamp then
+// reuses. False means the caller must fall back to the blind blit and let the clamp resolve itself.
 bool ShaderManager::CaptureShellRenderedBuffer() {
 
 	if (!RenderManager::ShellActive) return false;
@@ -3573,14 +3545,12 @@ bool ShaderManager::CaptureShellRenderedBuffer() {
 
 	if (!SceneRT) return false;
 
-	// The scene target can be multisampled under HDR, and a multisampled surface cannot be sampled as
-	// a texture. StretchRect resolves it into EffectTexture, which is a plain full-resolution render
-	// target of the same format. EffectTexture is free scratch mid-scene - the flatten already borrows
-	// EffectSurface for the same reason, and the effect chain overwrites it wholesale later.
+	// The scene target can be multisampled under HDR and so cannot be sampled directly. Resolve it into
+	// EffectTexture, free scratch mid-scene that the effect chain overwrites wholesale later.
 	if (FAILED(Device->StretchRect(SceneRT, NULL, EffectSurface, NULL, D3DTEXF_NONE))) return false;
 
-	// Snapshot the shell's coverage. Before the target switch below, which takes the depth-stencil
-	// surface this reads out from under the device.
+	// Snapshot the shell's coverage. Must precede the target switch below, which takes the
+	// depth-stencil surface this reads out from under the device.
 	TheRenderManager->ResolveDepthInto(ShellMaskTexture);
 
 	if (FAILED(Device->GetRenderTarget(0, &PrevRenderTarget)) || !PrevRenderTarget) return false;
@@ -3591,14 +3561,13 @@ bool ShaderManager::CaptureShellRenderedBuffer() {
 		return false;
 	}
 
-	// Same hazard as the flatten, one texture along: RenderedTexture backs the surface about to become
-	// the render target, and the water draws that have already gone down this pass had it bound as
-	// TESR_RenderedBuffer. Clear every stage unconditionally; the state block puts them all back.
+	// LOAD BEARING: RenderedTexture backs the surface about to become the render target, and the water
+	// draws already down this pass had it bound as TESR_RenderedBuffer. Clear every stage
+	// unconditionally rather than by identity; the state block puts them all back.
 	for (DWORD i = 0; i < 16; i++) Device->SetTexture(i, NULL);
 
-	// The depth-stencil goes away rather than staying bound with Z disabled: the shell's is
-	// multisampled whenever the scene target is, and D3D9 will not pair it with the non-multisampled
-	// RenderedSurface. Nothing here needs depth - the mask is a texture fetch and a clip().
+	// Unbind depth rather than leave it bound with Z off: the shell's is multisampled whenever the
+	// scene target is, and D3D9 will not pair that with the non-multisampled RenderedSurface.
 	if (FAILED(Device->SetRenderTarget(0, RenderedSurface))) {
 		Device->SetRenderTarget(0, PrevRenderTarget);
 		StateBlock->Apply();
@@ -3619,11 +3588,9 @@ bool ShaderManager::CaptureShellRenderedBuffer() {
 		Device->SetSamplerState(s, D3DSAMP_MAGFILTER, D3DTEXF_POINT);
 		Device->SetSamplerState(s, D3DSAMP_MINFILTER, D3DTEXF_POINT);
 		Device->SetSamplerState(s, D3DSAMP_MIPFILTER, D3DTEXF_NONE);
-		// Unlike the flatten, this pass writes colour, so it has to be an exact 1:1 reproduction of
-		// what the scene target holds. sRGB conversion on either the fetch or the write would tint the
-		// shell's pixels relative to the far pass's, putting back a seam of a different kind. Neither
-		// is ours to leave to chance: the sampler flag is settable per shader from the texture INI
-		// (TextureManager), and the write flag belongs to whatever the engine last drew.
+		// This pass writes colour, so it must be bit-exact: an sRGB conversion on either end would tint
+		// the shell's pixels relative to the far pass's. Neither flag is ours by default - this one is
+		// per-shader from the texture INI, the write one below is the engine's. See the design doc.
 		Device->SetSamplerState(s, D3DSAMP_SRGBTEXTURE, FALSE);
 	}
 	Device->SetRenderState(D3DRS_SRGBWRITEENABLE, FALSE);
@@ -3685,8 +3652,7 @@ bool ShaderManager::CaptureShellRenderedBuffer() {
 // the pre-water resolve they are paired with, are complete before the shell starts.
 //
 // MaskResolved says CaptureShellRenderedBuffer already resolved ShellMaskTexture at this exact
-// instant, so the resolve is skipped rather than paid for twice. It is only ever true when that
-// capture ran immediately before this call and reported success; anything else resolves here.
+// instant, so it is not paid for twice. True only when that capture just ran and reported success.
 void ShaderManager::FlattenShellPreWaterDepth(bool MaskResolved) {
 
 	FlattenShellDepthInto(TheRenderManager->DepthTexturePreWater, &ShellFlattenPreWaterSurface, !MaskResolved);

@@ -591,13 +591,9 @@ UInt32 RenderHook::TrackSetupShaderPrograms(NiGeometry* Geometry, NiSkinInstance
 		// not a trigger, as it draws before the detail and grass passes and every one of its quads is
 		// tens of thousands of units away, hence clipped by the shell's far plane at M.
 		//
-		// The capture is MASKED to the shell's own coverage, and that is load bearing rather than an
-		// optimisation. Right instant, wrong contents otherwise: vanilla's capture contains no water,
-		// but by this point the FAR pass has already shaded ITS water into the scene target beyond M,
-		// and shell water's +0.01 UV tap crosses the boundary line into it and extinguishes it a
-		// second time - a measured ~11 px strip along the boundary, reddest first, gone in deep water.
-		// See ShaderManager::CaptureShellRenderedBuffer. If its resources are unavailable it returns
-		// false and the blind blit below stands in: the arms stay fixed and only the strip returns.
+		// MASKED to the shell's own coverage, which is load bearing: by now the FAR pass has shaded ITS
+		// water into the scene target beyond M, and shell water's +0.01 UV tap crosses the boundary into
+		// it and extinguishes it twice. See CaptureShellRenderedBuffer; on failure the blind blit runs.
 		//
 		// (2) TESR_DepthBufferPreWater, which the swap block below binds as those same water draws'
 		// DEPTH term. It is resolved during the far pass too, so at shell-covered pixels it holds what
@@ -624,16 +620,13 @@ UInt32 RenderHook::TrackSetupShaderPrograms(NiGeometry* Geometry, NiSkinInstance
 				TheRenderManager->device->StretchRect(TheRenderManager->currentRTGroup->RenderTargets[0]->data->Surface, NULL, TheShaderManager->RenderedSurface, NULL, D3DTEXF_NONE);
 				Captured = true;
 			}
-			// Close the SetCT colour latch, but only if something actually captured: whichever one ran
-			// is the valid one from here on. It is normally already closed by the far pass, but the far
-			// pass need not have contained a single HasRB draw (an interior water feature wholly within
-			// M), and a later latch fire would re-capture at some arbitrary point after the water is
-			// already down. If neither capture ran there is nothing to protect and the latch stays open.
+			// Close the SetCT colour latch, but only if something captured. The far pass normally closes
+			// it already, but it need not have contained a single HasRB draw (an interior water feature
+			// wholly within M), and a later fire would re-capture after the water is already down.
 			if (Captured) TheShaderManager->RenderedBufferFilled = true;
-			// After the capture, so it reads the scene render target while it is still bound, and so
-			// the mask resolve it takes can be handed on instead of repeated. The clamp restores every
-			// target and state it touches before it returns, so the water draw this hook is setting up
-			// is unaffected.
+			// After the capture, so the mask resolve it takes is handed on rather than repeated. The
+			// clamp restores every target and state it touches, so the water draw being set up here is
+			// unaffected.
 			TheShaderManager->FlattenShellPreWaterDepth(MaskResolved);
 		}
 
