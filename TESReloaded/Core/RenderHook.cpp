@@ -314,14 +314,6 @@ static bool	GrassOrderCapture = false;
 // camera-tracking caster silhouettes floating in the water.
 static bool	InMainScenePass = false;
 
-// Diagnostic for the one open question in the spec: does the engine rebuild projMatrix from the
-// frustum at pass start? These capture projMatrix as the ENGINE left it at the first draw of each
-// pass, before StampPassProjection touches it.
-static bool		FarProjSeen				= false;
-static bool		ShellProjSeen			= false;
-static float	FarProj33Seen			= 0.0f;
-static float	ShellProj33Seen			= 0.0f;
-
 // [ShellDraw] / [ShellWater] evidence capture. Reset per frame at far-pass entry; both gated behind
 // Develop.NearShellDebug so they cost nothing in normal play.
 static int		ShellDrawLogCount	= 0;
@@ -403,20 +395,6 @@ UInt32 RenderHook::TrackSetupShaderPrograms(NiGeometry* Geometry, NiSkinInstance
 	NiD3DVertexShaderEx* VertexShader = (NiD3DVertexShaderEx*)Pass->VertexShader;
 	NiD3DPixelShaderEx* PixelShader = (NiD3DPixelShaderEx*)Pass->PixelShader;
 	NiNode* RenderWindowRootNode = *RenderWindowNode;
-
-	// Sample the engine's own projMatrix at the first draw of each pass, before we stamp it. This is
-	// the spec's open question: if these already match the pass frustum, the engine rebuilds
-	// projMatrix per pass and StampPassProjection is redundant.
-	if (RenderManager::ShellActive && TheSettingManager->SettingsMain.Develop.NearShellDebug) {
-		if (RenderManager::CurrentPass == RenderManager::PassFar && !FarProjSeen) {
-			FarProj33Seen = Proj->_33;
-			FarProjSeen = true;
-		}
-		else if (RenderManager::CurrentPass == RenderManager::PassNear && !ShellProjSeen) {
-			ShellProj33Seen = Proj->_33;
-			ShellProjSeen = true;
-		}
-	}
 
 	// Between passes projMatrix belongs to whoever set it up; StampPassProjection is inert unless we
 	// are inside one of the two shell passes.
@@ -780,7 +758,6 @@ void __cdecl TrackRenderObject(NiCamera* Camera, NiNode* Object, NiCullingProces
 		}
 	}
 	if (MainScenePass && RenderManager::ShellActive) {
-		FarProjSeen = ShellProjSeen = false;
 		ShellDrawLogCount = FarWaterLogCount = 0;
 		RenderManager::ApplyPass(RenderManager::PassFar);
 	}
@@ -858,18 +835,9 @@ void __cdecl TrackRenderObject(NiCamera* Camera, NiNode* Object, NiCullingProces
 			RenderManager::ApplyPass(RenderManager::PassFull);
 
 			if (Debug) {
-				// engineFar/engineShell are projMatrix._33 as the engine left it at each pass's first
-				// draw. wantFar/wantShell are what that pass needs; full is the un-rebuilt (n, F) row.
-				// engine == want  => the engine rebuilds per pass, StampPassProjection is redundant.
-				// engine == full  => it does not, and the stamp is load-bearing.
-				Logger::Log("[NearShell] n=%.3f M=%.3f F=%.1f shellDraws=%d skipShell=%d | engineFar=%.7f wantFar=%.7f full=%.7f | engineShell=%.7f wantShell=%.7f",
+				Logger::Log("[NearShell] n=%.3f M=%.3f F=%.1f shellDraws=%d skipShell=%d",
 					RenderManager::RealNear, RenderManager::ShellBoundary, RenderManager::RealFar,
-					RenderManager::ShellDraws, Debug == 2 ? 1 : 0,
-					FarProj33Seen,
-					RenderManager::RealFar / (RenderManager::RealFar - RenderManager::ShellBoundary),
-					RenderManager::RealFar / (RenderManager::RealFar - RenderManager::RealNear),
-					ShellProj33Seen,
-					RenderManager::ShellBoundary / (RenderManager::ShellBoundary - RenderManager::RealNear));
+					RenderManager::ShellDraws, Debug == 2 ? 1 : 0);
 			}
 		}
 	}
