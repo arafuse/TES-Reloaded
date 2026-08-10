@@ -438,6 +438,14 @@ public:
 	void					RenderEffectsPostHdr(IDirect3DSurface9* RenderTarget);
 	void					RenderEffects(IDirect3DSurface9* RenderTarget);
 	void					RenderShadowsMidScene(); // sun + point shadow apply, run mid-scene before the first near-water draw
+	void					FlattenShellDepth();	 // near shell: rewrite TESR_DepthBuffer to "at M" over shell-covered pixels, after the shell
+	void					FlattenShellPreWaterDepth(bool MaskResolved); // same over TESR_DepthBufferPreWater, DURING the shell, before its first near water
+	void					FlattenShellDepthInto(IDirect3DTexture9* Target, IDirect3DSurface9** TargetSurface, bool ResolveMask); // shared body of the two above
+	bool					CaptureShellRenderedBuffer(); // near shell: refresh TESR_RenderedBuffer over shell coverage only; true = ShellMaskTexture now holds it
+	bool					CreateShellMask();		 // ShellMaskTexture, shared by the flatten and the capture
+	bool					CreateShellQuadVertexShader(); // ShellFlatten.vso, likewise shared
+	bool					CreateShellFlatten(IDirect3DTexture9* Target, IDirect3DSurface9** TargetSurface); // lazily builds what the flatten needs; false = feature stays off
+	bool					CreateShellCopy();		 // lazily builds what the masked capture needs; false = caller falls back to a blind blit
 	void					ProfileBlitToSource(IDirect3DSurface9* RenderTarget); // counted scene->SourceSurface copy
 	void					SwitchShaderStatus(const char* Name);
 	void					SetCustomConstant(const char* Name, D3DXVECTOR4 Value);
@@ -476,6 +484,17 @@ public:
 	bool					RenderedBufferFilled;
 	bool					DepthBufferFilled;
 	bool					PreWaterDepthBufferFilled;
+	// True only while the MAIN WorldSceneGraph render is on the stack (set in
+	// RenderHook::TrackRenderObject). The three latches above are per-SCENE: ShaderManager::BeginScene
+	// clears them, and the game calls BeginScene again for the off-screen renders that follow the main
+	// pass - the water REFLECTION map among them (confirmed by [ReflDbg] log, 2026-07-17: the
+	// reflection renders AFTER the main pass, at 1024x1024, NOT through RenderObject(WorldSceneGraph)),
+	// and numbered WATER* shaders DO bind during it. Anything that must hold for the rest of the FRAME
+	// has to be gated on this as well as on its latch. Two things are: the mid-scene sun-shadow apply
+	// (RenderHook, near-water trigger - without it the apply re-fired INTO the reflection map, leaving
+	// camera-tracking caster silhouettes floating in the water) and ShaderRecord::SetCT's depth resolve
+	// (see the comment there).
+	bool					InMainScenePass;
 	bool					isFullyInitialized;
 	bool					UseIntervalUpdate;
 	TESObjectCELL*			previousCell;
@@ -498,6 +517,19 @@ public:
 	SettingsColoringStruct* scs;
 	ShaderConstants::SimpleLightingStruct	InteriorLighting;
 	IDirect3DVertexBuffer9*	EffectVertex;
+	// Near-shell depth flatten. All of it is built on first use and left NULL when the shell never
+	// runs, so a disabled shell costs neither the full-screen INTZ surface nor the shader loads.
+	IDirect3DTexture9*		ShellMaskTexture;			// post-shell depth resolve = the shell's coverage mask
+	IDirect3DSurface9*		ShellFlattenDepthSurface;	// level 0 of RenderManager::DepthTexture, bound as the target
+	IDirect3DSurface9*		ShellFlattenPreWaterSurface;// level 0 of RenderManager::DepthTexturePreWater, ditto
+	ShaderRecord*			ShellFlattenVertex;
+	ShaderRecord*			ShellFlattenPixel;
+	ShaderRecord*			ShellCopyPixel;
+	IDirect3DVertexShader9*	ShellFlattenVertexShader;	// shared: the flatten quad and the masked colour copy use the same one
+	IDirect3DPixelShader9*	ShellFlattenPixelShader;
+	IDirect3DPixelShader9*	ShellCopyPixelShader;		// masked TESR_RenderedBuffer capture (CaptureShellRenderedBuffer)
+	bool					ShellFlattenFailed;			// latched on the first failure so it is not retried per frame;
+														// SHARED by both flatten targets - see CreateShellFlatten for why
 	EffectRecord*			UnderwaterEffect;
 	EffectRecord*			WaterLensEffect;
 	EffectRecord*			GodRaysEffect;

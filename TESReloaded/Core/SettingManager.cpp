@@ -87,6 +87,9 @@ SettingManager::SettingManager() {
 	SettingsMain.Main.AnisotropicFilter = GetPrivateProfileIntA("Main", "AnisotropicFilter", 0, Filename);
 	GetPrivateProfileStringA("Main", "FarPlaneDistance", "0.0", value, SettingStringBuffer, Filename);
 	SettingsMain.Main.FarPlaneDistance = atof(value);
+	SettingsMain.Main.NearShellEnabled = GetPrivateProfileIntA("Main", "NearShellEnabled", 1, Filename);
+	GetPrivateProfileStringA("Main", "NearShellBoundary", "15.0", value, SettingStringBuffer, Filename);
+	SettingsMain.Main.NearShellBoundary = atof(value);
 	GetPrivateProfileStringA("Main", "ScreenshotPath", CurrentPath, value, SettingStringBuffer, Filename);
 	if (value[0] == '\\') {
 		strcpy(SettingsMain.Main.ScreenshotPath, CurrentPath);
@@ -424,6 +427,7 @@ SettingManager::SettingManager() {
 	SettingsMain.Develop.LogShaders = GetPrivateProfileIntA("Develop", "LogShaders", 0, Filename);
 	SettingsMain.Develop.ProfileShadows = GetPrivateProfileIntA("Develop", "ProfileShadows", 0, Filename);
 	SettingsMain.Develop.ProfileEffects = GetPrivateProfileIntA("Develop", "ProfileEffects", 0, Filename);
+	SettingsMain.Develop.NearShellDebug = GetPrivateProfileIntA("Develop", "NearShellDebug", 0, Filename);
 
 	GameLoading = false;
 
@@ -1351,6 +1355,8 @@ void SettingManager::SaveSettings(const char* Item, const char* Definition, cons
 	if (!strcmp(Item, "Main")) {
 		if (!strcmp(Definition, "Main")) {
 			WritePrivateProfileStringA("Main", "FoV", ToString(SettingsMain.Main.FoV).c_str(), SettingsMain.Main.MainFile);
+			WritePrivateProfileStringA("Main", "NearShellEnabled", ToString(SettingsMain.Main.NearShellEnabled).c_str(), SettingsMain.Main.MainFile);
+			WritePrivateProfileStringA("Main", "NearShellBoundary", ToString(SettingsMain.Main.NearShellBoundary).c_str(), SettingsMain.Main.MainFile);
 			WritePrivateProfileStringA("Main", "MoonPhaseLumNew", ToString(SettingsMain.Main.MoonPhaseLumNew).c_str(), SettingsMain.Main.MainFile);
 			WritePrivateProfileStringA("Main", "MoonPhaseLumQtr", ToString(SettingsMain.Main.MoonPhaseLumQtr).c_str(), SettingsMain.Main.MainFile);
 			WritePrivateProfileStringA("Main", "MoonPhaseLumHalf", ToString(SettingsMain.Main.MoonPhaseLumHalf).c_str(), SettingsMain.Main.MainFile);
@@ -1990,6 +1996,8 @@ SettingsList SettingManager::GetMenuSettings(const char* Item, const char* Defin
 			if (!strcmp(Section, "Main")) {
 				if (SettingsMain.Main.FarPlaneDistance) Settings["FarPlaneDistance"] = SettingsMain.Main.FarPlaneDistance;
 				if (SettingsMain.Main.FoV) Settings["FoV"] = SettingsMain.Main.FoV;
+				Settings["NearShellEnabled"] = SettingsMain.Main.NearShellEnabled;
+				Settings["NearShellBoundary"] = SettingsMain.Main.NearShellBoundary;
 				Settings["ScreenshotKey"] = SettingsMain.Main.ScreenshotKey;
 				Settings["FPSOverlay"] = SettingsMain.Main.FPSOverlay;
 				Settings["DirectionalLightOverride"] = SettingsMain.Main.DirectionalLightOverride;
@@ -2549,6 +2557,10 @@ void SettingManager::SetMenuSetting(const char* Item, const char* Definition, co
 			if (!strcmp(Section, "Main")) {
 				if (!strcmp(Setting, "FoV"))
 					SettingsMain.Main.FoV = Value;
+				else if (!strcmp(Setting, "NearShellEnabled"))
+					SettingsMain.Main.NearShellEnabled = Value;
+				else if (!strcmp(Setting, "NearShellBoundary"))
+					SettingsMain.Main.NearShellBoundary = Value;
 				else if (!strcmp(Setting, "ScreenshotKey"))
 					SettingsMain.Main.ScreenshotKey = Value;
 				else if (!strcmp(Setting, "FPSOverlay"))

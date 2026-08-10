@@ -7,6 +7,116 @@
 #endif
 #define RESZ_CODE 0x7FA05000
 
+RenderManager::ScenePass	RenderManager::CurrentPass		= RenderManager::PassFull;
+bool						RenderManager::ShellActive		= false;
+float						RenderManager::ShellBoundary	= 0.0f;
+float						RenderManager::RealNear			= 0.0f;
+float						RenderManager::RealFar			= 0.0f;
+int							RenderManager::ShellDraws		= 0;
+D3DMATRIX					RenderManager::DepthProjMatrix	= {};
+
+// z-row of a standard D3D projection, matching what SetupSceneCamera writes into
+// Proj->_33 / Proj->_43.
+static void DepthRow(float Near, float Far, float* Row33, float* Row43) {
+	float InvFmN = 1.0f / (Far - Near);
+	*Row33 = Far * InvFmN;
+	*Row43 = -(Near * Far * InvFmN);
+}
+
+// Once per frame, before the scene render. Latches the frustum values we treat as the source of
+// truth and decides whether the shell is worth rendering at all.
+void RenderManager::UpdateNearShell() {
+
+	NiCamera* Camera = WorldSceneGraph ? WorldSceneGraph->camera : NULL;
+
+	ShellActive = false;
+	CurrentPass = PassFull;
+	ShellDraws = 0;
+	// RealNear/RealFar/ShellBoundary keep last frame's values on this path. Harmless: ShellActive is
+	// false, and every reader of them is gated behind it.
+	if (!Camera) return;
+
+	RealNear = Camera->Frustum.Near;
+	RealFar = Camera->Frustum.Far;
+	ShellBoundary = TheSettingManager->SettingsMain.Main.NearShellBoundary;
+
+	if (!TheSettingManager->SettingsMain.Main.NearShellEnabled) return;
+	if (RealNear <= 0.0f) return;
+	if (RealNear >= ShellBoundary) return;	// near is already safe - nothing to gain
+	if (ShellBoundary >= RealFar) return;	// degenerate frustum
+
+	ShellActive = true;
+
+}
+
+// Switches the camera into a pass. Frustum only - the depth range is deliberately never touched;
+// leaving it alone is what keeps the far pass byte-identical to vanilla.
+void RenderManager::ApplyPass(ScenePass Pass) {
+
+	NiCamera* Camera = WorldSceneGraph ? WorldSceneGraph->camera : NULL;
+
+	// Unconditional, and BEFORE the null check on purpose. The shell's RenderObject is an engine
+	// callback that sits between the mutation and the restore; if the camera vanished mid-scene and
+	// this returned early, CurrentPass would be stuck at PassNear and StampPassProjection would keep
+	// writing the (n, M) row into every later draw - including the off-screen water-reflection
+	// render, which owns its own camera and matrices.
+	CurrentPass = Pass;
+	if (!Camera) return;
+
+	float Near = RealNear;
+	float Far = RealFar;
+
+	if (Pass == PassFar)
+		Near = ShellBoundary;
+	else if (Pass == PassNear)
+		Far = ShellBoundary;
+
+	Camera->Frustum.Near = Near;
+	Camera->Frustum.Far = Far;
+
+	// NiDX9Renderer::NearDepth/DepthRange (byte offsets 0x678 / 0x67C, declared at
+	// GameNi.h:3113-3114) are the frustum's near and (far - near) in VIEW space, not the viewport
+	// depth range - measured 1.0 / 399999.0 for an n=1, f=400000 frustum while the viewport read
+	// 0 / 1. Keep them consistent with the pass.
+	TheRenderManager->NearDepth = Near;
+	TheRenderManager->DepthRange = Far - Near;
+
+	// Put the pass's depth row into projMatrix once, here, in addition to the per-draw stamp. This
+	// is what puts the real (n, F) row BACK when the shell ends: the shell's per-draw stamp leaves
+	// projMatrix on (n, M), nothing rebuilds it before the first-person-node re-render that follows
+	// the main pass, and TESR_ProjectionTransform is a LIVE pointer to this matrix
+	// (ShaderManager.cpp:314). StampPassProjection cannot do the restore itself - it runs per draw,
+	// including inside the off-screen water-reflection render, where projMatrix belongs to another
+	// camera, which is why it is deliberately inert at PassFull.
+	DepthRow(Near, Far, &TheRenderManager->projMatrix._33, &TheRenderManager->projMatrix._43);
+
+}
+
+// Writes the pass's projection depth row. Called per draw as a belt-and-braces measure in case the
+// engine does not rebuild projMatrix from the frustum at pass start; Task 2's diagnostic measures
+// whether it does. INERT at PassFull: outside the two passes the engine, ShadowManager and the
+// off-screen water-reflection render own their own cameras and matrices, and writing the main
+// camera's depth row into them corrupts the result. (ApplyPass writes the pass's row once at each
+// pass boundary; that is where the real (n, F) row is restored when the shell ends.)
+//
+// At PassNear this row is (n, M), but any raw shader that samples TESR_DepthBuffer during the shell
+// is reading the FAR pass's resolve, which is encoded (M, F). One matrix cannot serve both: the
+// shell MUST rasterise with (n, M) (an (M, F) row puts every shell vertex behind the near plane and
+// nothing draws at all - measured, via the NearShellDebug=3 probe, as near water vanishing
+// entirely), and TESR_ProjectionTransform is a live pointer to this same matrix. Depth-buffer
+// consumers therefore read TESR_DepthProjectionTransform (DepthProjMatrix) instead, which always
+// carries the buffer's own encoding. See SetupSceneCamera.
+void RenderManager::StampPassProjection(D3DMATRIX* Proj) {
+
+	if (!ShellActive) return;
+
+	if (CurrentPass == PassFar)
+		DepthRow(ShellBoundary, RealFar, &Proj->_33, &Proj->_43);
+	else if (CurrentPass == PassNear)
+		DepthRow(RealNear, ShellBoundary, &Proj->_33, &Proj->_43);
+
+}
+
 void RenderManager::GetSceneCameraData() {
 
 	NiCamera* Camera = WorldSceneGraph->camera;
@@ -131,6 +241,43 @@ void RenderManager::SetupSceneCamera() {
 		Proj->_43 = -(Frustum->Near * Frustum->Far * InvFmN);
 		Proj->_44 = 0.0f;
 
+		// The scene depth buffer every image-space consumer samples is the FAR pass's - RenderHook
+		// resolves it at [M, F] and the shell then clears and overdraws - so its encoding is
+		// near = M, not the camera's real near. This matrix is published live to shaders as
+		// TESR_ProjectionTransform (ShaderManager.cpp:314) and ~23 of them recover nearZ/farZ from
+		// _43/_33 to linearize that buffer; InvViewProjMatrix and WorldViewProjMatrix are derived
+		// from it right below. Republish the depth row as (M, F) so all three agree with the buffer.
+		//
+		// Gated on PassFull, which is precisely the set of callers that need it:
+		//   ShaderManager::RenderEffectsPreHdr/PostHdr - the post-processing chain, sampling
+		//     TESR_DepthBuffer (the far-pass resolve). Needs (M, F).
+		//   ShadowManager::RenderShadowMaps - bakes InvViewProjMatrix into
+		//     ShaderConst.ShadowMap.ShadowCameraToLight[] (ShadowManager.cpp:684, 743), which the
+		//     mid-scene apply uses to invert the WorldViewProjectionTransform it projects with
+		//     (ShadowsExteriors.fx.hlsl:318-319, 342-344). That apply runs at PassFar, i.e. with an
+		//     (M, F) WVP, so the inverse folded into ShadowCameraToLight must be (M, F) too.
+		//   ShaderManager::RenderShadowsMidScene runs INSIDE the far pass, where Frustum already IS
+		//     [M, F] - the rows above are identical to what this would write, so the mid-scene apply
+		//     is unaffected either way. It is excluded here only to keep the intent explicit.
+		// Never fires when the shell is off, so vanilla behaviour is byte-identical.
+		if (ShellActive && CurrentPass == PassFull)
+			DepthRow(ShellBoundary, RealFar, &Proj->_33, &Proj->_43);
+
+		// TESR_DepthProjectionTransform: the matrix that decodes TESR_DepthBuffer, for the shaders
+		// that sample it. Same layout as projMatrix - a straight copy - with only the depth row forced
+		// to the buffer's encoding, so a shader switching from TESR_ProjectionTransform to this one is
+		// a pure symbol substitution with no packing or handedness question.
+		//
+		// TESR_DepthBuffer is always the FAR pass's resolve: RenderHook resolves it at [M, F], then
+		// clears depth and draws the shell over it. So while the shell is active its encoding is
+		// (M, F) in EVERY pass - including PassNear, where projMatrix itself must carry (n, M) to
+		// rasterise the shell at all. That divergence is the whole reason this constant exists.
+		// With the shell off the copy is byte-identical to projMatrix (plain (n, F)), so the constant
+		// is correct and inert.
+		DepthProjMatrix = *Proj;
+		if (ShellActive)
+			DepthRow(ShellBoundary, RealFar, &DepthProjMatrix._33, &DepthProjMatrix._43);
+
 		memcpy(&JitterProj, (D3DXMATRIX*)Proj, sizeof(JitterProj));
 		JitterProj._31 += TheShaderManager->ShaderConst.Jitter.x;
 		JitterProj._32 += TheShaderManager->ShaderConst.Jitter.y;
@@ -174,6 +321,8 @@ void RenderManager::SetSceneGraph() {
 			WorldSceneGraph->camera->MaxFarNearRatio = FarPlaneDistance / *SettingNearDistance;
 		}
 	}
+
+	UpdateNearShell();
 
 }
 
