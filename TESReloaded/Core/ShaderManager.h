@@ -480,6 +480,17 @@ public:
 	bool					RenderedBufferFilled;
 	bool					DepthBufferFilled;
 	bool					PreWaterDepthBufferFilled;
+	// True only while the MAIN WorldSceneGraph render is on the stack (set in
+	// RenderHook::TrackRenderObject). The three latches above are per-SCENE: ShaderManager::BeginScene
+	// clears them, and the game calls BeginScene again for the off-screen renders that follow the main
+	// pass - the water REFLECTION map among them (confirmed by [ReflDbg] log, 2026-07-17: the
+	// reflection renders AFTER the main pass, at 1024x1024, NOT through RenderObject(WorldSceneGraph)),
+	// and numbered WATER* shaders DO bind during it. Anything that must hold for the rest of the FRAME
+	// has to be gated on this as well as on its latch. Two things are: the mid-scene sun-shadow apply
+	// (RenderHook, near-water trigger - without it the apply re-fired INTO the reflection map, leaving
+	// camera-tracking caster silhouettes floating in the water) and ShaderRecord::SetCT's depth resolve
+	// (see the comment there).
+	bool					InMainScenePass;
 	bool					isFullyInitialized;
 	bool					UseIntervalUpdate;
 	TESObjectCELL*			previousCell;
@@ -511,7 +522,8 @@ public:
 	ShaderRecord*			ShellFlattenPixel;
 	IDirect3DVertexShader9*	ShellFlattenVertexShader;
 	IDirect3DPixelShader9*	ShellFlattenPixelShader;
-	bool					ShellFlattenFailed;			// latched on the first failure so it is not retried per frame
+	bool					ShellFlattenFailed;			// latched on the first failure so it is not retried per frame;
+														// SHARED by both flatten targets - see CreateShellFlatten for why
 	EffectRecord*			UnderwaterEffect;
 	EffectRecord*			WaterLensEffect;
 	EffectRecord*			GodRaysEffect;

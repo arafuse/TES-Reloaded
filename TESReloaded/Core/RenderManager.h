@@ -74,7 +74,11 @@ public:
 	static float		ShellBoundary;	// M
 	static float		RealNear;		// n, latched at frame start
 	static float		RealFar;		// F, latched at frame start
-	static int			ShellDraws;		// diagnostics: draws submitted in the shell pass
+	// Shell-pass draws that could have written depth: every draw submitted at PassNear EXCEPT the
+	// SKY* ones, which the sub-1.0 clear rejects or the shell's far plane clips (see the increment in
+	// RenderHook::TrackSetupShaderPrograms). Gates the depth flatten, and reported by NearShellDebug.
+	// An upper bound on coverage, not a measure of it - a counted draw may still be depth-rejected.
+	static int			ShellDraws;
 
 	// Published to shaders as TESR_DepthProjectionTransform. A copy of projMatrix whose depth row
 	// carries the encoding of whatever is currently in TESR_DepthBuffer - (M, F) while the shell is

@@ -730,7 +730,25 @@ void ShaderRecord::SetCT() {
 			TheRenderManager->device->StretchRect(TheRenderManager->currentRTGroup->RenderTargets[0]->data->Surface, NULL, TheShaderManager->RenderedSurface, NULL, D3DTEXF_NONE);
 			TheShaderManager->RenderedBufferFilled = true;
 		}
-		if (HasDB && !TheShaderManager->DepthBufferFilled) {
+		// DepthBufferFilled alone is not enough while the near shell is active, because it is a
+		// per-SCENE latch being asked to hold for the rest of the FRAME: BeginScene clears it, and the
+		// game calls BeginScene again for the off-screen renders that follow the main pass - the water
+		// reflection map among them, where numbered WATER* shaders bind and every one of them declares
+		// TESR_DepthBuffer, so HasDB is true. Same trap, same shape of guard as the mid-scene pre-water
+		// trigger in RenderHook: also require the main scene render to be on the stack.
+		//
+		// Why it only matters with the shell: before it, a second resolve merely duplicated a
+		// depth-stencil that still held the whole scene. With the shell, the main depth-stencil is
+		// resolved and then CLEARED at the end of the far pass and afterwards holds only the shell (in
+		// first person, only the arms), and the post-shell flatten has already rewritten
+		// TESR_DepthBuffer. A stray resolve after that overwrites the flattened buffer with a near-blank
+		// one before the image-space effects read it. It is destructive on the NvAPI path in
+		// particular, where ResolveDepthInto copies the CACHED main depth-stencil rather than whatever
+		// the off-screen render currently has bound - the RESZ path's size mismatch would hide it.
+		//
+		// Gated on ShellActive so the shell-off path keeps vanilla's behaviour exactly.
+		if (HasDB && !TheShaderManager->DepthBufferFilled &&
+			(!RenderManager::ShellActive || TheShaderManager->InMainScenePass)) {
 			TheRenderManager->ResolveDepthBuffer();
 			TheShaderManager->DepthBufferFilled = true;
 		}
@@ -1062,6 +1080,7 @@ ShaderManager::ShaderManager() {
 	RenderedBufferFilled = false;
 	DepthBufferFilled = false;
 	PreWaterDepthBufferFilled = false;
+	InMainScenePass = false;
 	EffectVertex = NULL;
 	ShellMaskTexture = NULL;
 	ShellFlattenDepthSurface = NULL;
@@ -3346,6 +3365,17 @@ void ShaderManager::RenderShadowsMidScene() {
 // Everything except the target surface is shared between the two flatten targets (TESR_DepthBuffer
 // and TESR_DepthBufferPreWater): same mask, same shaders, same threshold. Target/TargetSurface name
 // the texture being rewritten and the caller's cache slot for its level-0 surface.
+//
+// ShellFlattenFailed is shared too, ON PURPOSE and with consequences worth stating: a failure while
+// preparing the post-shell flatten permanently disables the pre-water clamp as well, and vice versa,
+// even though losing the first only reintroduces the Ambient Occlusion band at M while losing the
+// second only worsens the submerged over-tint. The coupling is sound rather than merely convenient,
+// because there is no failure here that could be specific to one target. Every shared resource -
+// coverage mask, both shaders - fails for both by definition. The two target-specific steps,
+// GetSurfaceLevel(0) and binding the result as a depth-stencil, are asked of two textures created in
+// the same two lines of RenderManager::Initialize with identical format (INTZ), size and usage, so a
+// driver that refuses one refuses the other. A per-target latch would buy a distinction the hardware
+// does not make, and would risk retrying a doomed operation once per frame forever.
 bool ShaderManager::CreateShellFlatten(IDirect3DTexture9* Target, IDirect3DSurface9** TargetSurface) {
 
 	if (ShellFlattenFailed) return false;
@@ -3377,13 +3407,24 @@ bool ShaderManager::CreateShellFlatten(IDirect3DTexture9* Target, IDirect3DSurfa
 		return false;
 	}
 
+	// The records exist only to carry the compiled bytecode into Create*Shader, so on any failure drop
+	// them again rather than leaving them hanging off the members - same shape as the failure path in
+	// ShaderManager::LoadShader.
 	if (!ShellFlattenVertexShader) {
 		ShellFlattenVertex = new ShaderRecord();
 		if (ShellFlattenVertex->LoadShader("ShellFlatten.vso")) Device->CreateVertexShader((const DWORD*)ShellFlattenVertex->Function, &ShellFlattenVertexShader);
+		if (!ShellFlattenVertexShader) {
+			delete ShellFlattenVertex;
+			ShellFlattenVertex = NULL;
+		}
 	}
 	if (!ShellFlattenPixelShader) {
 		ShellFlattenPixel = new ShaderRecord();
 		if (ShellFlattenPixel->LoadShader("ShellFlatten.pso")) Device->CreatePixelShader((const DWORD*)ShellFlattenPixel->Function, &ShellFlattenPixelShader);
+		if (!ShellFlattenPixelShader) {
+			delete ShellFlattenPixel;
+			ShellFlattenPixel = NULL;
+		}
 	}
 	if (!ShellFlattenVertexShader || !ShellFlattenPixelShader) {
 		Logger::Log("ERROR: ShellFlatten shaders not loaded. The near shell depth flatten is disabled - enable CompileShaders once to build them.");
@@ -3460,9 +3501,13 @@ void ShaderManager::FlattenShellPreWaterDepth() {
 void ShaderManager::FlattenShellDepthInto(IDirect3DTexture9* Target, IDirect3DSurface9** TargetSurface) {
 
 	if (!RenderManager::ShellActive) return;
-	// The shell submitted nothing this frame - the usual case indoors and anywhere the player is not
-	// right up against geometry - so there is no coverage to flatten and no reason to pay for the
-	// resolve or the quad.
+	// The shell submitted nothing that could write depth this frame - no coverage to flatten, so no
+	// reason to pay for the resolve, the state block or the quad. ShellDraws deliberately excludes the
+	// SKY* draws that the shell's sub-1.0 clear rejects, or the sky would hold this gate open in every
+	// exterior; it is still only an upper bound on coverage (a counted draw may be depth-rejected or
+	// have ZWRITE off), so this is a cheap degenerate-case guard rather than an exact one. When it does
+	// let a coverage-free frame through the result is still correct: ShellFlatten's clip() discards
+	// every pixel.
 	if (!RenderManager::ShellDraws) return;
 	if (!EffectVertex || !EffectSurface || !Target) return;
 	if (!CreateShellFlatten(Target, TargetSurface)) return;
@@ -3485,23 +3530,17 @@ void ShaderManager::FlattenShellDepthInto(IDirect3DTexture9* Target, IDirect3DSu
 	}
 
 	// The hazard, named at the one place it exists: a texture cannot be a sampler source and the
-	// depth-stencil target at the same time, and Target is normally BOTH at this instant. For the
-	// pre-water clamp that is not a corner case but the standard path - RenderHook's per-draw swap
+	// depth-stencil target at the same time, and Target is normally BOTH bound at this instant. For
+	// the pre-water clamp that is not a corner case but the standard path - RenderHook's per-draw swap
 	// binds TESR_DepthBufferPreWater into the sampler TESR_DepthBuffer occupies for every shell WATER
 	// draw, and the shell's LOD water (WATER012+) draws run through that swap BEFORE this clamp fires
-	// at the first NEAR water draw. So unbind Target explicitly, by identity, and do not rely on the
-	// blanket clear below to happen to cover it: that clear exists to stop the OTHER scene textures
-	// aliasing the target, and narrowing it later must not silently re-open a read/write hazard.
-	for (DWORD i = 0; i < 16; i++) {
-		IDirect3DBaseTexture9* Bound = NULL;
-		if (SUCCEEDED(Device->GetTexture(i, &Bound)) && Bound) {
-			if (Bound == (IDirect3DBaseTexture9*)Target) Device->SetTexture(i, NULL);
-			Bound->Release();
-		}
-	}
-
-	// Any other texture may alias the target too - the water shaders read TESR_DepthBuffer during both
-	// passes - so drop every stage; the state block puts them all back.
+	// at the first NEAR water draw. Other scene textures can alias the target too, since the water
+	// shaders read TESR_DepthBuffer in both passes. So clear every stage, unconditionally; the state
+	// block puts them all back.
+	//
+	// LOAD BEARING, not tidiness: this is the only thing that unbinds Target. Anyone tempted to narrow
+	// it to "the stages that actually matter" has to keep unbinding Target by identity, or the flatten
+	// silently samples and writes the same surface.
 	for (DWORD i = 0; i < 16; i++) Device->SetTexture(i, NULL);
 
 	// EffectSurface only stands in as a colour target of the right size and (unlike the scene target
