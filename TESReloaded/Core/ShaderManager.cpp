@@ -3484,10 +3484,24 @@ void ShaderManager::FlattenShellDepthInto(IDirect3DTexture9* Target, IDirect3DSu
 		return;
 	}
 
-	// The target is very likely still bound to a sampler - the water shaders read TESR_DepthBuffer
-	// during both passes, and shell water draws have TESR_DepthBufferPreWater swapped in for it - and
-	// a texture cannot be a sampler source and the depth-stencil target at the same time. Drop every
-	// stage; the state block puts them all back.
+	// The hazard, named at the one place it exists: a texture cannot be a sampler source and the
+	// depth-stencil target at the same time, and Target is normally BOTH at this instant. For the
+	// pre-water clamp that is not a corner case but the standard path - RenderHook's per-draw swap
+	// binds TESR_DepthBufferPreWater into the sampler TESR_DepthBuffer occupies for every shell WATER
+	// draw, and the shell's LOD water (WATER012+) draws run through that swap BEFORE this clamp fires
+	// at the first NEAR water draw. So unbind Target explicitly, by identity, and do not rely on the
+	// blanket clear below to happen to cover it: that clear exists to stop the OTHER scene textures
+	// aliasing the target, and narrowing it later must not silently re-open a read/write hazard.
+	for (DWORD i = 0; i < 16; i++) {
+		IDirect3DBaseTexture9* Bound = NULL;
+		if (SUCCEEDED(Device->GetTexture(i, &Bound)) && Bound) {
+			if (Bound == (IDirect3DBaseTexture9*)Target) Device->SetTexture(i, NULL);
+			Bound->Release();
+		}
+	}
+
+	// Any other texture may alias the target too - the water shaders read TESR_DepthBuffer during both
+	// passes - so drop every stage; the state block puts them all back.
 	for (DWORD i = 0; i < 16; i++) Device->SetTexture(i, NULL);
 
 	// EffectSurface only stands in as a colour target of the right size and (unlike the scene target
