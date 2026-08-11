@@ -1259,7 +1259,8 @@ void SettingManager::LoadSettings() {
 	// Defaults OFF: a Shadows.ini predating this feature must keep the legacy bias math. The
 	// shipped INI carries the enable, so fresh installs still get it.
 	SettingsShadows.Exteriors.AdaptiveBias = GetPrivateProfileIntA("Exteriors", "AdaptiveBias", 0, Filename);
-	GetPrivateProfileStringA("Exteriors", "BiasTerminatorWidth", "0.15", value, SettingStringBuffer, Filename);
+	// 0 = terminator ramp off, the only value that does not flat-shade the scene (see Shadows.ini).
+	GetPrivateProfileStringA("Exteriors", "BiasTerminatorWidth", "0.0", value, SettingStringBuffer, Filename);
 	SettingsShadows.Exteriors.BiasTerminatorWidth = atof(value);
 	GetPrivateProfileStringA("Exteriors", "BiasMaxSlope", "4.0", value, SettingStringBuffer, Filename);
 	SettingsShadows.Exteriors.BiasMaxSlope = atof(value);
