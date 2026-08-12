@@ -326,13 +326,21 @@ float4 Shadow(VSOUT IN) : COLOR0{
 			float3 L = TESR_ShadowLightDir.xyz; // points TOWARD the sun; no abs()
 			float ndl = dot(N, L);
 
-			// A surface pointing away from the sun is self-shadowed by its own geometry. Ramp it to
-			// the shadow term directly -- it never reaches the depth compare, so no bias value can
-			// produce acne there. Smoothstep rather than a hard cutoff because the reconstructed
-			// normals are noisy and a binary test would speckle along the terminator.
-			// The max() guards BiasTerminatorWidth = 0, which would otherwise divide by zero inside
-			// smoothstep and produce NaN; at 1e-4 it degenerates to a hard cutoff, as intended.
-			facing = smoothstep(0.0f, max(TESR_ShadowBiasAdaptive.x, 1e-4f), ndl);
+			// Optional terminator ramp: a surface pointing away from the sun is self-shadowed by its
+			// own geometry, so ramping it to the shadow term directly keeps it away from the depth
+			// compare, where no bias value can stop acne.
+			//
+			// OFF BY DEFAULT (BiasTerminatorWidth = 0), because it FLAT-SHADES the scene. N here is
+			// reconstructed from depth derivatives, so it is the GEOMETRIC face normal: constant
+			// across each triangle. Any visible term driven by it is therefore constant across each
+			// triangle too, and this one multiplies whole triangles by exactly `darkness` while the
+			// engine's own Gouraud (vertex-normal) shading still lights them -- smooth meshes break
+			// up into hard-edged facets. The depth compare handles these surfaces correctly anyway:
+			// a surface turned away from the sun has its object's lit side in the shadow map, so it
+			// tests as occluded, and the resulting boundary follows the real silhouette instead of
+			// triangle edges. Set a small width (0.15 was the old default) only to trade facets back
+			// for suppressing terminator-band acne.
+			facing = TESR_ShadowBiasAdaptive.x > 0.0f ? smoothstep(0.0f, TESR_ShadowBiasAdaptive.x, ndl) : 1.0f;
 
 
 			// sqrt(1-x*x)/x == tan(acos(x)), without the transcendentals and clamped. The unclamped
