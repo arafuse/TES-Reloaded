@@ -8,6 +8,7 @@ float4x4 TESR_ShadowCameraToLightTransformOrtho;
 float4 TESR_CameraPosition;
 float4 TESR_Tick;
 float4 TESR_SnowData;
+float4 TESR_OrthoData;
 
 sampler2D TESR_RenderedBuffer : register(s0) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
 sampler2D TESR_DepthBuffer : register(s1) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
@@ -88,7 +89,8 @@ float GetOrtho(float4 OrthoPos) {
     OrthoPos.x = OrthoPos.x *  0.5f + 0.5f;
     OrthoPos.y = OrthoPos.y * -0.5f + 0.5f;
 	Ortho = tex2D(TESR_OrthoMapBuffer, OrthoPos.xy).r;
-	if (Ortho < OrthoPos.z) return 0.0f;
+	// TESR_OrthoData.x biases the compare toward "occluded" -- see the matching note in Rain.fx.hlsl.
+	if (Ortho < OrthoPos.z + TESR_OrthoData.x) return 0.0f;
 	return 1.0f;
 	
 }

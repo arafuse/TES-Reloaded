@@ -55,6 +55,7 @@ public:
 	bool					EnsureInstanceVB(UINT InstanceCount);
 	void					DrawInstancedGroup(NiGeometryBufferData* GeoData, std::vector<int>& ItemIdx, IDirect3DVertexDeclaration9* Decl);
 	void					FlushInstanceGroups(D3DXVECTOR4* ShadowData);
+	void					CollectCellGeo(TESObjectCELL* Cell, SettingsShadowStruct::FormsStruct* Forms, SettingsShadowStruct::ExcludedFormsList* ExcludedForms, bool HasWater, ShadowMapTypeEnum ShadowMapType);
 	void					CollectCubeMapGeometry(NiAVObject* Object, std::vector<NiGeometry*>& Out);
 	void					RenderTerrain(NiAVObject* Object, ShadowMapTypeEnum ShadowMapType, D3DXVECTOR4* ShadowData);
 	void					Render(NiGeometry* Geo, D3DXVECTOR4* ShadowData, const D3DMATRIX* PrecomputedWorld = NULL);

@@ -318,6 +318,7 @@ struct SettingsShadowStruct {
 		float				Darkness;
 		float				ShadowMapRadius[4];
 		float				ShadowMapFarPlane;
+		float				OrthoOcclusionBias;		// [ExteriorsOrtho] OcclusionBias, in world units
 		float				SunUpThreshold;
 		float				RebakeMarginNear;
 		float				RebakeMarginFar;

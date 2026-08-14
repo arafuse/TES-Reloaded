@@ -937,40 +937,53 @@ void ShadowManager::RenderShadowMapCellTerrain(TESObjectCELL* Cell, ShadowMapTyp
 	}
 }
 
-// Flatten every ortho-frustum-visible, Forms-allowed shadow-casting ref in the loaded grid into
-// ShadowGeoPool once per frame. Node/flag/excluded/type/Forms eligibility, the ref-root frustum cull,
-// world transforms, bounds, the water test, the per-geo leaf cull, the MinRadius cut, and instancing
+// Append one cell's eligible shadow-casting refs to ShadowGeoPool. Node/flag/excluded/type/Forms
+// eligibility and the ref-root frustum cull are resolved here; CollectExteriorGeo then walks the
+// accepted sub-trees. A NULL cell is skipped, so callers can pass a grid slot without checking.
+void ShadowManager::CollectCellGeo(TESObjectCELL* Cell, SettingsShadowStruct::FormsStruct* Forms, SettingsShadowStruct::ExcludedFormsList* ExcludedForms, bool HasWater, ShadowMapTypeEnum ShadowMapType) {
+	if (!Cell) return;
+	bool HasExcluded = ExcludedForms->size() > 0;
+	TList<TESObjectREFR>::Entry* Entry = &Cell->objectList.First;
+	for (; Entry; Entry = Entry->next) {
+		TESObjectREFR* Ref = Entry->item;
+		NiNode* Node;
+		if (!Ref || !(Node = Ref->GetNode()) || (Ref->flags & TESForm::FormFlags::kFormFlags_NotCastShadows)) continue;
+		TESForm* Form = Ref->baseForm;
+		UInt8 TypeID = Form->formType;
+		if (!IsShadowCastableType(TypeID)) continue;
+		if (!FormsAllows(Forms, TypeID)) continue;
+		if (HasExcluded && std::binary_search(ExcludedForms->begin(), ExcludedForms->end(), Form->refID)) continue;
+		NiBound* RootBound = Node->GetWorldBound();
+		if (!RootBound) continue;
+		D3DXVECTOR3 RootCenter;
+		if (CollectWorldSpace) { RootCenter.x = RootBound->Center.x - CollectAnchor.x; RootCenter.y = RootBound->Center.y - CollectAnchor.y; RootCenter.z = RootBound->Center.z - CollectAnchor.z; }
+		else { RootCenter.x = RootBound->Center.x - TheRenderManager->CameraPosition.x; RootCenter.y = RootBound->Center.y - TheRenderManager->CameraPosition.y; RootCenter.z = RootBound->Center.z - TheRenderManager->CameraPosition.z; }
+		if (!RootInShadowFrustum(ShadowMapType, RootCenter, RootBound->Radius)) continue; // whole-subtree cull
+		bool IsActorRef = (TypeID >= TESForm::FormType::kFormType_NPC && TypeID <= TESForm::FormType::kFormType_LeveledCreature); // used by the Stage 2 static/dynamic split
+		CollectExteriorGeo(Node, HasWater, ShadowMapType, IsActorRef);
+	}
+}
+
+// Flatten every frustum-visible, Forms-allowed shadow-casting ref into ShadowGeoPool once per frame.
+// World transforms, bounds, the water test, the per-geo leaf cull, the MinRadius cut, and instancing
 // eligibility are all resolved here; RenderShadowMap then draws the flat list with no further culling.
+//
+// Like BuildPointGeoLists, the ONLY interior/exterior distinction is which ref list to walk. An
+// interior flagged BehaveLikeExterior passes IsExteriorLike() and so runs these passes, but has no
+// loaded exterior grid -- walking gridCellArray there collected nothing, leaving every map empty
+// (precipitation was occluded by nothing at all in such cells).
 void ShadowManager::BuildExteriorGeoItems(SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors, ShadowMapTypeEnum ShadowMapType) {
 	ShadowGeoCount = 0;
 	SettingsShadowStruct::ExcludedFormsList* ExcludedForms = &ShadowsExteriors->ExcludedForms;
-	bool HasExcluded = ExcludedForms->size() > 0;
 	bool HasWater = TheShaderManager->ShaderConst.HasWater;
 	SettingsShadowStruct::FormsStruct* Forms = &ShadowsExteriors->Forms[ShadowMapType];
-	for (UInt32 x = 0; x < *SettingGridsToLoad; x++) {
-		for (UInt32 y = 0; y < *SettingGridsToLoad; y++) {
-			TESObjectCELL* Cell = Tes->gridCellArray->GetCell(x, y);
-			if (!Cell) continue;
-			TList<TESObjectREFR>::Entry* Entry = &Cell->objectList.First;
-			for (; Entry; Entry = Entry->next) {
-				TESObjectREFR* Ref = Entry->item;
-				NiNode* Node;
-				if (!Ref || !(Node = Ref->GetNode()) || (Ref->flags & TESForm::FormFlags::kFormFlags_NotCastShadows)) continue;
-				TESForm* Form = Ref->baseForm;
-				UInt8 TypeID = Form->formType;
-				if (!IsShadowCastableType(TypeID)) continue;
-				if (!FormsAllows(Forms, TypeID)) continue;
-				if (HasExcluded && std::binary_search(ExcludedForms->begin(), ExcludedForms->end(), Form->refID)) continue;
-				NiBound* RootBound = Node->GetWorldBound();
-				if (!RootBound) continue;
-				D3DXVECTOR3 RootCenter;
-				if (CollectWorldSpace) { RootCenter.x = RootBound->Center.x - CollectAnchor.x; RootCenter.y = RootBound->Center.y - CollectAnchor.y; RootCenter.z = RootBound->Center.z - CollectAnchor.z; }
-				else { RootCenter.x = RootBound->Center.x - TheRenderManager->CameraPosition.x; RootCenter.y = RootBound->Center.y - TheRenderManager->CameraPosition.y; RootCenter.z = RootBound->Center.z - TheRenderManager->CameraPosition.z; }
-				if (!RootInShadowFrustum(ShadowMapType, RootCenter, RootBound->Radius)) continue; // whole-subtree cull
-				bool IsActorRef = (TypeID >= TESForm::FormType::kFormType_NPC && TypeID <= TESForm::FormType::kFormType_LeveledCreature); // used by the Stage 2 static/dynamic split
-				CollectExteriorGeo(Node, HasWater, ShadowMapType, IsActorRef);
-			}
-		}
+	if (Player->GetWorldSpace()) {
+		for (UInt32 x = 0; x < *SettingGridsToLoad; x++)
+			for (UInt32 y = 0; y < *SettingGridsToLoad; y++)
+				CollectCellGeo(Tes->gridCellArray->GetCell(x, y), Forms, ExcludedForms, HasWater, ShadowMapType);
+	}
+	else {
+		CollectCellGeo(Player->parentCell, Forms, ExcludedForms, HasWater, ShadowMapType);
 	}
 }
 
@@ -1219,7 +1232,8 @@ void ShadowManager::RenderShadowMap(ShadowMapTypeEnum ShadowMapType, SettingsSha
 	RenderState->SetVertexShader(ShadowMapVertexShader, false);
 	RenderState->SetPixelShader(ShadowMapPixelShader, false);
 	Device->BeginScene();
-	if (!SkipTerrain) {
+	// Terrain lives in the exterior grid only, so an interior (incl. BehaveLikeExterior) has none to draw.
+	if (!SkipTerrain && Player->GetWorldSpace()) {
 		gTerrainBucket = true;
 		for (UInt32 x = 0; x < *SettingGridsToLoad; x++)
 			for (UInt32 y = 0; y < *SettingGridsToLoad; y++)
@@ -1328,6 +1342,11 @@ void ShadowManager::RenderExteriorShadows() {
 		RenderShadowMap(MapOrtho, ShadowsExteriors, &At, &OrthoDir, ShadowData);
 
 		OrthoData->z = 1.0f / (float)ShadowsExteriors->ShadowMapSize[MapOrtho];
+		// Occlusion-compare bias for the precipitation ray march, converted from world units to the
+		// normalized ortho depth the map stores (the projection spans 2 * FarPlane). Read from the
+		// canonical struct, not the selected copy: this is a precision knob, not a weather tier.
+		float OrthoDepthRange = 2.0f * TheSettingManager->SettingsShadows.Exteriors.ShadowMapFarPlane;
+		OrthoData->x = OrthoDepthRange > 0.0f ? TheSettingManager->SettingsShadows.Exteriors.OrthoOcclusionBias / OrthoDepthRange : 0.0f;
 	}
 
 	if (CurrentCell != Player->parentCell) {
