@@ -1225,6 +1225,8 @@ void SettingManager::LoadSettings() {
 	SettingsShadows.Exteriors.ShadowMapSize[ShadowManager::ShadowMapTypeEnum::MapOrtho] = GetPrivateProfileIntA("ExteriorsOrtho", "ShadowMapSize", 256, Filename);
 	GetPrivateProfileStringA("ExteriorsOrtho", "ShadowMapRadius", "2048.0", value, SettingStringBuffer, Filename);
 	SettingsShadows.Exteriors.ShadowMapRadius[ShadowManager::ShadowMapTypeEnum::MapOrtho] = atof(value);
+	GetPrivateProfileStringA("ExteriorsOrtho", "OcclusionBias", "16.0", value, SettingStringBuffer, Filename);
+	SettingsShadows.Exteriors.OrthoOcclusionBias = atof(value);
 
 	SettingsShadows.Exteriors.UsePostProcessing = GetPrivateProfileIntA("Exteriors", "UsePostProcessing", 1, Filename);
 	SettingsShadows.Exteriors.UseIntervalUpdate = GetPrivateProfileIntA("Exteriors", "UseIntervalUpdate", 1, Filename);

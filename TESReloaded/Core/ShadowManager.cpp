@@ -1342,6 +1342,11 @@ void ShadowManager::RenderExteriorShadows() {
 		RenderShadowMap(MapOrtho, ShadowsExteriors, &At, &OrthoDir, ShadowData);
 
 		OrthoData->z = 1.0f / (float)ShadowsExteriors->ShadowMapSize[MapOrtho];
+		// Occlusion-compare bias for the precipitation ray march, converted from world units to the
+		// normalized ortho depth the map stores (the projection spans 2 * FarPlane). Read from the
+		// canonical struct, not the selected copy: this is a precision knob, not a weather tier.
+		float OrthoDepthRange = 2.0f * TheSettingManager->SettingsShadows.Exteriors.ShadowMapFarPlane;
+		OrthoData->x = OrthoDepthRange > 0.0f ? TheSettingManager->SettingsShadows.Exteriors.OrthoOcclusionBias / OrthoDepthRange : 0.0f;
 	}
 
 	if (CurrentCell != Player->parentCell) {
