@@ -339,6 +339,7 @@ ShadowManager::ShadowManager() {
 	CurrentCell = NULL;
 	PointCurrentCell = NULL;
 	PointSlotsActive = 0;
+	PointSlotsShaded = 0;
 	EnableStaticMaps = false;
 	EnableStaticMapsFrameCount = 0;
 	ShadowMapInstancedVertexShader = NULL;
@@ -376,7 +377,12 @@ ShadowManager::ShadowManager() {
 		PointSlots[i].BakedLightPos = D3DXVECTOR3(0.0f, 0.0f, 0.0f);
 		PointSlots[i].Checksum = 0.0;
 		PointSlots[i].Valid = false;
+		PointSlots[i].Intensity = 0.0f;
+		PointSlots[i].LastFarPlane = 0.0f;
+		PointSlots[i].LastLuminance = 0.0f;
+		PointSlots[i].RetiringLight = NULL;
 	}
+	PointFadeLastMs = 0.0;
 
 	ResetIntervals();
 }
@@ -1482,10 +1488,53 @@ bool ShadowManager::IsPointLightCandidate(NiPointLight* Light, SettingsShadowStr
 	return true;
 }
 
+// Steps every slot's fade weight toward its target: 1 while the slot holds a light, 0 once it loses
+// one. Runs before selection so a slot that finished fading out this frame is claimable immediately.
+//
+// The target deliberately ignores PointLightSlot::Valid. Valid is cleared on every exterior cell
+// boundary crossing (see RenderPointShadows), which is a rebake trigger, not a change of occupant --
+// fading on it would dip every point shadow to nothing and back each time the player walks across a
+// cell line. Fade-IN is instead started explicitly, by SelectPointLights zeroing Intensity at the two
+// points where a slot takes a new occupant.
+void ShadowManager::AdvancePointFades() {
+	double Now = TheFrameRateManager->GetPerformance(); // milliseconds since startup
+	double Delta = Now - PointFadeLastMs;
+	PointFadeLastMs = Now;
+	float FadeTime = TheSettingManager->SettingsShadows.Point.FadeTime;
+	// Feature off, or a clock hiccup / same-millisecond frame: snap to the target so a slot mid-fade
+	// can never stall retired-but-visible, holding its slot forever.
+	bool Snap = (FadeTime <= 0.0f || Delta <= 0.0);
+	float Step = Snap ? 1.0f : (float)(Delta / (1000.0 * (double)FadeTime));
+
+	for (int s = 0; s < PointLightMax; s++) {
+		PointLightSlot& Slot = PointSlots[s];
+		float Target = Slot.Light ? 1.0f : 0.0f;
+		if (Slot.Intensity < Target) {
+			Slot.Intensity += Step;
+			if (Slot.Intensity > Target) Slot.Intensity = Target;
+		}
+		else if (Slot.Intensity > Target) {
+			Slot.Intensity -= Step;
+			if (Slot.Intensity < Target) Slot.Intensity = Target;
+		}
+		// A slot that has finished fading out is fully released: only now may its cube be discarded
+		// and the slot reused.
+		if (!Slot.Light && Slot.Intensity <= 0.0f) {
+			Slot.Valid = false;
+			Slot.RetiringLight = NULL;
+		}
+	}
+}
+
 // Assigns candidate lights to cube slots with stability: an incumbent keeps its slot as long as it
 // is still a candidate (so its cached cube survives), empty slots take the nearest free candidates,
 // and an incumbent is only evicted by a candidate substantially nearer than it (hysteresis), which
 // stops slot thrash — and the rebake it would cost — when two lights are at similar distance.
+//
+// Losing a light does not free a slot immediately: the slot RETIRES (Light = NULL, cube frozen and
+// still sampled) until AdvancePointFades takes its Intensity to 0. The single rule the whole fade
+// rests on is that a slot never changes occupant while its Intensity is above 0 — otherwise a bake
+// for the new light would overwrite the cube the old one is still fading out of.
 void ShadowManager::SelectPointLights() {
 	SettingsShadowStruct::PointStruct* Settings = &TheSettingManager->SettingsShadows.Point;
 	SettingsMainStruct::EquipmentModeStruct* EquipmentModeSettings = &TheSettingManager->SettingsMain.EquipmentMode;
@@ -1516,32 +1565,60 @@ void ShadowManager::SelectPointLights() {
 	// light is absent from this frame's candidate set is released — its NiPointLight may already be
 	// destroyed (cell unload), so the pointer must not be dereferenced again after this point.
 	for (int s = 0; s < PointLightMax; s++) {
-		if (s >= MaxSlots) { PointSlots[s].Light = NULL; PointSlots[s].Valid = false; continue; }
+		if (s >= MaxSlots) { PointSlots[s].Light = NULL; continue; }
 		NiPointLight* Incumbent = PointSlots[s].Light;
 		if (!Incumbent) continue;
 		int Found = -1;
 		for (int c = 0; c < CandidateCount; c++) {
 			if (!Taken[c] && Candidates[c].Light == Incumbent) { Found = c; break; }
 		}
-		if (Found < 0) { PointSlots[s].Light = NULL; PointSlots[s].Valid = false; }
+		// Retire rather than clear: Valid stays set so the frozen cube keeps being sampled, and
+		// AdvancePointFades clears it once the fade completes. A light that comes back before then
+		// (one hovering on the distance cut) simply reclaims the slot below with its cube intact.
+		if (Found < 0) { PointSlots[s].Light = NULL; PointSlots[s].RetiringLight = Incumbent; }
 		else Taken[Found] = true;
 	}
 
-	// 2. Empty slots take the nearest unclaimed candidates.
+	// 1b. A retiring slot whose own light is a candidate again reclaims it, cube and all, and its
+	// Intensity ramps back up from wherever it had fallen to. Without this, a light sitting on the
+	// distance cut fades fully out and back in, rebaking each time. RetiringLight is compared, never
+	// dereferenced; a match means the address is in this frame's live candidate set.
 	for (int s = 0; s < MaxSlots; s++) {
-		if (PointSlots[s].Light) continue;
+		if (PointSlots[s].Light || !PointSlots[s].RetiringLight) continue;
+		for (int c = 0; c < CandidateCount; c++) {
+			if (Taken[c] || Candidates[c].Light != PointSlots[s].RetiringLight) continue;
+			Taken[c] = true;
+			PointSlots[s].Light = Candidates[c].Light;
+			PointSlots[s].RetiringLight = NULL;
+			break;
+		}
+	}
+
+	// 2. Fully free slots take the nearest unclaimed candidates. A retiring slot is not free.
+	for (int s = 0; s < MaxSlots; s++) {
+		if (PointSlots[s].Light || PointSlots[s].Intensity > 0.0f) continue;
 		for (int c = 0; c < CandidateCount; c++) {
 			if (Taken[c]) continue;
 			Taken[c] = true;
 			PointSlots[s].Light = Candidates[c].Light;
-			PointSlots[s].Valid = false; // new occupant: cube must be baked
+			PointSlots[s].Valid = false;     // new occupant: cube must be baked
+			PointSlots[s].Intensity = 0.0f;  // and fade in from nothing
 			break;
 		}
 	}
 
 	// 3. Hysteresis eviction: a still-unclaimed candidate displaces the farthest incumbent only if
 	// it is clearly nearer. Candidates are sorted, so once one fails the test no later one can pass.
-	for (int c = 0; c < CandidateCount; c++) {
+	// The incumbent is only retired here, not replaced — the candidate claims the slot through step 2
+	// on a later frame, once the fade-out has finished, giving a clean fade-out-then-in rather than a
+	// swap-pop. Skipped entirely while any slot is already retiring, and stopped after retiring one:
+	// otherwise the candidate, still unclaimed for the whole fade, would retire another slot every
+	// frame until every light in the set had been evicted.
+	bool AnyRetiring = false;
+	for (int s = 0; s < PointLightMax; s++)
+		if (!PointSlots[s].Light && PointSlots[s].Intensity > 0.0f) { AnyRetiring = true; break; }
+
+	for (int c = 0; !AnyRetiring && c < CandidateCount; c++) {
 		if (Taken[c]) continue;
 		int Worst = -1;
 		float WorstDist = -1.0f;
@@ -1552,16 +1629,19 @@ void ShadowManager::SelectPointLights() {
 		}
 		if (Worst < 0) break;
 		if (Candidates[c].Dist >= WorstDist * PointSlotEvictFactor) break;
-		PointSlots[Worst].Light = Candidates[c].Light;
-		PointSlots[Worst].Valid = false;
-		Taken[c] = true;
+		// RetiringLight is deliberately left NULL here: the evicted light is still a candidate, so
+		// step 1b would reclaim it on the very next frame and the two would trade the slot forever.
+		PointSlots[Worst].Light = NULL;
+		break;
 	}
 }
 
 // Publishes each slot's light position CAMERA-RELATIVE every frame (w = the cube's far plane).
 // The apply shader reconstructs camera-relative positions too, so cube sampling needs no matrix —
 // a cached cube stays correct as the camera moves because stored radial distance is origin-invariant.
-// w == 0 marks an inactive slot for the shader.
+// w == 0 marks an inactive slot for the shader. A retiring slot is NOT inactive: it publishes a real
+// far plane from its cached values so its frozen cube keeps being sampled, and fades out through the
+// luminance instead — which is what makes the shadow lose depth rather than shrink.
 void ShadowManager::PublishPointLightConstants() {
 	D3DXVECTOR4* Positions = TheShaderManager->ShaderConst.ShadowMap.ShadowCastLightPosition;
 	// One component per slot, so index it as a float array (D3DXVECTOR4 converts implicitly).
@@ -1571,11 +1651,27 @@ void ShadowManager::PublishPointLightConstants() {
 	// would silently produce no point shadows at all, with nothing else to point at the cause.
 	static NiPointLight* LastLoggedLight[PointLightMax] = { NULL };
 	int Active = 0;
+	int Shaded = 0;
 	for (int s = 0; s < PointLightMax; s++) {
-		NiPointLight* Light = PointSlots[s].Light;
+		PointLightSlot& Slot = PointSlots[s];
+		NiPointLight* Light = Slot.Light;
 		if (!Light) {
-			Positions[s] = D3DXVECTOR4(0.0f, 0.0f, 0.0f, 0.0f);
-			Luminance[s] = 0.0f;
+			// Retiring: the NiPointLight is gone but the cube is still live, so keep publishing from
+			// the cached values with the fade applied. BakedLightPos is the right position to use —
+			// drifting further than PointLightMoveEpsilon from it forces a rebake, which updates it,
+			// so it tracks the light to within one unit right up to the moment the slot retired.
+			if (Slot.Intensity > 0.0f) {
+				Positions[s].x = Slot.BakedLightPos.x - TheRenderManager->CameraPosition.x;
+				Positions[s].y = Slot.BakedLightPos.y - TheRenderManager->CameraPosition.y;
+				Positions[s].z = Slot.BakedLightPos.z - TheRenderManager->CameraPosition.z;
+				Positions[s].w = Slot.LastFarPlane;
+				Luminance[s] = Slot.LastLuminance * Slot.Intensity;
+				Shaded++;
+			}
+			else {
+				Positions[s] = D3DXVECTOR4(0.0f, 0.0f, 0.0f, 0.0f);
+				Luminance[s] = 0.0f;
+			}
 			LastLoggedLight[s] = NULL;
 			continue;
 		}
@@ -1591,15 +1687,21 @@ void ShadowManager::PublishPointLightConstants() {
 		// is — diffuse scaled by the dimmer, as the engine's own lighting shaders use it, reduced to
 		// a single luma (Rec. 601). Brightness only, deliberately not colour: removing the light's
 		// hue tinted shadows in a way that read wrong in game.
-		Luminance[s] = (0.299f * Light->Diff.r + 0.587f * Light->Diff.g + 0.114f * Light->Diff.b) * Light->Dimmer;
+		// Cached unfaded, so a retiring slot fades out from the light's true brightness rather than
+		// from whatever partial value it happened to be published at.
+		Slot.LastFarPlane = FarPlane;
+		Slot.LastLuminance = (0.299f * Light->Diff.r + 0.587f * Light->Diff.g + 0.114f * Light->Diff.b) * Light->Dimmer;
+		Luminance[s] = Slot.LastLuminance * Slot.Intensity;
 		if (ProfilingEnabled && LastLoggedLight[s] != Light) {
 			LastLoggedLight[s] = Light;
 			Logger::Log("[ShadowProfile] point slot %d: Diff=(%.3f, %.3f, %.3f) Dimmer=%.3f Radius=%.1f CanCarry=%d",
 				s, Light->Diff.r, Light->Diff.g, Light->Diff.b, Light->Dimmer, Light->Spec.r, (int)Light->CanCarry);
 		}
 		Active++;
+		Shaded++;
 	}
 	PointSlotsActive = Active;
+	PointSlotsShaded = Shaded;
 	ProfileCount(Cnt_PointSlotsActive, Active);
 }
 
@@ -1756,14 +1858,22 @@ void ShadowManager::BakePointCube(int Slot) {
 
 void ShadowManager::RenderPointShadows() {
 	PointSlotsActive = 0;
+	PointSlotsShaded = 0;
 	if (!PointShadowsNeeded()) {
 		// Publish zeroed slots so a stale set never keeps shadowing after the feature is disabled.
+		// Fades are killed outright rather than run out: there is nothing to fade against once the
+		// apply stops running, and a slot left mid-retirement would hold itself reserved forever.
 		for (int s = 0; s < PointLightMax; s++) {
 			PointSlots[s].Light = NULL;
 			PointSlots[s].Valid = false;
+			PointSlots[s].Intensity = 0.0f;
+			PointSlots[s].RetiringLight = NULL;
 			TheShaderManager->ShaderConst.ShadowMap.ShadowCastLightPosition[s] = D3DXVECTOR4(0.0f, 0.0f, 0.0f, 0.0f);
 		}
 		TheShaderManager->ShaderConst.ShadowMap.ShadowCastLightLuminance = D3DXVECTOR4(0.0f, 0.0f, 0.0f, 0.0f);
+		// Pin the clock, so the gap while the feature was off does not arrive as one huge delta that
+		// snaps the first slot straight to full instead of fading it in.
+		PointFadeLastMs = TheFrameRateManager->GetPerformance();
 		return;
 	}
 	ScopeTimer profile(Phase_PointTotal);
@@ -1772,12 +1882,18 @@ void ShadowManager::RenderPointShadows() {
 	// from CurrentCell, which belongs to the exterior-only sun path.
 	if (PointCurrentCell != Player->parentCell) {
 		PointCurrentCell = Player->parentCell;
-		for (int s = 0; s < PointLightMax; s++) PointSlots[s].Valid = false;
+		for (int s = 0; s < PointLightMax; s++) {
+			PointSlots[s].Valid = false;
+			// A retiring slot is fading out a cube baked from casters that just went away with the
+			// cell, so end it here rather than let it drag the old cell's shadow into the new one.
+			if (!PointSlots[s].Light) { PointSlots[s].Intensity = 0.0f; PointSlots[s].RetiringLight = NULL; }
+		}
 		EnableStaticMapsFrameCount = 0;
 		EnableStaticMaps = false;
 	}
 	UpdateStaticMapsCounter();
 
+	AdvancePointFades();
 	SelectPointLights();
 	PublishPointLightConstants();
 

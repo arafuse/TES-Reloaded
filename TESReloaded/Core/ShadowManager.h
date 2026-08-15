@@ -67,6 +67,7 @@ public:
 	void					RenderPointShadows();
 	bool					PointShadowsNeeded();
 	bool					IsPointLightCandidate(NiPointLight* Light, SettingsShadowStruct::PointStruct* Settings, bool TorchOnBeltEnabled);
+	void					AdvancePointFades();
 	void					SelectPointLights();
 	void					PublishPointLightConstants();
 	void					BuildPointGeoLists(double* Checksums);
@@ -189,13 +190,37 @@ public:
 	// contributing refs moved, or cell change). Light pointers are only valid for the frame
 	// they were collected — validate membership in SceneLights before dereferencing.
 	struct PointLightSlot {
-		NiPointLight*	Light;			// NULL = slot empty
+		NiPointLight*	Light;			// NULL = slot empty, or retiring if Intensity > 0
 		D3DXVECTOR3		BakedLightPos;	// world-space light position at last bake
 		double			Checksum;		// quantized bound-center sum of in-radius refs at last bake
 		bool			Valid;			// false => cube must be (re)baked
+		// --- Fade ([Point] FadeTime) ---
+		// Weight the published luminance is scaled by, 0..1. Ramps to 1 while the slot holds a light
+		// and to 0 once it loses one; the shader's darkness term is proportional to luminance, so this
+		// fades the shadow's depth rather than its shape. A slot with Light == NULL and Intensity > 0
+		// is RETIRING: its light pointer is gone (possibly already destroyed) but its cube is frozen
+		// and still sampled, so nothing may rebake it or claim the slot until Intensity reaches 0.
+		float			Intensity;
+		// Last values published while a light occupied the slot, so a retiring slot can keep
+		// publishing after the NiPointLight is unsafe to dereference.
+		float			LastFarPlane;
+		float			LastLuminance;
+		// The light this slot is retiring, as an OPAQUE IDENTITY TOKEN. Never dereferenced — it may
+		// already dangle, which is why Light itself is nulled — and only ever compared against
+		// pointers in the current frame's candidate set, which are live by construction. Lets a light
+		// that flickers across the distance cut reclaim its slot and cube instead of fading fully out
+		// and rebaking. NULL when the slot is not retiring.
+		NiPointLight*	RetiringLight;
 	};
 	PointLightSlot			PointSlots[PointLightMax];
 	int						PointSlotsActive;	// slots holding a light after this frame's selection
+	// Slots the apply shader must still cover: PointSlotsActive plus any retiring slot. The apply is
+	// gated on this rather than on PointSlotsActive, because the last light going away drops that to
+	// zero — which would switch the shader off mid-fade and pop the shadow out, the exact thing the
+	// fade exists to prevent. The classify/bake work stays gated on PointSlotsActive: a retiring slot
+	// needs its cube sampled, never rebuilt.
+	int						PointSlotsShaded;
+	double					PointFadeLastMs;	// FrameRateManager::GetPerformance() at last fade advance
 	TESObjectCELL*			PointCurrentCell;	// cell tracked by the point path (CurrentCell is the sun path's)
 	// A candidate must be this much nearer than an incumbent to take its slot. Hysteresis: without
 	// it, two lights at similar distance swap slots frame to frame and rebake both cubes each time.

@@ -3320,7 +3320,7 @@ void ShaderManager::RenderShadowsMidScene() {
 
 	bool DoSun = TheSettingManager->SettingsShadows.Exteriors.UsePostProcessing && ShadowsExteriorsEffect && Player->IsExteriorLike();
 	bool DoPoint = TheSettingManager->SettingsShadows.Point.UsePostProcessing && ShadowsPointEffect
-		&& TheShadowManager && TheShadowManager->PointSlotsActive > 0;
+		&& TheShadowManager && TheShadowManager->PointSlotsShaded > 0;
 	if (!DoSun && !DoPoint) return;
 
 	IDirect3DDevice9* Device = TheRenderManager->device;
