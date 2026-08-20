@@ -546,7 +546,10 @@ float4 VolumetricLight(VSOUT IN) : COLOR0
 
 float4 Expand(VSOUT IN) : COLOR0
 {
-    float2 coord = IN.UVCoord * resPercent;
+    // Clamp to the last texel centre of the quadrant the half-res pass wrote. Without it the
+    // bilinear tap of the final column and row straddles the quadrant edge and pulls in a quarter
+    // of whatever the shared buffer still holds outside it, drawing a 1px border of stale data.
+    float2 coord = min(IN.UVCoord * resPercent, resPercent - 0.5f * TESR_ReciprocalResolution.xy);
     return tex2D(TESR_RenderedBuffer, coord);
 }
 
