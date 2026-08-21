@@ -26,7 +26,7 @@
 - **Shader recompile gate:** edited `.hlsl` does **not** take effect in game until `[Develop] CompileShaders=1` is set in `OblivionReloaded.ini`. Compiled output is cached as an extension-less file beside each `.hlsl` and is **not** timestamp-checked.
 - **Shader deployment:** the game folder's `Shaders` directory is a symbolic link to `OblivionReloaded/Shaders` in this repo. Editing the repo file is deploying it. The post-build step copies only the DLL and PDB.
 - **No test framework exists in this repository.** There is no pytest/gtest/npm equivalent and none is to be added. Every task's verification is: `fxc` clean, MSBuild clean, and where stated, an in-game observation using the `Develop.LogLODFade` log channel.
-- **Per-geometry constant registers:** `c100` = `TESR_GEOM_Toggles` (pixel), `c128` = `TESR_GEOM_EyePosition` (vertex). This feature uses **`c101` (pixel)**. Do not use table-allocated registers; follow the explicit convention.
+- **Per-geometry constant registers:** `c100` = `TESR_GEOM_Toggles` (pixel), `c128` = `TESR_GEOM_EyePosition` (vertex). This feature uses **`c110` (pixel)**. `c101` was the initial choice but is already `TESR_SpecularData` in five Task 7 shaders (`SLS2003`, `SLS2012`, `SLS2018`, `SLS2033`, `SLS2039`) and `c102` is `TESR_TerrainData` in `SLS2033`; `c103`+ is clear across `ExtraShaders`, `Terrain`, `POM` and `POMExterior`, so `c110` was picked with headroom. Do not use table-allocated registers; follow the explicit convention.
 - **Fade time default:** `1.0` seconds.
 - **Coding style:** public symbols get documentation comments; inline comments are 1-3 lines maximum.
 - **Commits:** work happens on branch `feat/lod-dither-fade`, which already exists and already contains the spec commit.
@@ -773,7 +773,7 @@ git commit -m "feat(LODFade): Resolve geometry to fade records and publish the c
 - Modify: `OblivionReloaded/Shaders/ExtraShaders/DISTLOD2001.pso.hlsl`
 
 **Interfaces:**
-- Consumes: `TESR_GEOM_FadeParams` at `c101` from Task 2, published per draw by Task 5.
+- Consumes: `TESR_GEOM_FadeParams` at `c110` from Task 2, published per draw by Task 5.
 - Produces: `void LODFadeClip(float2 vpos)` — clips the pixel when it falls outside the current fade coverage.
 
 This task deliberately covers **one** shader. It proves the include path, the `VPOS` semantic, the register choice and the end-to-end fade before 40-odd files are touched. `DISTLOD2001.pso` is the right one: it draws the distant statics that Task 4's distant-grid poller already fades.
@@ -785,15 +785,19 @@ Create `OblivionReloaded/Shaders/Includes/LODFade.hlsl`:
 ```hlsl
 // Screen-space dither fade for LOD and full-model load transitions.
 // x = fade alpha, y = per-frame seed, z = invert flag. c100 is TESR_GEOM_Toggles.
-float4 TESR_GEOM_FadeParams : register(c101);
+float4 TESR_GEOM_FadeParams : register(c110);
 
 // Clips the pixel unless it falls inside the current fade coverage. The invert flag selects the
 // complementary threshold, so a paired in-fade and out-fade together always cover exactly 100%.
+// Branches around the hash so fully-settled draws (the common case) pay no per-pixel ALU cost.
 void LODFadeClip(float2 vpos) {
     float a = TESR_GEOM_FadeParams.x;
-    float n = frac(sin(dot(vpos + TESR_GEOM_FadeParams.y, float2(12.9898, 78.233))) * 43758.5453);
-    float d = TESR_GEOM_FadeParams.z > 0.5 ? (n - a) : (a - n);
-    clip(a >= 1.0 ? 1.0 : d);
+    float z = TESR_GEOM_FadeParams.z;
+    [branch]
+    if (a < 1.0 || z > 0.5) {
+        float n = frac(sin(dot(vpos + TESR_GEOM_FadeParams.y, float2(12.9898, 78.233))) * 43758.5453);
+        clip(z > 0.5 ? (n - a) : (a - n));
+    }
 }
 ```
 
@@ -837,13 +841,13 @@ PS_OUTPUT main(VS_OUTPUT IN) {
 
 Expected: exit 0, `compilation succeeded`.
 
-- [ ] **Step 4: Confirm the register landed at c101**
+- [ ] **Step 4: Confirm the register landed at c110**
 
 ```bash
-grep -n "c101" "%TEMP%/claude/distlod.asm"
+grep -n "c110" "%TEMP%/claude/distlod.asm"
 ```
 
-Expected: at least one match, and the `// Registers:` comment block in the generated assembly lists `TESR_GEOM_FadeParams` at `const_101`. If it landed elsewhere the explicit register was ignored and the draw hook will write to the wrong slot — stop and fix before proceeding.
+Expected: at least one match, and the `// Registers:` comment block in the generated assembly lists `TESR_GEOM_FadeParams` at `c110`. If it landed elsewhere the explicit register was ignored and the draw hook will write to the wrong slot — stop and fix before proceeding.
 
 - [ ] **Step 5: Build**
 

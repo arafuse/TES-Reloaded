@@ -175,15 +175,25 @@ everything to `1.0`, after which the block goes quiet until the next fade.
 A new shared include, `OblivionReloaded/Shaders/Includes/LODFade.hlsl`, exporting one function:
 
 ```hlsl
-float4 TESR_GEOM_FadeParams : register(c101);   // c100 is TESR_GEOM_Toggles
+float4 TESR_GEOM_FadeParams : register(c110);   // c100 is TESR_GEOM_Toggles
 
 void LODFadeClip(float2 vpos) {
     float a = TESR_GEOM_FadeParams.x;
-    float n = frac(sin(dot(vpos + TESR_GEOM_FadeParams.y, float2(12.9898, 78.233))) * 43758.5453);
-    float d = TESR_GEOM_FadeParams.z > 0.5 ? (n - a) : (a - n);
-    clip(a >= 1.0 ? 1.0 : d);
+    float z = TESR_GEOM_FadeParams.z;
+    [branch]
+    if (a < 1.0 || z > 0.5) {
+        float n = frac(sin(dot(vpos + TESR_GEOM_FadeParams.y, float2(12.9898, 78.233))) * 43758.5453);
+        clip(z > 0.5 ? (n - a) : (a - n));
+    }
 }
 ```
+
+The `[branch]` wraps the hash and `clip()` so a fully-settled draw (`a >= 1.0` and not
+inverted — the common case, most pixels most of the time) skips the ~15-instruction hash body
+entirely at runtime, rather than always computing it and throwing the result away. `TESR_GEOM_FadeParams`
+is a per-draw constant, so the branch is uniform across the whole draw call, which is exactly what
+dynamic branching is for. Verified in the compiled `ps_3_0` assembly as a real `if_lt`/`endif` pair
+around the hash, not flattened into `cmp` selects.
 
 Each covered pixel shader gains `float2 vpos : VPOS` on its input struct and one
 `LODFadeClip(IN.vpos)` call at the top of `main`. `VPOS` requires ps_3_0, which is what this
@@ -209,9 +219,13 @@ Covered set, roughly 45 files:
 - **Register choice, resolved.** These shaders receive engine-set constants by fixed register
   index, and the existing per-geometry constants sidestep that by declaring explicit high registers:
   `TESR_GEOM_Toggles : register(c100)` in the pixel shaders and
-  `TESR_GEOM_EyePosition : register(c128)` in the vertex shaders. `TESR_GEOM_FadeParams` follows the
-  same convention at `c101`, which removes the collision question rather than leaving it to be
-  verified. `ShaderRecord::CreateCT` reads `RegisterIndex` back out of the constant table, so the
+  `TESR_GEOM_EyePosition : register(c128)` in the vertex shaders. The obvious next slot, `c101`, was
+  the initial choice but turned out to already be taken: `TESR_SpecularData : register(c101)` in five
+  shaders this feature covers (`SLS2003`, `SLS2012`, `SLS2018`, `SLS2033`, `SLS2039`), and `c102` is
+  also taken (`TESR_TerrainData` in `SLS2033`). An audit of every covered file (`ExtraShaders`,
+  `Terrain`, `POM`, `POMExterior`) found `c103`+ clear, so `TESR_GEOM_FadeParams` uses `c110` —
+  chosen with headroom rather than the next free slot, so a future addition doesn't repeat this
+  exercise. `ShaderRecord::CreateCT` reads `RegisterIndex` back out of the constant table, so the
   explicit register is honoured end to end.
 - **LOD trees.** `DistantRefLOD[0]`, the "LOD Trees" node, may not bind `DISTLOD2001`. Capture the
   bound shader name in game to confirm which shader needs covering.
