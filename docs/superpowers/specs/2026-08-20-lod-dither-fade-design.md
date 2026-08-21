@@ -175,7 +175,7 @@ everything to `1.0`, after which the block goes quiet until the next fade.
 A new shared include, `OblivionReloaded/Shaders/Includes/LODFade.hlsl`, exporting one function:
 
 ```hlsl
-float4 TESR_GEOM_FadeParams;   // no explicit register - the constant table allocates it
+float4 TESR_GEOM_FadeParams : register(c101);   // c100 is TESR_GEOM_Toggles
 
 void LODFadeClip(float2 vpos) {
     float a = TESR_GEOM_FadeParams.x;
@@ -206,10 +206,13 @@ Covered set, roughly 45 files:
 - **Include resolution.** D3DX resolves nested relative includes from the top-level `.pso`
   directory while `fxc` resolves from the including file. A new top-level `Includes` directory must
   be confirmed working in both, not just under `fxc`.
-- **Register collision.** These shaders also receive engine-set constants by fixed register index.
-  Existing `TESR_` constants in the same files coexist without trouble, so follow that convention
-  and diff the compiled register map to confirm the new constant did not land on an engine-written
-  register.
+- **Register choice, resolved.** These shaders receive engine-set constants by fixed register
+  index, and the existing per-geometry constants sidestep that by declaring explicit high registers:
+  `TESR_GEOM_Toggles : register(c100)` in the pixel shaders and
+  `TESR_GEOM_EyePosition : register(c128)` in the vertex shaders. `TESR_GEOM_FadeParams` follows the
+  same convention at `c101`, which removes the collision question rather than leaving it to be
+  verified. `ShaderRecord::CreateCT` reads `RegisterIndex` back out of the constant table, so the
+  explicit register is honoured end to end.
 - **LOD trees.** `DistantRefLOD[0]`, the "LOD Trees" node, may not bind `DISTLOD2001`. Capture the
   bound shader name in game to confirm which shader needs covering.
 
