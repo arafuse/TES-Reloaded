@@ -2353,6 +2353,7 @@ void ShaderManager::UpdateConstants() {
 
 	IsThirdPersonView = Player->IsThirdPersonView(TheSettingManager->SettingsMain.CameraMode.Enabled, TheRenderManager->FirstPersonView);
 	TheRenderManager->GetSceneCameraData();
+	if (TheSettingManager->SettingsMain.LODFade.Enabled) TheLODFadeManager->Update();
 
 	//Is fully init'd after two frame passes due to time calculations with sundir
 	if (!isFullyInitialized && isExteriorLike) {

@@ -12,6 +12,7 @@
 #include "GameMenuManager.h"
 #include "KeyboardManager.h"
 #include "ShadowManager.h"
+#include "LODFadeManager.h"
 
 extern SettingManager*		TheSettingManager;
 extern CommandManager*		TheCommandManager;
@@ -24,5 +25,6 @@ extern KeyboardManager*		TheKeyboardManager;
 extern ShadowManager*		TheShadowManager;
 extern EquipmentManager*	TheEquipmentManager;
 extern ScriptManager*		TheScriptManager;
+extern LODFadeManager*		TheLODFadeManager;
 
 void InitializeManagers();

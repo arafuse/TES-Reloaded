@@ -59,6 +59,9 @@
     <ClInclude Include="..\TESReloaded\Core\KeyboardManager.h">
       <Filter>Core</Filter>
     </ClInclude>
+    <ClInclude Include="..\TESReloaded\Core\LODFadeManager.h">
+      <Filter>Core</Filter>
+    </ClInclude>
     <ClInclude Include="..\TESReloaded\Core\Managers.h">
       <Filter>Core</Filter>
     </ClInclude>
@@ -176,6 +179,9 @@
       <Filter>Core</Filter>
     </ClCompile>
     <ClCompile Include="..\TESReloaded\Core\KeyboardManager.cpp">
+      <Filter>Core</Filter>
+    </ClCompile>
+    <ClCompile Include="..\TESReloaded\Core\LODFadeManager.cpp">
       <Filter>Core</Filter>
     </ClCompile>
     <ClCompile Include="..\TESReloaded\Core\Managers.cpp">

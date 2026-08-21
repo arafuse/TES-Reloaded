@@ -143,6 +143,7 @@ copy "$(TargetDir)$(TargetName).pdb" "C:\Games\Steam\steamapps\common\Oblivion\D
     <ClInclude Include="..\TESReloaded\Core\GameMenuManager.h" />
     <ClInclude Include="..\TESReloaded\Core\GrassMode.h" />
     <ClInclude Include="..\TESReloaded\Core\KeyboardManager.h" />
+    <ClInclude Include="..\TESReloaded\Core\LODFadeManager.h" />
     <ClInclude Include="..\TESReloaded\Core\Managers.h" />
     <ClInclude Include="..\TESReloaded\Core\MemoryManagement.h" />
     <ClInclude Include="..\TESReloaded\Core\MountedCombat.h" />
@@ -181,6 +182,7 @@ copy "$(TargetDir)$(TargetName).pdb" "C:\Games\Steam\steamapps\common\Oblivion\D
     <ClCompile Include="..\TESReloaded\Core\GameMenuManager.cpp" />
     <ClCompile Include="..\TESReloaded\Core\GrassMode.cpp" />
     <ClCompile Include="..\TESReloaded\Core\KeyboardManager.cpp" />
+    <ClCompile Include="..\TESReloaded\Core\LODFadeManager.cpp" />
     <ClCompile Include="..\TESReloaded\Core\Managers.cpp" />
     <ClCompile Include="..\TESReloaded\Core\MemoryManagement.cpp" />
     <ClCompile Include="..\TESReloaded\Core\MountedCombat.cpp" />
