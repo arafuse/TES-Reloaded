@@ -260,8 +260,11 @@ ShaderProgram::ShaderProgram() {
 
 	FloatShaderValues = NULL;
 	TextureShaderValues = NULL;
+	PerGeomFloatShaderValues = NULL;
 	FloatShaderValuesCount = 0;
 	TextureShaderValuesCount = 0;
+	PerGeomFloatShaderValuesCount = 0;
+	HasFadeParams = false;
 
 }
 
@@ -517,6 +520,10 @@ bool ShaderProgram::SetPerGeomConstantTableValue(LPCSTR Name, UInt32 Index) {
 		PerGeomFloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.Specular.EyePosition;
 	else if (!strcmp(Name, "TESR_GEOM_Toggles"))
 		PerGeomFloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.Geometry.Toggles;
+	else if (!strcmp(Name, "TESR_GEOM_FadeParams")) {
+		PerGeomFloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.LODFade.Params;
+		HasFadeParams = true;
+	}
 	else {
 		return false;
 	}
@@ -1063,6 +1070,8 @@ ShaderManager::ShaderManager() {
 
 	Logger::Log("Starting the shaders manager...");
 	TheShaderManager = this;
+
+	ShaderConst.LODFade.Params = D3DXVECTOR4(1.0f, 0.0f, 0.0f, 0.0f);
 
 	float UAdj, VAdj;
 	void* VertexPointer;

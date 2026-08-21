@@ -179,6 +179,11 @@ struct ShaderConstants {
 		D3DXVECTOR4		Toggles;
 	};
 
+	/// x = fade alpha, y = per-frame dither seed, z = invert flag, w = unused.
+	struct LODFadeStruct {
+		D3DXVECTOR4		Params;
+	};
+
 	struct SnowAccumulationStruct {
 		D3DXVECTOR4		Params;
 	};
@@ -317,6 +322,7 @@ struct ShaderConstants {
 	BloomStruct				Bloom;
 	SpecularStruct			Specular;
 	GeometryStruct			Geometry;
+	LODFadeStruct			LODFade;
 	SnowAccumulationStruct	SnowAccumulation;
 	MotionBlurStruct		MotionBlur;
 	WetWorldStruct			WetWorld;
@@ -358,6 +364,9 @@ public:
 
 	ShaderValue*			TextureShaderValues;
 	UInt32					TextureShaderValuesCount;
+
+	/// True when this shader declares TESR_GEOM_FadeParams and therefore participates in LOD fading.
+	bool					HasFadeParams;
 };
 
 class ShaderRecord : public ShaderProgram {
