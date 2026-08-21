@@ -10,6 +10,31 @@ LODFadeManager::LODFadeManager() {
 	PrevValid = false;
 	FadeSetDirty = false;
 	FadeResetPending = false;
+	NeedsOpaquePublish = true;
+
+}
+
+/// Overwrites one shadow-copy slot, moving reference ownership with it: the incoming node gains a
+/// reference and the outgoing node loses the one the slot held. Every write to a Prev* slot goes
+/// through here so the ownership invariant declared in the header holds on every path.
+void LODFadeManager::AssignSlot(NiAVObject*& Slot, NiAVObject* Node) {
+
+	if (Slot == Node) return;
+	if (Node) InterlockedIncrement(&Node->m_uiRefCount);
+	if (Slot && !InterlockedDecrement(&Slot->m_uiRefCount)) Slot->Destructor(true);
+	Slot = Node;
+
+}
+
+/// Releases every reference a shadow-copy vector owns and empties it. Used by the resync paths and
+/// the main-menu guard, both of which abandon the whole vector at once.
+void LODFadeManager::ReleaseSlots(std::vector<NiAVObject*>& Slots) {
+
+	for (UInt32 i = 0; i < Slots.size(); i++) {
+		NiAVObject* Node = Slots[i];
+		if (Node && !InterlockedDecrement(&Node->m_uiRefCount)) Node->Destructor(true);
+	}
+	Slots.clear();
 
 }
 
@@ -65,7 +90,9 @@ void LODFadeManager::Retire(UInt32 Index) {
 /// implemented: if the node is already detached from the scene graph, this logs and declines
 /// rather than re-attaching it, since re-attachment touches live scene-graph lifetimes and is a
 /// separate, conditional task. The log line is the measurement that decides whether that task is
-/// ever needed.
+/// ever needed. Callers must still hold the shadow-copy slot's reference when calling this, so the
+/// node is guaranteed live and the m_parent test below is a real attached-vs-detached test rather
+/// than a read of freed memory.
 bool LODFadeManager::Pin(FadeRecord* Record) {
 
 	NiAVObject* Node = Record->Root;
@@ -118,6 +145,7 @@ void LODFadeManager::PollDistantGrid() {
 
 	UInt32 Slots = Grid->size * Grid->size;
 	if (PrevDistant.size() != Slots) {
+		ReleaseSlots(PrevDistant);
 		PrevDistant.assign(Slots, NULL);
 		PrevValid = false;
 	}
@@ -133,27 +161,29 @@ void LODFadeManager::PollDistantGrid() {
 	if (Discontinuity) {
 		if (PrevValid && TheSettingManager->SettingsMain.Develop.LogLODFade)
 			Logger::Log("[LODFade] distant discontinuity: %d of %d slots changed, suppressed", Changed, Slots);
-		for (UInt32 i = 0; i < Slots; i++) PrevDistant[i] = (NiAVObject*)Grid->grid[i].unk04;
+		for (UInt32 i = 0; i < Slots; i++) AssignSlot(PrevDistant[i], (NiAVObject*)Grid->grid[i].unk04);
 		return;
 	}
 
 	for (UInt32 i = 0; i < Slots; i++) {
 		NiAVObject* Node = (NiAVObject*)Grid->grid[i].unk04;
-		if (Node != PrevDistant[i]) {
-			if (Node && !RootIndex.count(Node)) {
-				AddFade(Node);
+		if (Node == PrevDistant[i]) continue;
+
+		// Departure and arrival are independent tests, not if/else: a slot can swap straight from one
+		// non-NULL node to a different one without ever passing through NULL, and both halves of that
+		// swap have to fade. Both AddFade calls land in this Update() so they share a StartTime.
+		if (PrevDistant[i] && TheSettingManager->SettingsMain.LODFade.PinDeparting) {
+			// Departing node fades out via the inverted rising alpha, not a separate declining-alpha
+			// direction. See FadeRecord::Invert. Pin takes its own reference before the slot below
+			// drops the one that kept this pointer valid.
+			FadeRecord* Out = AddFade(PrevDistant[i]);
+			if (Out) {
+				Out->Invert = true;
+				if (!Pin(Out)) Retire((UInt32)(Fades.size() - 1));
 			}
-			else if (!Node && PrevDistant[i] && TheSettingManager->SettingsMain.LODFade.PinDeparting) {
-				// Departing node: fades out via the inverted rising alpha (no partner), not a
-				// separate declining-alpha direction. See FadeRecord::Invert.
-				FadeRecord* Out = AddFade(PrevDistant[i]);
-				if (Out) {
-					Out->Invert = true;
-					if (!Pin(Out)) Retire((UInt32)(Fades.size() - 1));
-				}
-			}
-			PrevDistant[i] = Node;
 		}
+		if (Node && !RootIndex.count(Node)) AddFade(Node);
+		AssignSlot(PrevDistant[i], Node);
 	}
 
 }
@@ -168,8 +198,9 @@ void LODFadeManager::PollLandLOD() {
 
 	UInt32 Count = LandLOD->m_children.numObjs;
 	if (PrevLandLOD.size() != Count) {
+		ReleaseSlots(PrevLandLOD);
 		PrevLandLOD.assign(Count, NULL);
-		for (UInt32 i = 0; i < Count; i++) PrevLandLOD[i] = LandLOD->m_children.data[i];
+		for (UInt32 i = 0; i < Count; i++) AssignSlot(PrevLandLOD[i], LandLOD->m_children.data[i]);
 		return;
 	}
 
@@ -183,30 +214,28 @@ void LODFadeManager::PollLandLOD() {
 	if (Changed > (Count / 2)) {
 		if (TheSettingManager->SettingsMain.Develop.LogLODFade)
 			Logger::Log("[LODFade] landlod discontinuity: %d of %d slots changed, suppressed", Changed, Count);
-		for (UInt32 i = 0; i < Count; i++) PrevLandLOD[i] = LandLOD->m_children.data[i];
+		for (UInt32 i = 0; i < Count; i++) AssignSlot(PrevLandLOD[i], LandLOD->m_children.data[i]);
 		return;
 	}
 
 	for (UInt32 i = 0; i < Count; i++) {
 		NiAVObject* Node = LandLOD->m_children.data[i];
-		if (Node != PrevLandLOD[i]) {
-			bool Paired = false;
-			if (Node && !RootIndex.count(Node)) {
-				AddFade(Node);
-				Paired = true;
+		if (Node == PrevLandLOD[i]) continue;
+
+		// The out-fade is independent of the arrival, not gated on it: a quadrant replaced by NULL, or
+		// replaced while the incoming node is already mid-fade, still has to fade out rather than pop.
+		if (PrevLandLOD[i] && TheSettingManager->SettingsMain.LODFade.PinDeparting) {
+			// The old quadrant runs on the new one's rising alpha with Invert set (Ruling F14), so the
+			// two together cover exactly 100% throughout. Same StartTime as the partner (both AddFade
+			// calls land in this Update()), so no cross-record link is needed.
+			FadeRecord* Out = AddFade(PrevLandLOD[i]);
+			if (Out) {
+				Out->Invert = true;
+				if (!Pin(Out)) Retire((UInt32)(Fades.size() - 1));
 			}
-			if (PrevLandLOD[i] && Paired && TheSettingManager->SettingsMain.LODFade.PinDeparting) {
-				// The old quadrant runs on the new one's rising alpha with Invert set (Ruling F14),
-				// so the two together cover exactly 100% throughout. Same StartTime as the partner
-				// (both AddFade calls land in this Update()), so no cross-record link is needed.
-				FadeRecord* Out = AddFade(PrevLandLOD[i]);
-				if (Out) {
-					Out->Invert = true;
-					if (!Pin(Out)) Retire((UInt32)(Fades.size() - 1));
-				}
-			}
-			PrevLandLOD[i] = Node;
 		}
+		if (Node && !RootIndex.count(Node)) AddFade(Node);
+		AssignSlot(PrevLandLOD[i], Node);
 	}
 
 }
@@ -222,10 +251,11 @@ void LODFadeManager::PollCellGrid() {
 	UInt32 Dim = Grid->size;
 	UInt32 Slots = Dim * Dim;
 	if (PrevCell.size() != Slots) {
+		ReleaseSlots(PrevCell);
 		PrevCell.assign(Slots, NULL);
 		for (UInt32 i = 0; i < Slots; i++) {
 			GridCellArray::GridEntry* Entry = &Grid->grid[i];
-			PrevCell[i] = Entry->info ? (NiAVObject*)Entry->info->niNode : NULL;
+			AssignSlot(PrevCell[i], Entry->info ? (NiAVObject*)Entry->info->niNode : NULL);
 		}
 		return;
 	}
@@ -244,7 +274,7 @@ void LODFadeManager::PollCellGrid() {
 			Logger::Log("[LODFade] cell discontinuity: %d of %d slots changed, suppressed", Changed, Slots);
 		for (UInt32 i = 0; i < Slots; i++) {
 			GridCellArray::GridEntry* Entry = &Grid->grid[i];
-			PrevCell[i] = Entry->info ? (NiAVObject*)Entry->info->niNode : NULL;
+			AssignSlot(PrevCell[i], Entry->info ? (NiAVObject*)Entry->info->niNode : NULL);
 		}
 		return;
 	}
@@ -254,12 +284,9 @@ void LODFadeManager::PollCellGrid() {
 		NiAVObject* Node = Entry->info ? (NiAVObject*)Entry->info->niNode : NULL;
 		if (Node == PrevCell[i]) continue;
 
-		if (Node && !RootIndex.count(Node)) {
-			// Cell gained: full models fade in. The paired LOD node is pinned by the distant
-			// poller's own slot change in the same frame, so no cross-poller lookup is needed.
-			AddFade(Node);
-		}
-		else if (!Node && PrevCell[i] && TheSettingManager->SettingsMain.LODFade.PinDeparting) {
+		// Departure and arrival are independent tests, not if/else, so a slot that swaps one cell
+		// node straight for another fades both halves instead of popping the outgoing one.
+		if (PrevCell[i] && TheSettingManager->SettingsMain.LODFade.PinDeparting) {
 			// Cell lost: hold the departing full models while the LOD fades back in, via the
 			// inverted rising alpha rather than a declining-alpha fade-out (Ruling F14).
 			FadeRecord* Out = AddFade(PrevCell[i]);
@@ -268,7 +295,12 @@ void LODFadeManager::PollCellGrid() {
 				if (!Pin(Out)) Retire((UInt32)(Fades.size() - 1));
 			}
 		}
-		PrevCell[i] = Node;
+		if (Node && !RootIndex.count(Node)) {
+			// Cell gained: full models fade in. The paired LOD node is pinned by the distant
+			// poller's own slot change in the same frame, so no cross-poller lookup is needed.
+			AddFade(Node);
+		}
+		AssignSlot(PrevCell[i], Node);
 	}
 
 }
@@ -278,12 +310,18 @@ void LODFadeManager::PollCellGrid() {
 void LODFadeManager::Update() {
 
 	CurrentTime = (float)GetTickCount() * 0.001f;
-	DitherSeed = (float)(GetTickCount() & 0xFFFF);
 
-	// Player and Tes are NULL at the main menu; every per-frame hook that touches them must guard.
-	// Fades.clear() below invalidates every FadeRecord* GeomCache holds, so the cache must be
-	// dropped here too - this early return would otherwise skip the FadeSetDirty-gated clear
-	// that normally runs at the end of this function.
+	// Golden-ratio (2^32/phi) advance in integer space, one step per ~16 ms, so the shader's
+	// frac(hash + seed) actually moves. The multiply must NOT be done in float: at real uptimes
+	// (float)GetTickCount() is large enough that a float32 ulp already exceeds 0.25, which would
+	// quantise the seed to a handful of levels; an integer wrap keeps the full fraction.
+	DitherSeed = (float)((GetTickCount() >> 4) * 2654435769u) * (1.0f / 4294967296.0f);
+
+	// Defensive only: ShaderManager::UpdateConstants already dereferences Tes->sky and
+	// Player->parentCell before it calls Update(), so this branch cannot currently be reached and is
+	// NOT what keeps the main menu safe. It is kept correct in case that call order ever changes --
+	// Fades.clear() invalidates every FadeRecord* GeomCache holds, so the cache is dropped here too,
+	// since this early return would otherwise skip the FadeSetDirty-gated clear at the end.
 	if (!Player || !Tes) {
 		// Every live pin must be released here too, or its InterlockedIncrement leaks permanently
 		// and its cull flag stays cleared forever with nothing left tracking the node.
@@ -293,11 +331,17 @@ void LODFadeManager::Update() {
 		Fades.clear();
 		RootIndex.clear();
 		GeomCache.clear();
+		// The shadow copies own a reference to every non-NULL entry; abandoning them without
+		// releasing would leak one reference per occupied grid slot.
+		ReleaseSlots(PrevDistant);
+		ReleaseSlots(PrevLandLOD);
+		ReleaseSlots(PrevCell);
 		FadeSetDirty = false;
 		LiveCount = 0;
 		FadeResetPending = false;
 		TheShaderManager->ShaderConst.LODFade.Params.x = 1.0f;
 		TheShaderManager->ShaderConst.LODFade.Params.z = 0.0f;
+		NeedsOpaquePublish = true;
 		PrevValid = false;
 		return;
 	}
@@ -307,6 +351,10 @@ void LODFadeManager::Update() {
 	float FadeTime = TheSettingManager->SettingsMain.LODFade.FadeTime;
 	for (SInt32 i = (SInt32)Fades.size() - 1; i >= 0; i--) {
 		float Elapsed = CurrentTime - Fades[i].StartTime;
+		// GetTickCount wraps at 49.7 days of uptime. Without this, Elapsed goes hugely negative and
+		// neither the completion test nor the hard timeout can ever fire again: every fade freezes at
+		// its current alpha and every pin leaks permanently.
+		if (Elapsed < 0.0f) { Retire(i); continue; }
 		bool HardTimeout = Elapsed >= FadeTime * 2.0f;
 		bool Complete = Elapsed >= FadeTime;
 		if (HardTimeout || Complete) Retire(i);
@@ -317,6 +365,9 @@ void LODFadeManager::Update() {
 	PollLandLOD();
 	PrevValid = true;
 
+	// Rebuilt wholesale because AddFade/Retire reallocate and shift Fades. Through the poll phase
+	// above, RootIndex therefore holds DANGLING FadeRecord* values; that is safe only because the
+	// pollers touch it through count()/find() on the key alone and no draw is interleaved with them.
 	UInt32 PrevLive = LiveCount;
 	RootIndex.clear();
 	for (UInt32 i = 0; i < Fades.size(); i++) RootIndex[Fades[i].Root] = &Fades[i];

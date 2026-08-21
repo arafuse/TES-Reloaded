@@ -19,10 +19,19 @@ The engine offers no fade for any of these. `DISTLOD2002.vso` has a distance-dri
 ## Goal
 
 Cross-dissolve every one of those transitions using a screen-space dither, over a configurable
-duration defaulting to 1.0 seconds. During a LOD-to-full handoff the full model dithers in while the
-departing LOD dithers out concurrently on the same rising alpha with an inverted threshold, so the
-two draws are always exactly complementary and total coverage stays at 100% for the whole handoff --
-neither a hole nor a double-draw at any point during the transition.
+duration defaulting to 1.0 seconds. A departing node dithers out on a rising alpha with an inverted
+threshold, so it never simply pops.
+
+The exactly-complementary construction -- two draws sharing one `StartTime`, one inverted, covering
+100% between them with neither a hole nor a double-draw -- holds only where both halves provably
+start in the same `Update()`. In the shipped code that is `PollLandLOD`, whose two `AddFade` calls
+are adjacent. It does **not** describe the LOD-to-full handoff on cell load: the arriving full models
+are detected by `PollCellGrid` and the departing LOD by `PollDistantGrid`, which are separate slot
+changes with no guaranteed pairing, so the full models dither in from `a = 0` while the LOD keeps
+drawing at or near full coverage. That handoff therefore double-draws for the duration of the fade
+rather than staying at exactly 100%. This is deliberate: a double-draw is a far less visible artefact
+than a hole in the world, and pairing across two pollers would require reconstructing cell identity
+that the grids do not share.
 
 ## Scope
 
@@ -311,6 +320,9 @@ In-game checklist:
 - Walk across a cell boundary in Tamriel and confirm the LOD-to-full handoff dissolves.
 - Ride away from a loaded cell and confirm the full-to-LOD handoff dissolves.
 - Cross a `LandLOD` quadrant boundary and confirm the terrain quadrant dissolves.
+- Watch a LOD-to-full handoff specifically for coplanar z-fighting. For the length of the fade the
+  full-detail model and its LOD stand-in occupy the same space and both draw, which is a situation
+  vanilla never creates; shimmering on flat faces, roof planes and terrain seams is the symptom.
 - Fast-travel and confirm the discontinuity guard suppresses a world-wide dissolve.
 - Set `PinDeparting=0` and confirm the fade-in half still works alone.
 - Toggle TAA off and confirm the dither is noisy but not broken.

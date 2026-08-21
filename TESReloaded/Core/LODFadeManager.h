@@ -42,9 +42,16 @@ public:
 	/// Set for one frame after the last fade retires, so every covered shader is reset to opaque.
 	bool			FadeResetPending;
 
+	/// True until TESR_GEOM_FadeParams has been written at least once. D3D9 seeds pixel shader float
+	/// constants to ZERO, so an unwritten c110 gives alpha 0 and clips every pixel of every covered
+	/// draw. The draw hook must publish opaque once even with the feature disabled.
+	bool			NeedsOpaquePublish;
+
 	/// Keeps a departing node alive and drawn for the fade duration by un-culling it and taking a
-	/// reference. Returns false if the node has already been detached from the graph, in which case
-	/// the caller must not start a fade for it — re-attachment is a separate, conditional task.
+	/// reference. Safe to call only on a node a shadow-copy slot still holds a reference to, which is
+	/// what guarantees the pointer is live here. Returns false if the node has already been detached
+	/// from the graph, in which case the caller must not start a fade for it — re-attachment is a
+	/// separate, conditional task.
 	bool			Pin(FadeRecord* Record);
 
 	/// Releases a pin, restoring the cull flag to the state Pin found it in (not unconditionally
@@ -56,6 +63,11 @@ private:
 	UInt32					LiveCount;
 	float					CurrentTime;
 
+	// INVARIANT: these three shadow copies OWN one reference to every non-NULL entry they hold. The
+	// reference is taken when a slot is filled, not when a departure is later detected -- by then the
+	// engine may already have dropped its last reference, and Pin would be reading freed memory.
+	// Every path that overwrites or clears a slot must release exactly once; use AssignSlot and
+	// ReleaseSlots rather than writing a slot directly.
 	std::vector<NiAVObject*>							PrevDistant;
 	std::vector<NiAVObject*>							PrevLandLOD;
 	std::vector<NiAVObject*>							PrevCell;
@@ -67,6 +79,9 @@ private:
 	void			PollDistantGrid();
 	void			PollLandLOD();
 	void			PollCellGrid();
+
+	void			AssignSlot(NiAVObject*& Slot, NiAVObject* Node);
+	void			ReleaseSlots(std::vector<NiAVObject*>& Slots);
 
 	void			Retire(UInt32 Index);
 };

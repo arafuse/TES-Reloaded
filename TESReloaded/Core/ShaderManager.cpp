@@ -272,6 +272,7 @@ ShaderProgram::~ShaderProgram() {
 
 	if (FloatShaderValues) free(FloatShaderValues);
 	if (TextureShaderValues) free(TextureShaderValues);
+	if (PerGeomFloatShaderValues) free(PerGeomFloatShaderValues);
 
 }
 

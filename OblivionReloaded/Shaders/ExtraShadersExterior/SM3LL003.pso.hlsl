@@ -35,6 +35,7 @@ sampler2D TESR_ShadowMapBufferFar : register(s9) = sampler_state
     MINFILTER = LINEAR;
     MIPFILTER = LINEAR;
 };
+#include "../Includes/LODFade.hlsl"
 //
 //
 // Registers:
@@ -75,6 +76,7 @@ struct VS_OUTPUT
     float3 texcoord_6 : TEXCOORD6_centroid;			// partial precision
     float4 texcoord_7 : TEXCOORD7_centroid;			// partial precision
     float4 texcoord_8 : TEXCOORD8;
+    float2 vpos : VPOS;
 };
 
 struct PS_OUTPUT
@@ -86,6 +88,8 @@ struct PS_OUTPUT
 PS_OUTPUT main(VS_OUTPUT IN)
 {
     PS_OUTPUT OUT;
+
+    LODFadeClip(IN.vpos);
 
 #define	expand(v)		(((v) - 0.5) / 0.5)
 #define	compress(v)		(((v) * 0.5) + 0.5)

@@ -537,15 +537,23 @@ UInt32 RenderHook::TrackSetupShaderPrograms(NiGeometry* Geometry, NiSkinInstance
 		// LOD dither fade. Only pixel shaders that declare TESR_GEOM_FadeParams carry the clip, and
 		// the whole block is inert unless a fade is actually in flight. Covered draws that are NOT
 		// fading are explicitly given 1.0, so a fading draw's alpha cannot leak into the next draw.
-		if (PixelShader->ShaderProg && PixelShader->ShaderProg->HasFadeParams &&
-			TheSettingManager->SettingsMain.LODFade.Enabled &&
-			(TheLODFadeManager->AnyFadesLive() || TheLODFadeManager->FadeResetPending)) {
-			LODFadeManager::FadeRecord* Record = TheLODFadeManager->ResolveGeometry(Geometry);
-			float Alpha = Record ? TheLODFadeManager->GetAlpha(Record) : 1.0f;
-			TheShaderManager->ShaderConst.LODFade.Params.x = Alpha;
-			TheShaderManager->ShaderConst.LODFade.Params.y = TheLODFadeManager->DitherSeed;
-			TheShaderManager->ShaderConst.LODFade.Params.z = (Record && Record->Invert) ? 1.0f : 0.0f;
-			PixelShader->ShaderProg->SetPerGeomCT();
+		// NeedsOpaquePublish forces one publish regardless of the INI toggle: D3D9 seeds pixel shader
+		// float constants to ZERO, so until c110 is written once the clip kills every covered pixel.
+		// c110 is device-global, so that single publish repairs every covered shader at once.
+		if (PixelShader->ShaderProg && PixelShader->ShaderProg->HasFadeParams) {
+			bool FadeActive = TheSettingManager->SettingsMain.LODFade.Enabled &&
+				(TheLODFadeManager->AnyFadesLive() || TheLODFadeManager->FadeResetPending);
+			if (FadeActive || TheLODFadeManager->NeedsOpaquePublish) {
+				LODFadeManager::FadeRecord* Record = FadeActive ? TheLODFadeManager->ResolveGeometry(Geometry) : NULL;
+				float Alpha = Record ? TheLODFadeManager->GetAlpha(Record) : 1.0f;
+				TheShaderManager->ShaderConst.LODFade.Params.x = Alpha;
+				TheShaderManager->ShaderConst.LODFade.Params.y = TheLODFadeManager->DitherSeed;
+				TheShaderManager->ShaderConst.LODFade.Params.z = (Record && Record->Invert) ? 1.0f : 0.0f;
+				PixelShader->ShaderProg->SetPerGeomCT();
+				// Cleared only on a publish that was actually opaque, so a first publish that happened
+				// to land mid-fade does not count as the one that repaired the register.
+				if (!Record) TheLODFadeManager->NeedsOpaquePublish = false;
+			}
 		}
 
 		if (PixelShader->isRefraction) {

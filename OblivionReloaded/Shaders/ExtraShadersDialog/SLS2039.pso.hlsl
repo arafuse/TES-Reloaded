@@ -40,6 +40,7 @@ sampler2D TESR_ShadowMapBufferSkin : register(s10) = sampler_state
 };
 float4 TESR_GEOM_Toggles : register(c100);
 float4 TESR_SpecularData : register(c101);
+#include "../Includes/LODFade.hlsl"
 
 
 // Registers:
@@ -66,6 +67,7 @@ struct VS_OUTPUT
     float4 texcoord_7 : TEXCOORD7;
     float4 texcoord_8 : TEXCOORD8;
     float4 texcoord_9 : TEXCOORD9;
+    float2 vpos : VPOS;
 };
 
 struct PS_OUTPUT
@@ -78,6 +80,8 @@ struct PS_OUTPUT
 PS_OUTPUT main(VS_OUTPUT IN)
 {
     PS_OUTPUT OUT;
+
+    LODFadeClip(IN.vpos);
 
 #define	expand(v)		(((v) - 0.5) / 0.5)
 #define	compress(v)		(((v) * 0.5) + 0.5)

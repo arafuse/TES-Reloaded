@@ -42,6 +42,7 @@ sampler2D TESR_ShadowMapBufferSkin : register(s10) = sampler_state
     MIPFILTER = LINEAR;
 };
 float4 TESR_SpecularData : register(c101);
+#include "../Includes/LODFade.hlsl"
 
 // Registers:
 //
@@ -71,6 +72,7 @@ struct VS_OUTPUT
     float3 LCOLOR_0 : COLOR0;
     float4 LCOLOR_1 : COLOR1;
     float4 LCOLOR_2 : COLOR2;
+    float2 vpos : VPOS;
 };
 
 struct PS_OUTPUT
@@ -82,6 +84,8 @@ struct PS_OUTPUT
 PS_OUTPUT main(VS_OUTPUT IN)
 {
     PS_OUTPUT OUT;
+
+    LODFadeClip(IN.vpos);
 
 #define	expand(v)		(((v) - 0.5) / 0.5)
 #define	compress(v)		(((v) * 0.5) + 0.5)

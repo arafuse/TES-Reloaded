@@ -920,7 +920,7 @@ and add as the first statement of `main`, before any local declarations:
 - [ ] **Step 3: Validate every touched shader with fxc**
 
 ```bash
-for f in OblivionReloaded/Shaders/ExtraShaders/*.pso.hlsl OblivionReloaded/Shaders/Terrain/*.pso.hlsl OblivionReloaded/Shaders/POM/*.pso.hlsl OblivionReloaded/Shaders/POMExterior/*.pso.hlsl; do
+for f in OblivionReloaded/Shaders/ExtraShaders/*.pso.hlsl OblivionReloaded/Shaders/ExtraShadersExterior/SM3LL003.pso.hlsl OblivionReloaded/Shaders/ExtraShadersDialog/*.pso.hlsl OblivionReloaded/Shaders/Terrain/*.pso.hlsl OblivionReloaded/Shaders/POM/*.pso.hlsl OblivionReloaded/Shaders/POMExterior/*.pso.hlsl; do
   d=$(dirname "$f")
   "C:\Development\Microsoft\DirectX SDK (June 2010)\Utilities\bin\x64\fxc.exe" /T ps_3_0 /E main /I "$d" "$f" /Fo NUL >/dev/null 2>&1 || echo "FAILED: $f"
 done
@@ -930,10 +930,10 @@ Expected: no `FAILED:` lines. Some files emit pre-existing `X3570` warnings; tho
 
 - [ ] **Step 4: Check the instruction budget did not overflow**
 
-The clip adds roughly 8 instructions. `SLS2018` and `SLS2039` are the largest shaders in the set. Recompile those two with `/Fc` and confirm the reported instruction count is still under the ps_3_0 limit:
+The clip adds roughly 19 to 29 instruction slots, not 8 (measured: +19 on `SM3LL003`, +19 on `SLS2003`, +18 on `SLS2018`, +18 on `SLS2039`). The `SLS2*` files are small; the shader that actually matters for the budget is `SM3000` at **509** of the ps_3_0 limit of 512 — the `SM3*` family is the large one. Recompile `SM3000` with `/Fc` and confirm the reported instruction count is still under 512:
 
 ```bash
-"C:\Development\Microsoft\DirectX SDK (June 2010)\Utilities\bin\x64\fxc.exe" /T ps_3_0 /E main /I "OblivionReloaded/Shaders/ExtraShaders" "OblivionReloaded/Shaders/ExtraShaders/SLS2018.pso.hlsl" /Fc "%TEMP%/claude/sls2018.asm" && tail -3 "%TEMP%/claude/sls2018.asm"
+"C:\Development\Microsoft\DirectX SDK (June 2010)\Utilities\bin\x64\fxc.exe" /T ps_3_0 /E main /I "OblivionReloaded/Shaders/ExtraShaders" "OblivionReloaded/Shaders/ExtraShaders/SM3000.pso.hlsl" /Fc "%TEMP%/claude/sm3000.asm" && tail -3 "%TEMP%/claude/sm3000.asm"
 ```
 
 Expected: a trailing `// approximately N instruction slots used` comment, compilation succeeded.
