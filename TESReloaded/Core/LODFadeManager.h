@@ -10,12 +10,14 @@ public:
 
 	/// One in-flight transition. Root is the scene-graph node whose subtree fades. Every fade is a
 	/// rising alpha; a departing node uses Invert so its coverage falls as the alpha rises, which is
-	/// what makes it exactly complementary to a partner fade-in sharing the same StartTime.
+	/// what makes it exactly complementary to a partner fade-in sharing the same StartTime. WasCulled
+	/// records the cull flag Pin found so Unpin can restore the exact prior state rather than assume it.
 	struct FadeRecord {
 		NiAVObject*	Root;
 		float		StartTime;
 		bool		Pinned;
 		bool		Invert;
+		bool		WasCulled;
 	};
 
 	/// Advances all live fades and retires completed ones. Called once per frame.
@@ -45,7 +47,8 @@ public:
 	/// the caller must not start a fade for it — re-attachment is a separate, conditional task.
 	bool			Pin(FadeRecord* Record);
 
-	/// Releases a pin, restoring the cull flag and dropping the reference taken by Pin.
+	/// Releases a pin, restoring the cull flag to the state Pin found it in (not unconditionally
+	/// clearing it) and dropping the reference taken by Pin.
 	void			Unpin(FadeRecord* Record);
 
 private:

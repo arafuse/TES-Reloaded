@@ -23,6 +23,7 @@ LODFadeManager::FadeRecord* LODFadeManager::AddFade(NiAVObject* Root) {
 	Record.StartTime = CurrentTime;
 	Record.Pinned = false;
 	Record.Invert = false;
+	Record.WasCulled = false;
 	Fades.push_back(Record);
 	LiveCount = Fades.size();
 	FadeSetDirty = true;
@@ -78,7 +79,9 @@ bool LODFadeManager::Pin(FadeRecord* Record) {
 
 	// Still in the graph: un-culling is all that is needed, and it touches no lifetime but the
 	// refcount. The reference stops the engine freeing the node while we are still drawing it.
+	// Record the flag as we found it -- Unpin restores exactly this rather than assuming it was set.
 	InterlockedIncrement(&Node->m_uiRefCount);
+	Record->WasCulled = (Node->m_flags & NiAVObject::kFlag_AppCulled) != 0;
 	Node->m_flags &= (UInt16)~NiAVObject::kFlag_AppCulled;
 	Record->Pinned = true;
 
@@ -89,14 +92,16 @@ bool LODFadeManager::Pin(FadeRecord* Record) {
 
 }
 
-/// Releases a pin taken by Pin, dropping the reference and restoring the cull flag's cost to the
-/// engine's own bookkeeping (the engine re-culls naturally once frames pass without this override).
+/// Releases a pin taken by Pin. Restores the cull flag to the exact state Pin recorded before
+/// dropping the reference -- a node the engine had never culled must not be left un-culled forever,
+/// and a node the engine had already culled must not be forced visible by this override.
 void LODFadeManager::Unpin(FadeRecord* Record) {
 
 	NiAVObject* Node = Record->Root;
 	if (!Node || !Record->Pinned) return;
 
 	Record->Pinned = false;
+	if (Record->WasCulled) Node->m_flags |= (UInt16)NiAVObject::kFlag_AppCulled;
 	if (!InterlockedDecrement(&Node->m_uiRefCount)) Node->Destructor(true);
 
 	if (TheSettingManager->SettingsMain.Develop.LogLODFade)
@@ -218,6 +223,10 @@ void LODFadeManager::PollCellGrid() {
 	UInt32 Slots = Dim * Dim;
 	if (PrevCell.size() != Slots) {
 		PrevCell.assign(Slots, NULL);
+		for (UInt32 i = 0; i < Slots; i++) {
+			GridCellArray::GridEntry* Entry = &Grid->grid[i];
+			PrevCell[i] = Entry->info ? (NiAVObject*)Entry->info->niNode : NULL;
+		}
 		return;
 	}
 
@@ -276,6 +285,11 @@ void LODFadeManager::Update() {
 	// dropped here too - this early return would otherwise skip the FadeSetDirty-gated clear
 	// that normally runs at the end of this function.
 	if (!Player || !Tes) {
+		// Every live pin must be released here too, or its InterlockedIncrement leaks permanently
+		// and its cull flag stays cleared forever with nothing left tracking the node.
+		for (UInt32 i = 0; i < Fades.size(); i++) {
+			if (Fades[i].Pinned) Unpin(&Fades[i]);
+		}
 		Fades.clear();
 		RootIndex.clear();
 		GeomCache.clear();

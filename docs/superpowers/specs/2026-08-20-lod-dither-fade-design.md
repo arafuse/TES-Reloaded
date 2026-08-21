@@ -19,8 +19,10 @@ The engine offers no fade for any of these. `DISTLOD2002.vso` has a distance-dri
 ## Goal
 
 Cross-dissolve every one of those transitions using a screen-space dither, over a configurable
-duration defaulting to 1.0 seconds. During a LOD-to-full handoff the full model dithers in while
-the LOD stays fully drawn behind it, and the LOD is dropped only once the full model is opaque.
+duration defaulting to 1.0 seconds. During a LOD-to-full handoff the full model dithers in while the
+departing LOD dithers out concurrently on the same rising alpha with an inverted threshold, so the
+two draws are always exactly complementary and total coverage stays at 100% for the whole handoff --
+neither a hole nor a double-draw at any point during the transition.
 
 ## Scope
 
@@ -129,13 +131,19 @@ lifetimes.
 
 At poll time, when a node departs:
 
-- If it still has an `m_parent`, `AddRef` it and clear `kFlag_AppCulled` (`GameNi.h:519`). Cheap and
-  safe.
-- If it has already been detached, `AddRef` it and re-attach it to a plugin-owned holder node
-  parented under the shadow scene node, so it culls and renders normally.
+- If it still has an `m_parent`, `AddRef` it, record the cull flag's prior state, and clear
+  `kFlag_AppCulled` (`GameNi.h:519`) so it keeps rendering while nothing else in the engine is
+  tracking it. Cheap and safe -- no lifetime is touched beyond the refcount. On release, the flag is
+  restored to the recorded state rather than unconditionally cleared, since a node the engine had
+  already culled must not be forced visible by the pin's release.
+- If it has already been detached, the pin is declined and logged rather than attempted. Re-attaching
+  a genuinely detached node means creating or reusing a plugin-owned holder node and manipulating the
+  live scene graph, which is materially riskier than the un-cull path above, and is a separate,
+  conditional task gated on measuring in game how often this decline path is actually hit.
 
-Which of the two the engine actually does is unknown until measured in game; both paths are
-implemented.
+Only the un-cull path above is implemented. Which of the two the engine actually does -- cull in
+place, or detach outright -- is unknown until measured in game; the decline log line is that
+measurement.
 
 Every pin carries a hard timeout of twice the fade time, after which it is force-released
 regardless of state. The entire pin path sits behind the `PinDeparting` INI toggle, so it can be
