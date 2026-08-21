@@ -41,5 +41,13 @@ private:
 	UInt32					LiveCount;
 	float					CurrentTime;
 
+	std::vector<NiAVObject*>							PrevDistant;
+	std::vector<NiAVObject*>							PrevLandLOD;
+	std::unordered_map<NiAVObject*, FadeRecord*>		RootIndex;
+	bool												PrevValid;
+
+	void			PollDistantGrid();
+	void			PollLandLOD();
+
 	void			Retire(UInt32 Index);
 };
