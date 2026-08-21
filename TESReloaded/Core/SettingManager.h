@@ -266,6 +266,14 @@ struct SettingsMainStruct {
 		float	StepValue;
 	};
 
+	/// Dither cross-fade for LOD and full-model load transitions.
+	struct LODFadeStruct {
+		bool	Enabled;
+		float	FadeTime;
+		bool	PinDeparting;
+		UInt32	MaxFades;
+	};
+
 	struct DevelopStruct {
 		bool	CompileShaders;
 		bool	CompileEffects;
@@ -274,6 +282,7 @@ struct SettingsMainStruct {
 		UInt8	ProfileShadows;
 		UInt8	ProfileEffects;
 		UInt8	NearShellDebug;
+		UInt8	LogLODFade;
 	};
 
 	MainStruct					Main;
@@ -291,6 +300,7 @@ struct SettingsMainStruct {
 	GravityStruct				Gravity;
 	DodgeStruct					Dodge;
 	FlyCamStruct				FlyCam;
+	LODFadeStruct				LODFade;
 	DevelopStruct				Develop;
 };
 
