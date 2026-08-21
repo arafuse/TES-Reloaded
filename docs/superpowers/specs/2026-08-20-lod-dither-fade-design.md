@@ -89,22 +89,26 @@ All transitions are keyed by grid slot, so pairing is a lookup rather than a pos
 
 | Event | Action |
 |---|---|
-| Distant slot gained a node | Fade the LOD node in. |
-| Cell slot gained a cell | Fade that cell's full models in; pin the paired distant node at alpha 1. On completion, unpin and let the engine drop it. |
-| Cell slot lost a cell | Pin the departing cell node; fade the paired LOD node in; release the pin on completion. |
-| Distant slot lost a node | Pin and fade out with its own alpha declining 1 to 0. No partner, so no complementary threshold. |
-| `LandLOD` child pointer changed | Fade the new quadrant in; cross-dither the old one out against it if it is still holdable. |
+| Distant slot gained a node | Fade the LOD node in: rising alpha, not inverted. |
+| Cell slot gained a cell | Fade that cell's full models in: rising alpha, not inverted. No pin is taken for the paired distant node here — it keeps rendering at full alpha until its own distant slot changes, which the distant poller detects independently. |
+| Cell slot lost a cell | Pin the departing cell node and fade it out on the inverted rising alpha. |
+| Distant slot lost a node | Pin the departing LOD node and fade it out on the inverted rising alpha. |
+| `LandLOD` child pointer changed to a new node | Fade the new quadrant in (rising alpha, not inverted); pin the old quadrant and fade it out on the *same* rising alpha with the invert flag set. |
 
-**Complementary thresholds.** Where a fade-out has a partner fading in — the `LandLOD` quadrant
-swap being the case that needs it — the outgoing record does not run its own alpha. It is published
-with the *partner's* rising alpha and the invert flag set, so the two draws test `n < a` and `n > a`
-against the same noise value and total coverage stays at exactly 100% for the whole transition. A
-lone fade-out with no partner uses the normal test and its own declining alpha.
-
-A LOD node is dropped instantly once its paired fade-in completes rather than fading out itself.
-This is deliberate: fading both would halve coverage mid-transition. The cost is that any LOD
-silhouette extending beyond the full model's pops, which is strictly smaller than the pop it
-replaces.
+**Complementary thresholds.** There is no fade-out direction. Every departing node — a distant slot
+losing its node, a cell slot losing its cell, or a `LandLOD` quadrant being replaced — is pinned and
+faded using the same rising alpha a fade-in uses, with the invert flag set: the departing draw tests
+`n > a` while an arriving draw (if any) tests `n < a`, against the same rising `a` and the same
+per-frame noise. Pairing is implicit through shared timing rather than an explicit link: when a
+departing node has a partner arriving in the same poll, both `AddFade` calls happen inside the same
+`Update()` and so share a `StartTime`, which is all that is needed to keep the two draws' thresholds
+exactly complementary throughout the transition — no partner field on `FadeRecord`, no cross-poller
+lookup by cell coordinate. Two independent, uncoordinated fades — one declining from its own start,
+one rising from its own — would instead leave roughly a quarter of the shared pixels uncovered by
+either draw through the middle of the transition; the shared-`StartTime`, opposite-threshold
+construction is what keeps coverage at exactly 100% instead. A lone departing node with no partner
+arriving in the same poll (the common case for the distant and cell grids) still uses the inverted
+test; with nothing arriving to complement, it simply presents as a plain 100%-to-0% dissolve.
 
 ### Geometry-to-record resolution
 

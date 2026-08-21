@@ -230,10 +230,15 @@ git commit -m "feat(LODFade): Add TESR_GEOM_FadeParams shader constant"
 - Consumes: `TheSettingManager->SettingsMain.LODFade.*` from Task 1.
 - Produces:
   - `class LODFadeManager` with `void Update();`, `float GetAlpha(FadeRecord* Record);`, `bool AnyFadesLive();`
-  - `struct LODFadeManager::FadeRecord { NiAVObject* Root; UInt8 Direction; float StartTime; bool Pinned; bool HasPartner; }`
-  - `enum { FadeDir_In = 0, FadeDir_Out = 1 }`
-  - `FadeRecord* LODFadeManager::AddFade(NiAVObject* Root, UInt8 Direction);` — returns `NULL` when the table is full.
+  - `struct LODFadeManager::FadeRecord { NiAVObject* Root; float StartTime; bool Pinned; bool Invert; }`
+  - `FadeRecord* LODFadeManager::AddFade(NiAVObject* Root);` — returns `NULL` when the table is full.
   - Singleton `TheLODFadeManager`.
+
+  > **Superseded by Task 8 (Ruling F14):** every fade is a single rising alpha. There is no fade-out
+  > direction — a departing node fades out by running the same rising `GetAlpha` with `Invert` set,
+  > so `FadeDir_In`/`FadeDir_Out` and `Direction` never existed in the shipped code; `Invert` and
+  > `HasPartner` were not introduced until Task 5 and Task 8 respectively, and `HasPartner` was later
+  > removed (F4) since paired records already share a `StartTime`.
 
 This task builds the table and its lifecycle only. Nothing detects transitions and nothing draws differently; `AnyFadesLive()` always returns false. That is deliberate — it gives the later tasks a verified foundation.
 
@@ -251,25 +256,18 @@ class LODFadeManager {
 public:
 	LODFadeManager();
 
-	enum {
-		FadeDir_In	= 0,
-		FadeDir_Out	= 1,
-	};
-
 	/// One in-flight transition. Root is the scene-graph node whose subtree fades.
 	struct FadeRecord {
 		NiAVObject*	Root;
-		UInt8		Direction;
 		float		StartTime;
 		bool		Pinned;
-		bool		HasPartner;
 	};
 
 	/// Advances all live fades and retires completed ones. Called once per frame.
 	void			Update();
 
 	/// Starts a fade. Returns NULL when the table is full, in which case the caller pops as before.
-	FadeRecord*		AddFade(NiAVObject* Root, UInt8 Direction);
+	FadeRecord*		AddFade(NiAVObject* Root);
 
 	/// Fade fraction for a record: 0 to 1 for a fade-in, 1 to 0 for a fade-out.
 	float			GetAlpha(FadeRecord* Record);
@@ -306,22 +304,20 @@ LODFadeManager::LODFadeManager() {
 
 }
 
-LODFadeManager::FadeRecord* LODFadeManager::AddFade(NiAVObject* Root, UInt8 Direction) {
+LODFadeManager::FadeRecord* LODFadeManager::AddFade(NiAVObject* Root) {
 
 	if (!Root) return NULL;
 	if (Fades.size() >= TheSettingManager->SettingsMain.LODFade.MaxFades) return NULL;
 
 	FadeRecord Record;
 	Record.Root = Root;
-	Record.Direction = Direction;
 	Record.StartTime = CurrentTime;
 	Record.Pinned = false;
-	Record.HasPartner = false;
 	Fades.push_back(Record);
 	LiveCount = Fades.size();
 
 	if (TheSettingManager->SettingsMain.Develop.LogLODFade)
-		Logger::Log("[LODFade] start root=%08X dir=%d live=%d", (UInt32)Root, Direction, LiveCount);
+		Logger::Log("[LODFade] start root=%08X live=%d", (UInt32)Root, LiveCount);
 
 	return &Fades.back();
 
@@ -335,7 +331,7 @@ float LODFadeManager::GetAlpha(FadeRecord* Record) {
 	float t = (CurrentTime - Record->StartTime) / FadeTime;
 	if (t < 0.0f) t = 0.0f;
 	if (t > 1.0f) t = 1.0f;
-	return Record->Direction == FadeDir_In ? t : 1.0f - t;
+	return t;
 
 }
 
@@ -426,7 +422,7 @@ git commit -m "feat(LODFade): Add LODFadeManager skeleton and fade table"
 - Modify: `TESReloaded/Core/LODFadeManager.cpp` (poller implementation)
 
 **Interfaces:**
-- Consumes: `AddFade`, `FadeDir_In` from Task 3.
+- Consumes: `AddFade` from Task 3.
 - Produces:
   - `void LODFadeManager::PollDistantGrid();`
   - `void LODFadeManager::PollLandLOD();`
@@ -498,7 +494,7 @@ void LODFadeManager::PollDistantGrid() {
 		NiAVObject* Node = (NiAVObject*)Grid->grid[i].unk04;
 		if (Node != PrevDistant[i]) {
 			if (Node && !RootIndex.count(Node)) {
-				FadeRecord* Record = AddFade(Node, FadeDir_In);
+				FadeRecord* Record = AddFade(Node);
 				if (Record) RootIndex[Node] = Record;
 			}
 			PrevDistant[i] = Node;
@@ -543,7 +539,7 @@ void LODFadeManager::PollLandLOD() {
 		NiAVObject* Node = LandLOD->m_children.data[i];
 		if (Node != PrevLandLOD[i]) {
 			if (Node && !RootIndex.count(Node)) {
-				FadeRecord* Record = AddFade(Node, FadeDir_In);
+				FadeRecord* Record = AddFade(Node);
 				if (Record) RootIndex[Node] = Record;
 			}
 			PrevLandLOD[i] = Node;
@@ -975,11 +971,10 @@ git commit -m "feat(LODFade): Apply the dither clip to the static, tree and terr
   - `void LODFadeManager::PollCellGrid();`
   - `bool LODFadeManager::Pin(FadeRecord* Record);`
   - `void LODFadeManager::Unpin(FadeRecord* Record);`
-  - `NiNode* LODFadeManager::HolderNode;` — plugin-owned parent for re-attached nodes.
 
 This is the risky half of the feature, and it is last for that reason: everything before it is useful on its own. It is gated on `SettingsMain.LODFade.PinDeparting`, so it can be switched off in the field without losing Tasks 4-7.
 
-**This task implements only the un-cull pin** — the case where the departing node still has an `m_parent`. The re-attach path for genuinely detached nodes is Task 9, and whether it is needed at all is decided by this task's measurement. That split is deliberate: un-culling touches no lifetimes beyond a refcount, while re-attachment manipulates the live scene graph, and there is no reason to risk the second before knowing whether the engine ever takes that path.
+**This task implements only the un-cull pin** — the case where the departing node still has an `m_parent`. The re-attach path for genuinely detached nodes is Task 9, and whether it is needed at all is decided by this task's measurement. That split is deliberate: un-culling touches no lifetimes beyond a refcount, while re-attachment manipulates the live scene graph, and there is no reason to risk the second before knowing whether the engine ever takes that path. `FadeRecord` gains no `OriginalParent` field here — nothing in this task reads a stored parent, and that field belongs to the conditional Task 9 alone.
 
 Engine data: `Tes->gridCellArray` (`Game.h:8125`) is a `GridCellArray` whose `GridEntry` holds a `TESObjectCELL* cell` and a `CellInfo* info` with `NiNode* niNode`.
 
@@ -992,15 +987,11 @@ Refcounting follows the pattern already used in `TESReloaded/Core/Animation.cpp:
 	if (!InterlockedDecrement(&Node->m_uiRefCount)) Node->Destructor(true);
 ```
 
+**Every departing node fades out via the same rising alpha with `Invert` set — there is no separate fade-out direction.** This supersedes the `FadeDir_Out` sketched in earlier drafts of this plan: `Invert` makes the shader test `clip(n - a)` while alpha rises 0 to 1, so coverage falls 100% to 0%, identical to a declining-alpha fade-out when it runs alone, and exactly complementary to any non-inverted fade-in that shares the same `StartTime`. A LOD-to-full handoff therefore holds 100% coverage throughout: the departing node's surviving pixels are precisely the ones the arriving node has not yet claimed. Pairing needs no linkage field — both `AddFade` calls land in the same `Update()`, so they share a `StartTime` and complete together — which is why `FadeRecord` carries no `HasPartner` and `AddFade` takes only `NiAVObject* Root`; `FadeDir_In`/`FadeDir_Out` and `Direction` are gone from `FadeRecord` entirely.
+
 - [ ] **Step 1: Add pin state**
 
-In `LODFadeManager.h`, add to `FadeRecord`:
-
-```cpp
-		NiNode*		OriginalParent;
-```
-
-and to the public section:
+In `LODFadeManager.h`, add to the public section:
 
 ```cpp
 	/// Keeps a departing node alive and drawn for the fade duration. Returns false if it could not
@@ -1026,8 +1017,6 @@ bool LODFadeManager::Pin(FadeRecord* Record) {
 
 	NiAVObject* Node = Record->Root;
 	if (!Node) return false;
-
-	Record->OriginalParent = Node->m_parent;
 
 	if (!Node->m_parent) {
 		// Already detached from the graph. Re-attaching it is Task 9 and is not attempted here;
@@ -1080,14 +1069,14 @@ void LODFadeManager::Retire(UInt32 Index) {
 }
 ```
 
-The hard timeout is already structural: `Update`'s retire loop fires on elapsed time alone and does not consult the partner, so a pin whose partner never completes is released at `FadeTime` regardless. Add the spec's explicit 2x safety by changing the retire condition to account for pinned records held open by a partner:
+The hard timeout is already structural: `Update`'s retire loop fires on elapsed time alone, so a pin whose partner never completes is released at `FadeTime` regardless. Add the spec's explicit 2x safety as a pure belt-and-braces net — since paired records share a `StartTime` and therefore a completion time, `Complete` alone already covers the normal case and `HardTimeout` exists only to guarantee a pin can never outlive twice the fade time under any clock or ordering surprise:
 
 ```cpp
 	for (SInt32 i = (SInt32)Fades.size() - 1; i >= 0; i--) {
 		float Elapsed = CurrentTime - Fades[i].StartTime;
 		bool HardTimeout = Elapsed >= FadeTime * 2.0f;
 		bool Complete = Elapsed >= FadeTime;
-		if (HardTimeout || (Complete && !Fades[i].HasPartner)) Retire(i);
+		if (HardTimeout || Complete) Retire(i);
 	}
 ```
 
@@ -1097,12 +1086,10 @@ The hard timeout is already structural: `Update`'s retire loop fires on elapsed 
 void LODFadeManager::PollCellGrid() {
 
 	GridCellArray* Grid = Tes->gridCellArray;
-	if (!Grid) return;
+	if (!Grid || !Grid->grid || !Grid->size) return;
 
 	UInt32 Dim = Grid->size;
 	UInt32 Slots = Dim * Dim;
-	if (!Slots || !Grid->grid) return;
-
 	if (PrevCell.size() != Slots) {
 		PrevCell.assign(Slots, NULL);
 		return;
@@ -1135,12 +1122,16 @@ void LODFadeManager::PollCellGrid() {
 		if (Node && !RootIndex.count(Node)) {
 			// Cell gained: full models fade in. The paired LOD node is pinned by the distant
 			// poller's own slot change in the same frame, so no cross-poller lookup is needed.
-			AddFade(Node, FadeDir_In);
+			AddFade(Node);
 		}
 		else if (!Node && PrevCell[i] && TheSettingManager->SettingsMain.LODFade.PinDeparting) {
-			// Cell lost: hold the departing full models while the LOD fades back in.
-			FadeRecord* Record = AddFade(PrevCell[i], FadeDir_Out);
-			if (Record && !Pin(Record)) Retire((UInt32)(Fades.size() - 1));
+			// Cell lost: hold the departing full models while the LOD fades back in, via the
+			// inverted rising alpha rather than a declining-alpha fade-out.
+			FadeRecord* Out = AddFade(PrevCell[i]);
+			if (Out) {
+				Out->Invert = true;
+				if (!Pin(Out)) Retire((UInt32)(Fades.size() - 1));
+			}
 		}
 		PrevCell[i] = Node;
 	}
@@ -1152,16 +1143,19 @@ Call it from `Update` immediately after `PollDistantGrid();`.
 
 - [ ] **Step 5: Pin departing distant nodes**
 
-In `PollDistantGrid`, extend the change branch so a slot losing its node fades out instead of vanishing:
+In `PollDistantGrid`, extend the change branch so a slot losing its node fades out via the inverted rising alpha instead of vanishing:
 
 ```cpp
 		if (Node != PrevDistant[i]) {
 			if (Node && !RootIndex.count(Node)) {
-				AddFade(Node, FadeDir_In);
+				AddFade(Node);
 			}
 			else if (!Node && PrevDistant[i] && TheSettingManager->SettingsMain.LODFade.PinDeparting) {
-				FadeRecord* Record = AddFade(PrevDistant[i], FadeDir_Out);
-				if (Record && !Pin(Record)) Retire((UInt32)(Fades.size() - 1));
+				FadeRecord* Out = AddFade(PrevDistant[i]);
+				if (Out) {
+					Out->Invert = true;
+					if (!Pin(Out)) Retire((UInt32)(Fades.size() - 1));
+				}
 			}
 			PrevDistant[i] = Node;
 		}
@@ -1169,25 +1163,22 @@ In `PollDistantGrid`, extend the change branch so a slot losing its node fades o
 
 - [ ] **Step 6: Cross-dither the replaced LandLOD quadrant**
 
-In `PollLandLOD`, when a slot's pointer changes from one non-NULL node to another, the old quadrant is the in-fade's partner and must run on the partner's rising alpha with `Invert` set, so the two together cover exactly 100%:
+In `PollLandLOD`, when a slot's pointer changes from one non-NULL node to another, the old quadrant is the in-fade's partner and must run on the partner's rising alpha with `Invert` set, so the two together cover exactly 100%. Pairing is only attempted when a new quadrant actually took the slot (`Paired`); a slot that simply goes to `NULL` has no partner to run against and is left alone, since LandLOD's 12 quadrants are always replaced, never removed to nothing, in normal operation:
 
 ```cpp
 		if (Node != PrevLandLOD[i]) {
 			bool Paired = false;
 			if (Node && !RootIndex.count(Node)) {
-				AddFade(Node, FadeDir_In);
+				AddFade(Node);
 				Paired = true;
 			}
 			if (PrevLandLOD[i] && Paired && TheSettingManager->SettingsMain.LODFade.PinDeparting) {
-				FadeRecord* Out = AddFade(PrevLandLOD[i], FadeDir_In);
+				// Runs on the partner's rising alpha with Invert set. Same StartTime as the partner
+				// (both AddFade calls land in this Update()), so no cross-record link is needed.
+				FadeRecord* Out = AddFade(PrevLandLOD[i]);
 				if (Out) {
-					// Runs on the partner's rising alpha with the complementary threshold, so it is
-					// FadeDir_In with Invert set, not FadeDir_Out. Same StartTime as the partner,
-					// so no cross-record lookup is needed to stay in step with it.
 					Out->Invert = true;
-					Out->HasPartner = true;
 					if (!Pin(Out)) Retire((UInt32)(Fades.size() - 1));
-					else Fades[Fades.size() - 2].HasPartner = true;
 				}
 			}
 			PrevLandLOD[i] = Node;
@@ -1231,6 +1222,7 @@ git commit -m "feat(LODFade): Add pinning, cell-grid polling and paired handoff"
 ```
 
 ---
+
 
 ### Task 9: Re-attach path for detached nodes — CONDITIONAL
 

@@ -8,15 +8,11 @@ class LODFadeManager {
 public:
 	LODFadeManager();
 
-	enum {
-		FadeDir_In	= 0,
-		FadeDir_Out	= 1,
-	};
-
-	/// One in-flight transition. Root is the scene-graph node whose subtree fades.
+	/// One in-flight transition. Root is the scene-graph node whose subtree fades. Every fade is a
+	/// rising alpha; a departing node uses Invert so its coverage falls as the alpha rises, which is
+	/// what makes it exactly complementary to a partner fade-in sharing the same StartTime.
 	struct FadeRecord {
 		NiAVObject*	Root;
-		UInt8		Direction;
 		float		StartTime;
 		bool		Pinned;
 		bool		Invert;
@@ -26,9 +22,9 @@ public:
 	void			Update();
 
 	/// Starts a fade. Returns NULL when the table is full, in which case the caller pops as before.
-	FadeRecord*		AddFade(NiAVObject* Root, UInt8 Direction);
+	FadeRecord*		AddFade(NiAVObject* Root);
 
-	/// Fade fraction for a record: 0 to 1 for a fade-in, 1 to 0 for a fade-out.
+	/// Fade fraction for a record: 0 to 1, rising. Invert is applied by the shader, not here.
 	float			GetAlpha(FadeRecord* Record);
 
 	/// True when at least one fade is in flight. Gates all per-draw work.
@@ -44,6 +40,14 @@ public:
 	/// Set for one frame after the last fade retires, so every covered shader is reset to opaque.
 	bool			FadeResetPending;
 
+	/// Keeps a departing node alive and drawn for the fade duration by un-culling it and taking a
+	/// reference. Returns false if the node has already been detached from the graph, in which case
+	/// the caller must not start a fade for it — re-attachment is a separate, conditional task.
+	bool			Pin(FadeRecord* Record);
+
+	/// Releases a pin, restoring the cull flag and dropping the reference taken by Pin.
+	void			Unpin(FadeRecord* Record);
+
 private:
 	std::vector<FadeRecord>	Fades;
 	UInt32					LiveCount;
@@ -51,6 +55,7 @@ private:
 
 	std::vector<NiAVObject*>							PrevDistant;
 	std::vector<NiAVObject*>							PrevLandLOD;
+	std::vector<NiAVObject*>							PrevCell;
 	std::unordered_map<NiAVObject*, FadeRecord*>		RootIndex;
 	std::unordered_map<NiAVObject*, FadeRecord*>		GeomCache;
 	bool												PrevValid;
@@ -58,6 +63,7 @@ private:
 
 	void			PollDistantGrid();
 	void			PollLandLOD();
+	void			PollCellGrid();
 
 	void			Retire(UInt32 Index);
 };

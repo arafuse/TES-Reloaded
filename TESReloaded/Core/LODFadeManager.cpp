@@ -13,14 +13,13 @@ LODFadeManager::LODFadeManager() {
 
 }
 
-LODFadeManager::FadeRecord* LODFadeManager::AddFade(NiAVObject* Root, UInt8 Direction) {
+LODFadeManager::FadeRecord* LODFadeManager::AddFade(NiAVObject* Root) {
 
 	if (!Root) return NULL;
 	if (Fades.size() >= TheSettingManager->SettingsMain.LODFade.MaxFades) return NULL;
 
 	FadeRecord Record;
 	Record.Root = Root;
-	Record.Direction = Direction;
 	Record.StartTime = CurrentTime;
 	Record.Pinned = false;
 	Record.Invert = false;
@@ -29,7 +28,7 @@ LODFadeManager::FadeRecord* LODFadeManager::AddFade(NiAVObject* Root, UInt8 Dire
 	FadeSetDirty = true;
 
 	if (TheSettingManager->SettingsMain.Develop.LogLODFade)
-		Logger::Log("[LODFade] start root=%08X dir=%d live=%d", (UInt32)Root, Direction, LiveCount);
+		Logger::Log("[LODFade] start root=%08X live=%d", (UInt32)Root, LiveCount);
 
 	return &Fades.back();
 
@@ -43,17 +42,65 @@ float LODFadeManager::GetAlpha(FadeRecord* Record) {
 	float t = (CurrentTime - Record->StartTime) / FadeTime;
 	if (t < 0.0f) t = 0.0f;
 	if (t > 1.0f) t = 1.0f;
-	return Record->Direction == FadeDir_In ? t : 1.0f - t;
+	return t;
 
 }
 
+/// Retires a fade, releasing its pin first if one is held. Called both from the normal completion
+/// path and the hard timeout, so a pin can never outlive its record.
 void LODFadeManager::Retire(UInt32 Index) {
 
 	if (TheSettingManager->SettingsMain.Develop.LogLODFade)
-		Logger::Log("[LODFade] retire root=%08X", (UInt32)Fades[Index].Root);
+		Logger::Log("[LODFade] retire root=%08X pinned=%d", (UInt32)Fades[Index].Root, Fades[Index].Pinned ? 1 : 0);
+
+	if (Fades[Index].Pinned) Unpin(&Fades[Index]);
 
 	FadeSetDirty = true;
 	Fades.erase(Fades.begin() + Index);
+
+}
+
+/// Keeps a departing node alive and drawn for the fade duration. Only the un-cull path is
+/// implemented: if the node is already detached from the scene graph, this logs and declines
+/// rather than re-attaching it, since re-attachment touches live scene-graph lifetimes and is a
+/// separate, conditional task. The log line is the measurement that decides whether that task is
+/// ever needed.
+bool LODFadeManager::Pin(FadeRecord* Record) {
+
+	NiAVObject* Node = Record->Root;
+	if (!Node) return false;
+
+	if (!Node->m_parent) {
+		if (TheSettingManager->SettingsMain.Develop.LogLODFade)
+			Logger::Log("[LODFade] pin declined, node already detached root=%08X", (UInt32)Node);
+		return false;
+	}
+
+	// Still in the graph: un-culling is all that is needed, and it touches no lifetime but the
+	// refcount. The reference stops the engine freeing the node while we are still drawing it.
+	InterlockedIncrement(&Node->m_uiRefCount);
+	Node->m_flags &= (UInt16)~NiAVObject::kFlag_AppCulled;
+	Record->Pinned = true;
+
+	if (TheSettingManager->SettingsMain.Develop.LogLODFade)
+		Logger::Log("[LODFade] pin root=%08X", (UInt32)Node);
+
+	return true;
+
+}
+
+/// Releases a pin taken by Pin, dropping the reference and restoring the cull flag's cost to the
+/// engine's own bookkeeping (the engine re-culls naturally once frames pass without this override).
+void LODFadeManager::Unpin(FadeRecord* Record) {
+
+	NiAVObject* Node = Record->Root;
+	if (!Node || !Record->Pinned) return;
+
+	Record->Pinned = false;
+	if (!InterlockedDecrement(&Node->m_uiRefCount)) Node->Destructor(true);
+
+	if (TheSettingManager->SettingsMain.Develop.LogLODFade)
+		Logger::Log("[LODFade] unpin root=%08X", (UInt32)Node);
 
 }
 
@@ -88,7 +135,18 @@ void LODFadeManager::PollDistantGrid() {
 	for (UInt32 i = 0; i < Slots; i++) {
 		NiAVObject* Node = (NiAVObject*)Grid->grid[i].unk04;
 		if (Node != PrevDistant[i]) {
-			if (Node && !RootIndex.count(Node)) AddFade(Node, FadeDir_In);
+			if (Node && !RootIndex.count(Node)) {
+				AddFade(Node);
+			}
+			else if (!Node && PrevDistant[i] && TheSettingManager->SettingsMain.LODFade.PinDeparting) {
+				// Departing node: fades out via the inverted rising alpha (no partner), not a
+				// separate declining-alpha direction. See FadeRecord::Invert.
+				FadeRecord* Out = AddFade(PrevDistant[i]);
+				if (Out) {
+					Out->Invert = true;
+					if (!Pin(Out)) Retire((UInt32)(Fades.size() - 1));
+				}
+			}
 			PrevDistant[i] = Node;
 		}
 	}
@@ -127,9 +185,81 @@ void LODFadeManager::PollLandLOD() {
 	for (UInt32 i = 0; i < Count; i++) {
 		NiAVObject* Node = LandLOD->m_children.data[i];
 		if (Node != PrevLandLOD[i]) {
-			if (Node && !RootIndex.count(Node)) AddFade(Node, FadeDir_In);
+			bool Paired = false;
+			if (Node && !RootIndex.count(Node)) {
+				AddFade(Node);
+				Paired = true;
+			}
+			if (PrevLandLOD[i] && Paired && TheSettingManager->SettingsMain.LODFade.PinDeparting) {
+				// The old quadrant runs on the new one's rising alpha with Invert set (Ruling F14),
+				// so the two together cover exactly 100% throughout. Same StartTime as the partner
+				// (both AddFade calls land in this Update()), so no cross-record link is needed.
+				FadeRecord* Out = AddFade(PrevLandLOD[i]);
+				if (Out) {
+					Out->Invert = true;
+					if (!Pin(Out)) Retire((UInt32)(Fades.size() - 1));
+				}
+			}
 			PrevLandLOD[i] = Node;
 		}
+	}
+
+}
+
+/// Detects loaded-cell slots gaining or losing a cell by diffing Tes->gridCellArray against the
+/// previous frame. Cell gains fade the cell's full models in; cell losses hold the departing full
+/// models via Pin while they fade out on the inverted rising alpha, same shape as the distant grid.
+void LODFadeManager::PollCellGrid() {
+
+	GridCellArray* Grid = Tes->gridCellArray;
+	if (!Grid || !Grid->grid || !Grid->size) return;
+
+	UInt32 Dim = Grid->size;
+	UInt32 Slots = Dim * Dim;
+	if (PrevCell.size() != Slots) {
+		PrevCell.assign(Slots, NULL);
+		return;
+	}
+
+	// Crossing one boundary shifts Dim slots and a corner shifts 2*Dim-1, so 2*Dim sits one above
+	// the worst legitimate case and far below a full reload of Dim squared.
+	UInt32 Changed = 0;
+	for (UInt32 i = 0; i < Slots; i++) {
+		GridCellArray::GridEntry* Entry = &Grid->grid[i];
+		NiAVObject* Node = Entry->info ? (NiAVObject*)Entry->info->niNode : NULL;
+		if (Node != PrevCell[i]) Changed++;
+	}
+
+	if (Changed > Dim * 2) {
+		if (TheSettingManager->SettingsMain.Develop.LogLODFade)
+			Logger::Log("[LODFade] cell discontinuity: %d of %d slots changed, suppressed", Changed, Slots);
+		for (UInt32 i = 0; i < Slots; i++) {
+			GridCellArray::GridEntry* Entry = &Grid->grid[i];
+			PrevCell[i] = Entry->info ? (NiAVObject*)Entry->info->niNode : NULL;
+		}
+		return;
+	}
+
+	for (UInt32 i = 0; i < Slots; i++) {
+		GridCellArray::GridEntry* Entry = &Grid->grid[i];
+		NiAVObject* Node = Entry->info ? (NiAVObject*)Entry->info->niNode : NULL;
+		if (Node == PrevCell[i]) continue;
+
+		if (Node && !RootIndex.count(Node)) {
+			// Cell gained: full models fade in. The paired LOD node is pinned by the distant
+			// poller's own slot change in the same frame, so no cross-poller lookup is needed.
+			AddFade(Node);
+		}
+		else if (!Node && PrevCell[i] && TheSettingManager->SettingsMain.LODFade.PinDeparting) {
+			// Cell lost: hold the departing full models while the LOD fades back in, via the
+			// inverted rising alpha rather than a declining-alpha fade-out (Ruling F14).
+			FadeRecord* Out = AddFade(PrevCell[i]);
+			if (Out) {
+				Out->Invert = true;
+				if (!Pin(Out)) Retire((UInt32)(Fades.size() - 1));
+			}
+		}
+		PrevCell[i] = Node;
 	}
 
 }
@@ -158,12 +288,18 @@ void LODFadeManager::Update() {
 		return;
 	}
 
+	// A pin held open by a partner fade is retired only on completion or the 2x hard timeout below,
+	// which is a pure safety net in case a partner never completes.
 	float FadeTime = TheSettingManager->SettingsMain.LODFade.FadeTime;
 	for (SInt32 i = (SInt32)Fades.size() - 1; i >= 0; i--) {
-		if (CurrentTime - Fades[i].StartTime >= FadeTime) Retire(i);
+		float Elapsed = CurrentTime - Fades[i].StartTime;
+		bool HardTimeout = Elapsed >= FadeTime * 2.0f;
+		bool Complete = Elapsed >= FadeTime;
+		if (HardTimeout || Complete) Retire(i);
 	}
 
 	PollDistantGrid();
+	PollCellGrid();
 	PollLandLOD();
 	PrevValid = true;
 
