@@ -66,8 +66,13 @@ per-geometry shader constant. Three parts:
 of their slot-to-`NiNode*` mappings, and emits transitions.
 
 **Fade table.** A fixed-capacity array of `FadeRecord`. Each record holds a root `NiAVObject*`, a
-direction, a start time, a pin flag and an optional link to the record it hands off to or from.
-Alongside it, an `unordered_map<NiGeometry*, FadeRecord*>` populated lazily at draw time.
+start time, a pin flag, an invert flag and a flag recording the cull state a pin found. The alpha
+always rises from 0 to 1 over the fade duration; there is no separate fade-out direction and no
+partner-record link. The invert flag flips which side of the alpha the shader's per-pixel threshold
+test falls on, which is what lets a departing node's rising-alpha fade-out and an arriving node's
+rising-alpha fade-in — sharing a `StartTime` when they land in the same poll — sum to exactly 100%
+coverage throughout the handoff; see the state-machine table and "Complementary thresholds" below.
+Alongside the table, an `unordered_map<NiGeometry*, FadeRecord*>` populated lazily at draw time.
 
 **Draw hook.** In `RenderHook::TrackSetupShaderPrograms` (`RenderHook.cpp:381`), while any fade is
 live, resolve the drawn geometry to a record and publish `TESR_GEOM_FadeParams`.

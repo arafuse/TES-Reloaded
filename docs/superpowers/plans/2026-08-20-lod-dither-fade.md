@@ -269,7 +269,7 @@ public:
 	/// Starts a fade. Returns NULL when the table is full, in which case the caller pops as before.
 	FadeRecord*		AddFade(NiAVObject* Root);
 
-	/// Fade fraction for a record: 0 to 1 for a fade-in, 1 to 0 for a fade-out.
+	/// Fade fraction for a record: 0 to 1, rising. Invert (Task 5/8) is applied by the shader, not here.
 	float			GetAlpha(FadeRecord* Record);
 
 	/// True when at least one fade is in flight. Gates all per-draw work.
@@ -426,8 +426,14 @@ git commit -m "feat(LODFade): Add LODFadeManager skeleton and fade table"
 - Produces:
   - `void LODFadeManager::PollDistantGrid();`
   - `void LODFadeManager::PollLandLOD();`
-  - `bool LODFadeManager::IsRegisteredRoot(NiAVObject* Node);` — used by Task 5's parent walk.
   - `std::unordered_map<NiAVObject*, LODFadeManager::FadeRecord*> RootIndex;` — root node to record.
+
+  > **Not shipped:** an `IsRegisteredRoot(NiAVObject* Node)` wrapper and a `ResyncShadowCopies()`
+  > helper were sketched below but never implemented. Every call site that needs the answer —
+  > the pollers' stream-in checks and `ResolveGeometry`'s parent walk (Task 5) — reads
+  > `RootIndex.count()` / `RootIndex.find()` directly instead; there is no wrapper method in the
+  > shipped code, and the resync logic lives inline in each poller's discontinuity branch rather
+  > than in a shared helper.
 
 **Scope note, deliberate:** this task handles only the two transitions that have **no partner** — a distant slot gaining a node, and a `LandLOD` slot gaining a new quadrant. Cell loading is *not* handled here even though it is a fade-in, because without the paired pin from Task 8 the LOD would vanish while the full model was still transparent, leaving a hole that is worse than today's pop. Every checkpoint in this plan must be an improvement on the previous one.
 
@@ -447,15 +453,10 @@ In `LODFadeManager.h`, add to the private section:
 
 	void			PollDistantGrid();
 	void			PollLandLOD();
-	void			ResyncShadowCopies();
 ```
 
-and to the public section:
-
-```cpp
-	/// True when Node is the root of a live fade. Used by the draw-time parent-chain walk.
-	bool			IsRegisteredRoot(NiAVObject* Node) { return RootIndex.count(Node) != 0; }
-```
+No wrapper method is added for `RootIndex` lookups; both the pollers below and `ResolveGeometry`
+(Task 5) read `RootIndex.count()` / `RootIndex.find()` directly.
 
 Initialise `PrevValid = false;` in the constructor.
 
@@ -628,7 +629,7 @@ git commit -m "feat(LODFade): Poll distant and LandLOD grids for stream-in trans
 - Modify: `TESReloaded/Core/RenderHook.cpp:381` (publish the constant per draw)
 
 **Interfaces:**
-- Consumes: `AnyFadesLive()`, `IsRegisteredRoot()`, `GetAlpha()`, `DitherSeed`, `RootIndex` from Tasks 3 and 4; `ShaderConst.LODFade.Params` and `HasFadeParams` from Task 2.
+- Consumes: `AnyFadesLive()`, `GetAlpha()`, `DitherSeed`, `RootIndex` from Tasks 3 and 4; `ShaderConst.LODFade.Params` and `HasFadeParams` from Task 2.
 - Produces: `LODFadeManager::FadeRecord* ResolveGeometry(NiAVObject* Geometry);` — returns `NULL` when the geometry belongs to no fade.
 
 - [ ] **Step 1: Add the resolution cache**
@@ -991,14 +992,29 @@ Refcounting follows the pattern already used in `TESReloaded/Core/Animation.cpp:
 
 - [ ] **Step 1: Add pin state**
 
-In `LODFadeManager.h`, add to the public section:
+In `LODFadeManager.h`, add `bool WasCulled;` to `FadeRecord`. `Pin` records the flag's actual prior
+state here so `Unpin` can restore exactly that state, rather than assume the node needs to stay
+un-culled or force a previously-culled node visible:
+
+```cpp
+	struct FadeRecord {
+		NiAVObject*	Root;
+		float		StartTime;
+		bool		Pinned;
+		bool		Invert;
+		bool		WasCulled;
+	};
+```
+
+and to the public section:
 
 ```cpp
 	/// Keeps a departing node alive and drawn for the fade duration. Returns false if it could not
 	/// be held, in which case the caller must not start a fade for it.
 	bool			Pin(FadeRecord* Record);
 
-	/// Releases a pin, restoring the cull flag and dropping the reference taken by Pin.
+	/// Releases a pin, restoring the cull flag to the state Pin found it in (not unconditionally
+	/// clearing it) and dropping the reference taken by Pin.
 	void			Unpin(FadeRecord* Record);
 ```
 
@@ -1009,6 +1025,8 @@ and to the private section:
 
 	void			PollCellGrid();
 ```
+
+Initialise `Record.WasCulled = false;` in `AddFade`, alongside `Record.Invert = false;`.
 
 - [ ] **Step 2: Implement Pin and Unpin**
 
@@ -1028,7 +1046,9 @@ bool LODFadeManager::Pin(FadeRecord* Record) {
 
 	// Still in the graph: un-culling is all that is needed, and it touches no lifetime but the
 	// refcount. The reference stops the engine freeing the node while we are still drawing it.
+	// Record the flag as found -- Unpin restores exactly this rather than assuming it was set.
 	InterlockedIncrement(&Node->m_uiRefCount);
+	Record->WasCulled = (Node->m_flags & NiAVObject::kFlag_AppCulled) != 0;
 	Node->m_flags &= (UInt16)~NiAVObject::kFlag_AppCulled;
 	Record->Pinned = true;
 
@@ -1045,6 +1065,9 @@ void LODFadeManager::Unpin(FadeRecord* Record) {
 	if (!Node || !Record->Pinned) return;
 
 	Record->Pinned = false;
+	// Restore the cull flag to the state Pin recorded BEFORE dropping the reference: touching
+	// m_flags after a decrement that hits zero would be a use-after-free.
+	if (Record->WasCulled) Node->m_flags |= (UInt16)NiAVObject::kFlag_AppCulled;
 	if (!InterlockedDecrement(&Node->m_uiRefCount)) Node->Destructor(true);
 
 	if (TheSettingManager->SettingsMain.Develop.LogLODFade)
@@ -1052,6 +1075,10 @@ void LODFadeManager::Unpin(FadeRecord* Record) {
 
 }
 ```
+
+Note the reasoning behind the restore, not just an unconditional set in `Unpin`: that would hide a
+node the engine had never culled in the first place, forcing it to render even after release.
+`WasCulled` makes the restore exact instead of assumed.
 
 - [ ] **Step 3: Unpin on retire, including the timeout path**
 
@@ -1080,6 +1107,22 @@ The hard timeout is already structural: `Update`'s retire loop fires on elapsed 
 	}
 ```
 
+**The `!Player || !Tes` guard from Task 4 Step 4 needs the same treatment.** That branch calls
+`Fades.clear()` directly, which does not go through `Retire()`/`Unpin()`. Any record that is
+`Pinned` at that moment would leak its `InterlockedIncrement` permanently and leave
+`kFlag_AppCulled` cleared forever with nothing left tracking the node -- reachable via quit to menu,
+die and reload, or any save/load transition while a pin is in flight. Drain pins before clearing:
+
+```cpp
+	if (!Player || !Tes) {
+		for (UInt32 i = 0; i < Fades.size(); i++) {
+			if (Fades[i].Pinned) Unpin(&Fades[i]);
+		}
+		Fades.clear();
+		RootIndex.clear();
+		...
+```
+
 - [ ] **Step 4: Implement the cell-grid poller with pairing**
 
 ```cpp
@@ -1091,7 +1134,14 @@ void LODFadeManager::PollCellGrid() {
 	UInt32 Dim = Grid->size;
 	UInt32 Slots = Dim * Dim;
 	if (PrevCell.size() != Slots) {
+		// Resync to the grid's actual current pointers rather than NULL, matching PollDistantGrid
+		// and PollLandLOD -- stamping NULL would make every already-loaded cell look newly-gained
+		// on the very next poll.
 		PrevCell.assign(Slots, NULL);
+		for (UInt32 i = 0; i < Slots; i++) {
+			GridCellArray::GridEntry* Entry = &Grid->grid[i];
+			PrevCell[i] = Entry->info ? (NiAVObject*)Entry->info->niNode : NULL;
+		}
 		return;
 	}
 
