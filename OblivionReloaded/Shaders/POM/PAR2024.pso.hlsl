@@ -12,6 +12,7 @@ float4 PSLightColor[4] : register(c2);
 sampler2D ShadowMap : register(s4);
 sampler2D ShadowMaskMap : register(s5);
 float4 Toggles : register(c7);
+#include "../Includes/LODFade.hlsl"
 //
 //
 // Registers:
@@ -36,6 +37,7 @@ struct VS_OUTPUT {
     float3 Light0Spc : TEXCOORD3_centroid;
     float4 ShadowUV : TEXCOORD6;
     float3 CameraDir : TEXCOORD7_centroid;
+    float2 vpos : VPOS;
 };
 
 struct PS_OUTPUT {
@@ -48,6 +50,8 @@ struct PS_OUTPUT {
 
 PS_OUTPUT main(VS_OUTPUT IN) {
     PS_OUTPUT OUT;
+
+    LODFadeClip(IN.vpos);
 
 #define	expand(v)		(((v) - 0.5) / 0.5)
 #define	compress(v)		(((v) * 0.5) + 0.5)

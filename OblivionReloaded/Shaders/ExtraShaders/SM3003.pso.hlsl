@@ -17,6 +17,7 @@ float3 MatAlpha : register(c3);
 sampler2D NormalMap : register(s1);
 float4 ToggleADTS : register(c5);
 float4 ToggleNumLights : register(c6);
+#include "../Includes/LODFade.hlsl"
 //
 //
 // Registers:
@@ -62,6 +63,7 @@ struct VS_OUTPUT {
     float3 texcoord_5 : TEXCOORD5_centroid;			// partial precision
     float3 texcoord_6 : TEXCOORD6_centroid;			// partial precision
     float4 texcoord_7 : TEXCOORD7_centroid;			// partial precision
+    float2 vpos : VPOS;
 };
 
 struct PS_OUTPUT {
@@ -72,6 +74,8 @@ struct PS_OUTPUT {
 
 PS_OUTPUT main(VS_OUTPUT IN) {
     PS_OUTPUT OUT;
+
+    LODFadeClip(IN.vpos);
 
 #define	expand(v)		(((v) - 0.5) / 0.5)
 #define	compress(v)		(((v) * 0.5) + 0.5)

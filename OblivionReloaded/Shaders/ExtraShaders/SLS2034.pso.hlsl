@@ -15,6 +15,7 @@ sampler2D NormalMap : register(s1);
 float4 PSLightColor[4] : register(c2);
 sampler2D ShadowMap : register(s5);
 sampler2D ShadowMaskMap : register(s6);
+#include "../Includes/LODFade.hlsl"
 //
 //
 // Registers:
@@ -45,6 +46,7 @@ struct VS_OUTPUT {
     float4 texcoord_4 : TEXCOORD4;
     float4 texcoord_5 : TEXCOORD5;
     float4 texcoord_6 : TEXCOORD6;
+    float2 vpos : VPOS;
 };
 
 struct PS_OUTPUT {
@@ -55,6 +57,8 @@ struct PS_OUTPUT {
 
 PS_OUTPUT main(VS_OUTPUT IN) {
     PS_OUTPUT OUT;
+
+    LODFadeClip(IN.vpos);
 
 #define	expand(v)		(((v) - 0.5) / 0.5)
 #define	compress(v)		(((v) * 0.5) + 0.5)

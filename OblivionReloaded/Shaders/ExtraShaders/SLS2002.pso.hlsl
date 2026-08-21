@@ -14,6 +14,7 @@ sampler2D NormalMap : register(s1);
 float4 PSLightColor[4] : register(c2);
 float4 Toggles : register(c7);
 float4 TESR_InteriorDimmer : register(c24);
+#include "../Includes/LODFade.hlsl"
 //
 //
 // Registers:
@@ -37,6 +38,7 @@ struct VS_OUTPUT {
     float3 texcoord_1 : TEXCOORD1_centroid;			// partial precision
     float3 color_0 : COLOR0;
     float4 color_1 : COLOR1;
+    float2 vpos : VPOS;
 };
 
 struct PS_OUTPUT {
@@ -47,6 +49,8 @@ struct PS_OUTPUT {
 
 PS_OUTPUT main(VS_OUTPUT IN) {
     PS_OUTPUT OUT;
+
+    LODFadeClip(IN.vpos);
 
 #define	expand(v)		(((v) - 0.5) / 0.5)
 #define	compress(v)		(((v) * 0.5) + 0.5)

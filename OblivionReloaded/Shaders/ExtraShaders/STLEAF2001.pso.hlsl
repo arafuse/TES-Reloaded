@@ -12,6 +12,7 @@ float4 TESR_ShadowLightPosition[12] : register(c6);
 sampler2D TESR_ShadowMapBufferNear : register(s4) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
 sampler2D TESR_ShadowMapBufferFar : register(s5) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
 row_major float4x4 TESR_InvViewProjectionTransform : register(c20);
+#include "../Includes/LODFade.hlsl"
 //
 //
 // Registers:
@@ -31,6 +32,7 @@ struct VS_OUTPUT {
     float4 texcoord_6 : TEXCOORD6;
     float4 texcoord_7 : TEXCOORD7;
     float4 texcoord_8 : TEXCOORD8;
+    float2 vpos : VPOS;
 };
 
 struct PS_OUTPUT {
@@ -42,6 +44,8 @@ struct PS_OUTPUT {
 
 PS_OUTPUT main(VS_OUTPUT IN) {
     PS_OUTPUT OUT;
+
+    LODFadeClip(IN.vpos);
 
     float3 q0;
     float4 r0;

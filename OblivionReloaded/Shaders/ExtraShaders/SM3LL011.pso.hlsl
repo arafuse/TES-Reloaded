@@ -17,6 +17,7 @@ float4 TESR_ShadowData : register(c17);
 float4 TESR_ShadowLightPosition[12] : register(c18);
 sampler2D TESR_ShadowMapBufferNear : register(s8) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
 sampler2D TESR_ShadowMapBufferFar : register(s9) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
+#include "../Includes/LODFade.hlsl"
 
 
 
@@ -57,6 +58,7 @@ struct VS_INPUT {
     float4 texcoord_2 : TEXCOORD2;
     float4 texcoord_7 : TEXCOORD7_centroid;			// partial precision
     float4 texcoord_8 : TEXCOORD8;
+    float2 vpos : VPOS;
 };
 
 struct VS_OUTPUT {
@@ -68,6 +70,8 @@ struct VS_OUTPUT {
 
 VS_OUTPUT main(VS_INPUT IN) {
     VS_OUTPUT OUT;
+
+    LODFadeClip(IN.vpos);
 
 #define	expand(v)		(((v) - 0.5) / 0.5)
 #define	compress(v)		(((v) * 0.5) + 0.5)

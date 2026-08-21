@@ -13,6 +13,7 @@ float4 PSLightColor[4] : register(c2);
 sampler2D NoiseMap : register(s2);
 float4 TESR_TerrainData : register(c8);
 sampler2D TESR_samplerNoise : register(s10) < string ResourceName = "Effects\TerrainNoise_n.dds"; > = sampler_state { ADDRESSU = WRAP; ADDRESSV = WRAP; MAGFILTER = LINEAR; MINFILTER = MINDEF; MIPFILTER = MIPDEF; };
+#include "../Includes/LODFade.hlsl"
 
 //
 //
@@ -36,6 +37,7 @@ struct VS_OUTPUT {
     float4 texcoord_2 : TEXCOORD2_centroid;
     float3 Light0Dir : TEXCOORD3_centroid;
     float4 DistanceNoise : COLOR2;
+    float2 vpos : VPOS;
 };
 
 struct PS_OUTPUT {
@@ -48,6 +50,8 @@ struct PS_OUTPUT {
 
 PS_OUTPUT main(VS_OUTPUT IN) {
     PS_OUTPUT OUT;
+
+    LODFadeClip(IN.vpos);
 
 #define	expand(v)		(((v) - 0.5) / 0.5)
 #define	compress(v)		(((v) * 0.5) + 0.5)

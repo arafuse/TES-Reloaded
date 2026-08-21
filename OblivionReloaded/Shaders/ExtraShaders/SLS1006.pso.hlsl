@@ -9,6 +9,7 @@
 sampler2D DiffuseMap : register(s0);
 float4 EmittanceColor : register(c6);
 sampler2D LayerMap : register(s1);
+#include "../Includes/LODFade.hlsl"
 //
 //
 // Registers:
@@ -26,6 +27,7 @@ sampler2D LayerMap : register(s1);
 struct VS_OUTPUT {
     float2 LayerUV : TEXCOORD0;
     float2 color_0 : COLOR0;
+    float2 vpos : VPOS;
 };
 
 struct PS_OUTPUT {
@@ -36,6 +38,8 @@ struct PS_OUTPUT {
 
 PS_OUTPUT main(VS_OUTPUT IN) {
     PS_OUTPUT OUT;
+
+    LODFadeClip(IN.vpos);
 
 #define	expand(v)		(((v) - 0.5) / 0.5)
 #define	compress(v)		(((v) * 0.5) + 0.5)

@@ -13,6 +13,7 @@ sampler2D NormalMap : register(s1);
 float4 PSLightColor[4] : register(c2);
 float4 Toggles : register(c7);
 sampler2D TESR_samplerBaseMap : register(s0) = sampler_state { MINFILTER = LINEAR; };
+#include "../Includes/LODFade.hlsl"
 
 //
 //
@@ -43,6 +44,7 @@ struct VS_OUTPUT {
     float3 color_0 : COLOR0;
     float4 color_1 : COLOR1;
     float4 texcoord_7 : TEXCOORD7;
+    float2 vpos : VPOS;
 };
 
 struct PS_OUTPUT {
@@ -54,6 +56,8 @@ struct PS_OUTPUT {
 
 PS_OUTPUT main(VS_OUTPUT IN) {
     PS_OUTPUT OUT;
+
+    LODFadeClip(IN.vpos);
 
 #define	expand(v)		(((v) - 0.5) / 0.5)
 #define	compress(v)		(((v) * 0.5) + 0.5)

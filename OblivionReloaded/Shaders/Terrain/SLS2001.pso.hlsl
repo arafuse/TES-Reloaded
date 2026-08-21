@@ -14,6 +14,7 @@ sampler2D NoiseMap : register(s6);
 float4 Toggles : register(c7);
 float4 TESR_TerrainData : register(c8);
 sampler2D TESR_samplerNoise : register(s10) < string ResourceName = "Effects\TerrainNoise_n.dds"; > = sampler_state { ADDRESSU = WRAP; ADDRESSV = WRAP; MAGFILTER = LINEAR; MINFILTER = MINDEF; MIPFILTER = MIPDEF; };
+#include "../Includes/LODFade.hlsl"
 
 //
 //
@@ -40,6 +41,7 @@ struct VS_OUTPUT {
     float3 Light0Dir : TEXCOORD1_centroid;
     float3 Location : TEXCOORD3_centroid;
     float FarClip : TEXCOORD7_centroid;
+    float2 vpos : VPOS;
 };
 
 struct PS_OUTPUT {
@@ -52,6 +54,8 @@ struct PS_OUTPUT {
 
 PS_OUTPUT main(VS_OUTPUT IN) {
     PS_OUTPUT OUT;
+
+    LODFadeClip(IN.vpos);
 
 #define	expand(v)		(((v) - 0.5) / 0.5)
 #define	shades(n, l)	saturate(dot(n, l))

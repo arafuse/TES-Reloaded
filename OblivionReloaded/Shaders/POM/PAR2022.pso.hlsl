@@ -8,6 +8,7 @@
 //
 sampler2D TESR_samplerBaseMap : register(s0) = sampler_state { MINFILTER = LINEAR; };
 float4 Toggles : register(c7);
+#include "../Includes/LODFade.hlsl"
 
 //
 //
@@ -27,6 +28,7 @@ struct VS_OUTPUT {
     float3 texcoord_6 : TEXCOORD6_centroid;
     float3 color_0 : COLOR0;
     float4 ShadowUV0 : TEXCOORD4;
+    float2 vpos : VPOS;
 };
 
 struct PS_OUTPUT {
@@ -38,6 +40,8 @@ struct PS_OUTPUT {
 
 PS_OUTPUT main(VS_OUTPUT IN) {
     PS_OUTPUT OUT;
+
+    LODFadeClip(IN.vpos);
 
 #define	uvtile(w)		(((w) * 0.04) - 0.02)
 

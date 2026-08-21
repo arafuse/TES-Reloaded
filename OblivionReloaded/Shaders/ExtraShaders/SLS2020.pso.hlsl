@@ -20,6 +20,7 @@ sampler2D ShadowMap : register(s6);
 sampler2D ShadowMaskMap : register(s7);
 sampler2D TESR_ShadowMapBufferNear : register(s8) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
 sampler2D TESR_ShadowMapBufferFar : register(s9) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
+#include "../Includes/LODFade.hlsl"
 
 // Registers:
 //
@@ -48,6 +49,7 @@ struct VS_OUTPUT {
     float4 texcoord_8 : TEXCOORD8;
     float2 LCOLOR_0 : COLOR0;
     float4 LCOLOR_1 : COLOR1;
+    float2 vpos : VPOS;
 };
 
 struct PS_OUTPUT {
@@ -57,6 +59,8 @@ struct PS_OUTPUT {
 
 PS_OUTPUT main(VS_OUTPUT IN) {
     PS_OUTPUT OUT;
+
+    LODFadeClip(IN.vpos);
 
 #define	expand(v)		(((v) - 0.5) / 0.5)
 #define	compress(v)		(((v) * 0.5) + 0.5)
