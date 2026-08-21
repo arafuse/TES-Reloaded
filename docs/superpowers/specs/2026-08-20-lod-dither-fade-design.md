@@ -182,7 +182,7 @@ void LODFadeClip(float2 vpos) {
     float z = TESR_GEOM_FadeParams.z;
     [branch]
     if (a < 1.0 || z > 0.5) {
-        float n = frac(sin(dot(vpos + TESR_GEOM_FadeParams.y, float2(12.9898, 78.233))) * 43758.5453);
+        float n = frac(52.9829189 * frac(dot(vpos, float2(0.06711056, 0.00583715))) + TESR_GEOM_FadeParams.y);
         clip(z > 0.5 ? (n - a) : (a - n));
     }
 }
@@ -194,6 +194,21 @@ entirely at runtime, rather than always computing it and throwing the result awa
 is a per-draw constant, so the branch is uniform across the whole draw call, which is exactly what
 dynamic branching is for. Verified in the compiled `ps_3_0` assembly as a real `if_lt`/`endif` pair
 around the hash, not flattened into `cmp` selects.
+
+The hash is interleaved gradient noise (`frac(52.9829189 * frac(dot(vpos, float2(0.06711056,
+0.00583715))) + seed)`), not the more common `sin`-based hash. This is an instruction-budget
+constraint, not a style choice: ps_3_0 has no native `sin`, so it expands into a large
+range-reduction sequence, while IGN is four ALU ops. The `SM3*`/`SM3LL*` multi-light shaders in the
+covered set are already large enough (up to ~480 baseline instruction slots) that the `sin` hash
+pushed the largest of them (`SM3000.pso.hlsl`) over the ps_3_0 512-instruction-slot limit —
+`fxc` compiles past that limit without error, so it would have failed silently at
+`CreatePixelShader` time on real hardware instead of at compile time. IGN was chosen over a
+cheaper 2-op R2 low-discrepancy alternative because IGN is purpose-built for dithering and
+distributes better spatially; R2 produces a visible diagonal lattice. Even with IGN, `SM3000`
+lands at ~509/512 — three slots of margin, the best available without dropping shaders from
+coverage. Do not reintroduce the `sin` hash, and be aware that the residual cost driving the
+largest files close to the limit is the `[branch]` and `clip()` scaffolding and register
+pressure, not the hash itself — no cheaper hash meaningfully changes that margin.
 
 Each covered pixel shader gains `float2 vpos : VPOS` on its input struct and one
 `LODFadeClip(IN.vpos)` call at the top of `main`. `VPOS` requires ps_3_0, which is what this
