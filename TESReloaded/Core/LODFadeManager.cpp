@@ -91,7 +91,8 @@ void LODFadeManager::PollDistantGrid() {
 }
 
 /// Detects LandLOD (terrain LOD) quadrants gaining a new node by diffing the child array against
-/// the previous frame. A size change (e.g. quadrant count changing) resets tracking without fading.
+/// the previous frame. A size change resyncs to the actual current pointers rather than NULL,
+/// since stamping NULL would make every already-loaded quadrant look newly-populated next poll.
 void LODFadeManager::PollLandLOD() {
 
 	NiNode* LandLOD = Tes->LODRoot;
@@ -100,6 +101,21 @@ void LODFadeManager::PollLandLOD() {
 	UInt32 Count = LandLOD->m_children.numObjs;
 	if (PrevLandLOD.size() != Count) {
 		PrevLandLOD.assign(Count, NULL);
+		for (UInt32 i = 0; i < Count; i++) PrevLandLOD[i] = LandLOD->m_children.data[i];
+		return;
+	}
+
+	// Count first, so a teleport is suppressed before any fade is started rather than after.
+	UInt32 Changed = 0;
+	for (UInt32 i = 0; i < Count; i++) {
+		NiAVObject* Node = LandLOD->m_children.data[i];
+		if (Node != PrevLandLOD[i]) Changed++;
+	}
+
+	if (Changed > (Count / 2)) {
+		if (TheSettingManager->SettingsMain.Develop.LogLODFade)
+			Logger::Log("[LODFade] landlod discontinuity: %d of %d slots changed, suppressed", Changed, Count);
+		for (UInt32 i = 0; i < Count; i++) PrevLandLOD[i] = LandLOD->m_children.data[i];
 		return;
 	}
 

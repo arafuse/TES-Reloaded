@@ -510,6 +510,8 @@ void LODFadeManager::PollDistantGrid() {
 
 - [ ] **Step 3: Implement the LandLOD poller**
 
+The size-mismatch branch resyncs `PrevLandLOD` to the actual current child pointers rather than `NULL`, because stamping `NULL` would make every already-loaded quadrant look newly-populated on the very next poll and fire a spurious mass fade-in; the discontinuity guard below mirrors `PollDistantGrid`'s count-first shape but with its own threshold, since LandLOD has only about a dozen slots.
+
 ```cpp
 void LODFadeManager::PollLandLOD() {
 
@@ -519,6 +521,21 @@ void LODFadeManager::PollLandLOD() {
 	UInt32 Count = LandLOD->m_children.numObjs;
 	if (PrevLandLOD.size() != Count) {
 		PrevLandLOD.assign(Count, NULL);
+		for (UInt32 i = 0; i < Count; i++) PrevLandLOD[i] = LandLOD->m_children.data[i];
+		return;
+	}
+
+	// Count first, so a teleport is suppressed before any fade is started rather than after.
+	UInt32 Changed = 0;
+	for (UInt32 i = 0; i < Count; i++) {
+		NiAVObject* Node = LandLOD->m_children.data[i];
+		if (Node != PrevLandLOD[i]) Changed++;
+	}
+
+	if (Changed > (Count / 2)) {
+		if (TheSettingManager->SettingsMain.Develop.LogLODFade)
+			Logger::Log("[LODFade] landlod discontinuity: %d of %d slots changed, suppressed", Changed, Count);
+		for (UInt32 i = 0; i < Count; i++) PrevLandLOD[i] = LandLOD->m_children.data[i];
 		return;
 	}
 
