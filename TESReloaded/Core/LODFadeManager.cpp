@@ -142,10 +142,18 @@ void LODFadeManager::Update() {
 	DitherSeed = (float)(GetTickCount() & 0xFFFF);
 
 	// Player and Tes are NULL at the main menu; every per-frame hook that touches them must guard.
+	// Fades.clear() below invalidates every FadeRecord* GeomCache holds, so the cache must be
+	// dropped here too - this early return would otherwise skip the FadeSetDirty-gated clear
+	// that normally runs at the end of this function.
 	if (!Player || !Tes) {
 		Fades.clear();
 		RootIndex.clear();
+		GeomCache.clear();
+		FadeSetDirty = false;
 		LiveCount = 0;
+		FadeResetPending = false;
+		TheShaderManager->ShaderConst.LODFade.Params.x = 1.0f;
+		TheShaderManager->ShaderConst.LODFade.Params.z = 0.0f;
 		PrevValid = false;
 		return;
 	}
@@ -173,6 +181,15 @@ void LODFadeManager::Update() {
 	}
 
 	FadeResetPending = (LiveCount == 0 && PrevLive > 0);
+
+	// A shader that declares both TESR_GEOM_Toggles and TESR_GEOM_FadeParams (e.g. skin) can call
+	// SetPerGeomCT() from a foreign call site outside the LODFade gate, republishing whatever
+	// LODFade.Params currently holds. With no fade in flight that value must always be opaque, so a
+	// foreign publish can never leave stale stippling behind.
+	if (LiveCount == 0) {
+		TheShaderManager->ShaderConst.LODFade.Params.x = 1.0f;
+		TheShaderManager->ShaderConst.LODFade.Params.z = 0.0f;
+	}
 
 }
 

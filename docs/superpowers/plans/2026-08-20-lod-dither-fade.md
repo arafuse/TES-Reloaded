@@ -564,10 +564,18 @@ void LODFadeManager::Update() {
 	DitherSeed = (float)(GetTickCount() & 0xFFFF);
 
 	// Player and Tes are NULL at the main menu; every per-frame hook that touches them must guard.
+	// Fades.clear() below invalidates every FadeRecord* GeomCache holds, so the cache must be
+	// dropped here too - this early return would otherwise skip the FadeSetDirty-gated clear
+	// that normally runs at the end of this function (see Task 5).
 	if (!Player || !Tes) {
 		Fades.clear();
 		RootIndex.clear();
+		GeomCache.clear();
+		FadeSetDirty = false;
 		LiveCount = 0;
+		FadeResetPending = false;
+		TheShaderManager->ShaderConst.LODFade.Params.x = 1.0f;
+		TheShaderManager->ShaderConst.LODFade.Params.z = 0.0f;
 		PrevValid = false;
 		return;
 	}
@@ -587,6 +595,8 @@ void LODFadeManager::Update() {
 
 }
 ```
+
+Note: `GeomCache`, `FadeSetDirty`, and `FadeResetPending` are only introduced in Task 5; this guard branch is finished off there once those members exist (Task 5 Step 3/5 supersede the bare version above).
 
 Then remove the now-redundant `RootIndex[Node] = Record;` assignments from both pollers, keeping the `!RootIndex.count(Node)` guards, which read the previous frame's index and are what stop a node being re-faded every frame.
 
@@ -669,16 +679,25 @@ LODFadeManager::FadeRecord* LODFadeManager::ResolveGeometry(NiAVObject* Geometry
 
 - [ ] **Step 3: Clear the cache when the fade set changes**
 
-The cache is only valid while `RootIndex` is unchanged. In `Update`, immediately before the `RootIndex.clear();` line added in Task 4, capture the previous size and clear the geometry cache whenever the live set changed:
+The cache is only valid while `RootIndex` is unchanged. Do NOT invalidate it by comparing `LiveCount` before/after: a fade retiring and another starting in the same frame leaves `LiveCount` unchanged while `RootIndex`'s contents are entirely different, so a `LiveCount` comparison would serve `FadeRecord*` values dangling into an erased-and-repushed `std::vector` (Ruling F6).
+
+Instead, add `bool FadeSetDirty;` to the private section, initialised `false` in the constructor. Set `FadeSetDirty = true;` in `AddFade` (success path, after `push_back`) and in `Retire` (before `erase`). In `Update`, after `RootIndex` is rebuilt:
 
 ```cpp
 	UInt32 PrevLive = LiveCount;
 	RootIndex.clear();
 	for (UInt32 i = 0; i < Fades.size(); i++) RootIndex[Fades[i].Root] = &Fades[i];
 	LiveCount = Fades.size();
-	if (LiveCount != PrevLive) GeomCache.clear();
-	if (LiveCount == 0) GeomCache.clear();
+
+	if (FadeSetDirty) {
+		GeomCache.clear();
+		FadeSetDirty = false;
+	}
 ```
+
+`PrevLive` is kept only to compute `FadeResetPending` in Step 5, not to decide cache invalidity.
+
+The `!Player || !Tes` guard branch added in Task 4 Step 4 must uphold the same invariant: it calls `Fades.clear()`, which invalidates every `FadeRecord*` `GeomCache` holds, but its early `return` skips the `FadeSetDirty`-gated clear above. That branch must therefore also clear `GeomCache` directly, reset `FadeSetDirty = false;`, and set `FadeResetPending = false;` (Ruling F9a) — it cannot rely on the end-of-`Update` logic it never reaches.
 
 - [ ] **Step 4: Publish the constant per draw**
 
@@ -716,6 +735,17 @@ Initialise `FadeResetPending = false;` in the constructor, set `Record.Invert = 
 ```cpp
 	FadeResetPending = (LiveCount == 0 && PrevLive > 0);
 ```
+
+**Ruling F9b:** `ShaderRecord::SetPerGeomCT()` publishes every per-geom constant the bound shader declares, not just the one its caller cared about. `RenderHook.cpp`'s `isSkin` block (Task 5 Step 4's neighbour, unconditional, outside the LODFade gate) calls `SetPerGeomCT()` on any shader that also happens to declare `TESR_GEOM_FadeParams`, republishing whatever `ShaderConst.LODFade.Params` currently holds — even with the LODFade gate shut. If the `!Player || !Tes` guard bails mid-fade, that stale sub-1.0 alpha would otherwise sit there forever with no live fade left to reset it. So "no fade in flight" must mean the published constant is always fully opaque, not merely that the gate is shut. Add, immediately after the `FadeResetPending` line above:
+
+```cpp
+	if (LiveCount == 0) {
+		TheShaderManager->ShaderConst.LODFade.Params.x = 1.0f;
+		TheShaderManager->ShaderConst.LODFade.Params.z = 0.0f;
+	}
+```
+
+and the same two assignments in the `!Player || !Tes` guard branch (Task 4 Step 4 / Step 3 above), since that path returns before reaching this line. `FadeResetPending` then becomes a belt-and-braces optimisation (skip the gate quickly once opaque) rather than the sole guarantee of opacity.
 
 - [ ] **Step 6: Build**
 
