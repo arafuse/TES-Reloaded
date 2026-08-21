@@ -8,6 +8,8 @@ LODFadeManager::LODFadeManager() {
 	CurrentTime = 0.0f;
 	DitherSeed = 0.0f;
 	PrevValid = false;
+	FadeSetDirty = false;
+	FadeResetPending = false;
 
 }
 
@@ -21,8 +23,10 @@ LODFadeManager::FadeRecord* LODFadeManager::AddFade(NiAVObject* Root, UInt8 Dire
 	Record.Direction = Direction;
 	Record.StartTime = CurrentTime;
 	Record.Pinned = false;
+	Record.Invert = false;
 	Fades.push_back(Record);
 	LiveCount = Fades.size();
+	FadeSetDirty = true;
 
 	if (TheSettingManager->SettingsMain.Develop.LogLODFade)
 		Logger::Log("[LODFade] start root=%08X dir=%d live=%d", (UInt32)Root, Direction, LiveCount);
@@ -48,6 +52,7 @@ void LODFadeManager::Retire(UInt32 Index) {
 	if (TheSettingManager->SettingsMain.Develop.LogLODFade)
 		Logger::Log("[LODFade] retire root=%08X", (UInt32)Fades[Index].Root);
 
+	FadeSetDirty = true;
 	Fades.erase(Fades.begin() + Index);
 
 }
@@ -154,8 +159,43 @@ void LODFadeManager::Update() {
 	PollLandLOD();
 	PrevValid = true;
 
+	UInt32 PrevLive = LiveCount;
 	RootIndex.clear();
 	for (UInt32 i = 0; i < Fades.size(); i++) RootIndex[Fades[i].Root] = &Fades[i];
 	LiveCount = Fades.size();
+
+	// GeomCache is only valid while RootIndex is unchanged. AddFade/Retire may both fire in the
+	// same frame leaving LiveCount unchanged but RootIndex's contents different, so the cache is
+	// invalidated on the FadeSetDirty flag rather than on a LiveCount comparison.
+	if (FadeSetDirty) {
+		GeomCache.clear();
+		FadeSetDirty = false;
+	}
+
+	FadeResetPending = (LiveCount == 0 && PrevLive > 0);
+
+}
+
+/// Maps a drawn geometry to the fade it belongs to by walking m_parent to a registered root.
+/// The answer is cached for the duration of the fade episode, misses included.
+LODFadeManager::FadeRecord* LODFadeManager::ResolveGeometry(NiAVObject* Geometry) {
+
+	std::unordered_map<NiAVObject*, FadeRecord*>::iterator Cached = GeomCache.find(Geometry);
+	if (Cached != GeomCache.end()) return Cached->second;
+
+	FadeRecord* Found = NULL;
+	NiAVObject* Node = Geometry;
+	for (UInt32 Depth = 0; Node && Depth < 16; Depth++) {
+		std::unordered_map<NiAVObject*, FadeRecord*>::iterator Root = RootIndex.find(Node);
+		if (Root != RootIndex.end()) {
+			Found = Root->second;
+			break;
+		}
+		Node = (NiAVObject*)Node->m_parent;
+	}
+
+	// Misses are cached too - a miss is the common case and the walk must not repeat per frame.
+	GeomCache[Geometry] = Found;
+	return Found;
 
 }

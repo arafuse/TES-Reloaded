@@ -534,6 +534,20 @@ UInt32 RenderHook::TrackSetupShaderPrograms(NiGeometry* Geometry, NiSkinInstance
 			PixelShader->ShaderProg->SetPerGeomCT();
 		}
 
+		// LOD dither fade. Only pixel shaders that declare TESR_GEOM_FadeParams carry the clip, and
+		// the whole block is inert unless a fade is actually in flight. Covered draws that are NOT
+		// fading are explicitly given 1.0, so a fading draw's alpha cannot leak into the next draw.
+		if (PixelShader->ShaderProg && PixelShader->ShaderProg->HasFadeParams &&
+			TheSettingManager->SettingsMain.LODFade.Enabled &&
+			(TheLODFadeManager->AnyFadesLive() || TheLODFadeManager->FadeResetPending)) {
+			LODFadeManager::FadeRecord* Record = TheLODFadeManager->ResolveGeometry(Geometry);
+			float Alpha = Record ? TheLODFadeManager->GetAlpha(Record) : 1.0f;
+			TheShaderManager->ShaderConst.LODFade.Params.x = Alpha;
+			TheShaderManager->ShaderConst.LODFade.Params.y = TheLODFadeManager->DitherSeed;
+			TheShaderManager->ShaderConst.LODFade.Params.z = (Record && Record->Invert) ? 1.0f : 0.0f;
+			PixelShader->ShaderProg->SetPerGeomCT();
+		}
+
 		if (PixelShader->isRefraction) {
 			RenderState->SetRenderState(D3DRS_ZWRITEENABLE, FALSE, 0);
 		}

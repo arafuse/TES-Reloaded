@@ -19,6 +19,7 @@ public:
 		UInt8		Direction;
 		float		StartTime;
 		bool		Pinned;
+		bool		Invert;
 	};
 
 	/// Advances all live fades and retires completed ones. Called once per frame.
@@ -33,8 +34,15 @@ public:
 	/// True when at least one fade is in flight. Gates all per-draw work.
 	bool			AnyFadesLive() { return LiveCount > 0; }
 
+	/// Maps a drawn geometry to the fade it belongs to by walking m_parent to a registered root.
+	/// The answer is cached for the duration of the fade episode, misses included.
+	FadeRecord*		ResolveGeometry(NiAVObject* Geometry);
+
 	/// Seed published in TESR_GEOM_FadeParams.y to animate the dither pattern per frame.
 	float			DitherSeed;
+
+	/// Set for one frame after the last fade retires, so every covered shader is reset to opaque.
+	bool			FadeResetPending;
 
 private:
 	std::vector<FadeRecord>	Fades;
@@ -44,7 +52,9 @@ private:
 	std::vector<NiAVObject*>							PrevDistant;
 	std::vector<NiAVObject*>							PrevLandLOD;
 	std::unordered_map<NiAVObject*, FadeRecord*>		RootIndex;
+	std::unordered_map<NiAVObject*, FadeRecord*>		GeomCache;
 	bool												PrevValid;
+	bool												FadeSetDirty;
 
 	void			PollDistantGrid();
 	void			PollLandLOD();
