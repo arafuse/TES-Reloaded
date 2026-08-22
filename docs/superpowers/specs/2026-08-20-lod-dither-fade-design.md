@@ -326,6 +326,17 @@ In-game checklist:
 - Fast-travel and confirm the discontinuity guard suppresses a world-wide dissolve.
 - Set `PinDeparting=0` and confirm the fade-in half still works alone.
 - Toggle TAA off and confirm the dither is noisy but not broken.
+- Walk a cell boundary watching for cells that are still loaded and visible dithering out. The
+  pollers treat any slot going from one non-NULL node to a different one as a departure, which is
+  required so a direct swap is not missed — but if the engine re-indexes the loaded grid on a
+  boundary crossing rather than rotating it, still-present cells produce that same pattern. The
+  `Changed > 2 * size` discontinuity guard should mask it; this checks that it does.
+- Watch a `LandLOD` quadrant that is replaced by nothing rather than by a new quadrant. The
+  complementary construction only reaches exactly 100% coverage when an arrival accompanies the
+  departure; a quadrant replaced by NULL dissolves into a hole rather than into its successor.
+- Confirm covered geometry is visible at all with `[LODFade] Enabled=0`. The clip is compiled into
+  the shaders and cannot be switched off from the INI, so opacity depends on the one forced opaque
+  publish; if that regressed, statics, trees and terrain render invisible rather than unfaded.
 
 ## Risks
 
