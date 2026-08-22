@@ -131,6 +131,37 @@ void LODFadeManager::RunRootCensus(NiAVObject* Root, const char* Tier) {
 	Logger::Log("[LODFade] root census: tier=%s root=%08X depth=%d nodes=%d geoms=%d firstGeom=%08X firstGeomParent=%08X",
 		Tier, (UInt32)Root, MaxDepth, Nodes, Geoms, (UInt32)FirstGeom, FirstGeom ? (UInt32)FirstGeom->m_parent : 0);
 
+	// The decisive half: walk back UP from the geometry the descent just found, under EXACTLY
+	// ResolveGeometry's rule -- the node itself is tested before any step, and the cap is the same 16 --
+	// so this is that function's own verdict on a node the descent proved is under Root.
+	UInt32 UpReached = 0;
+	UInt32 UpDepth = 0;
+	UInt32 Up[3] = { 0, 0, 0 };
+	if (FirstGeom) {
+		NiAVObject* Node = FirstGeom;
+		for (; Node && UpDepth < 16; UpDepth++) {
+			if (Node == Root) { UpReached = 1; break; }
+			Node = (NiAVObject*)Node->m_parent;
+		}
+	}
+
+	// The chain shape itself, captured separately so a walk that terminated early still reports what
+	// it saw. Each hop is NULL-tested before it is followed.
+	NiAVObject* Ancestor = FirstGeom ? (NiAVObject*)FirstGeom->m_parent : NULL;
+	for (UInt32 i = 0; i < 3 && Ancestor; i++) {
+		Up[i] = (UInt32)Ancestor;
+		Ancestor = (NiAVObject*)Ancestor->m_parent;
+	}
+
+	// selfRoot answers the landlod shape, where root and geometry are the same object, so
+	// ResolveGeometry's self-check would match at depth 0. inIndex is RootIndex as it stands RIGHT NOW,
+	// which is the PREVIOUS frame's index: this runs from AddFade, inside the poll phase, and Update()
+	// rebuilds RootIndex only afterwards. Read it as "was this a root last frame", not as the lookup
+	// the next draw will do.
+	Logger::Log("[LODFade] census updown: tier=%s root=%08X firstGeom=%08X upReached=%d upDepth=%d up1=%08X up2=%08X up3=%08X selfRoot=%d inIndex=%d",
+		Tier, (UInt32)Root, (UInt32)FirstGeom, UpReached, UpDepth, Up[0], Up[1], Up[2],
+		(FirstGeom && FirstGeom == Root) ? 1 : 0, FirstGeom ? (UInt32)RootIndex.count(FirstGeom) : 0);
+
 }
 
 /// DIAGNOSTIC ONLY. Records the frame's first failed parent walk -- the geometry, its first three

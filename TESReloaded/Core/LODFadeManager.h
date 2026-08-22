@@ -216,6 +216,8 @@ private:
 	// DIAGNOSTIC ONLY: takes no references, dereferences nothing without a NULL test and mutates nothing
 	// but its own latch. Walks Root downward once per tier per session and reports how many nodes and
 	// how many drawable leaves actually live under a fade root, which nothing has ever verified.
+	// It then walks back UP from that same leaf under ResolveGeometry's exact rule, so a m_parent chain
+	// that does not mirror the child arrays shows up as upReached=0 on a node known to be under Root.
 	void			RunRootCensus(NiAVObject* Root, const char* Tier);
 
 	// True when Object's NiRTTI chain reaches NiNode. Oblivion's NiObject carries no GetAsNiNode slot --
