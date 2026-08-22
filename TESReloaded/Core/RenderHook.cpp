@@ -541,11 +541,20 @@ UInt32 RenderHook::TrackSetupShaderPrograms(NiGeometry* Geometry, NiSkinInstance
 		// float constants to ZERO, so until c110 is written once the clip kills every covered pixel.
 		// c110 is device-global, so that single publish repairs every covered shader at once.
 		if (PixelShader->ShaderProg && PixelShader->ShaderProg->HasFadeParams) {
+			// Diagnostic only, and deliberately counted before every other condition so it is a pure
+			// measure of how many draws the constant actually reaches. See LODFadeManager::Update().
+			TheLODFadeManager->DrawCovered++;
 			bool FadeActive = TheSettingManager->SettingsMain.LODFade.Enabled &&
 				(TheLODFadeManager->AnyFadesLive() || TheLODFadeManager->FadeResetPending);
 			if (FadeActive || TheLODFadeManager->NeedsOpaquePublish) {
+				TheLODFadeManager->DrawGated++;
 				LODFadeManager::FadeRecord* Record = FadeActive ? TheLODFadeManager->ResolveGeometry(Geometry) : NULL;
 				float Alpha = Record ? TheLODFadeManager->GetAlpha(Record) : 1.0f;
+				// Diagnostic only. The miss sample is armed once a frame at most, so a missed draw pays
+				// one bool load here and no call.
+				if (Record) TheLODFadeManager->DrawResolved++;
+				else if (FadeActive && TheLODFadeManager->ResolveMissWanted) TheLODFadeManager->NoteResolveMiss(Geometry);
+				if (Alpha < TheLODFadeManager->DrawMinAlpha) TheLODFadeManager->DrawMinAlpha = Alpha;
 				TheShaderManager->ShaderConst.LODFade.Params.x = Alpha;
 				TheShaderManager->ShaderConst.LODFade.Params.y = TheLODFadeManager->DitherSeed;
 				TheShaderManager->ShaderConst.LODFade.Params.z = (Record && Record->Invert) ? 1.0f : 0.0f;

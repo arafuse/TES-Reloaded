@@ -15,6 +15,40 @@ LODFadeManager::LODFadeManager() {
 	DistantRefLogged = false;
 	CellGridLogged = false;
 	LandLODLogged = false;
+	DrawCovered = 0;
+	DrawGated = 0;
+	DrawResolved = 0;
+	DrawMinAlpha = 2.0f;
+	ResolveMissWanted = false;
+	ResolveMissPending = false;
+	ResolveMissLogged = false;
+	MissGeom = 0;
+	MissParents[0] = MissParents[1] = MissParents[2] = 0;
+	MissDepth = 0;
+	LastDrawLogTime = 0.0f;
+
+}
+
+/// DIAGNOSTIC ONLY. Records the frame's first failed parent walk -- the geometry, its first three
+/// ancestors and the depth reached -- so Update() can print the shape of the hierarchy the draw hook
+/// actually saw. Values are copied out here, while the pointers are known live, and never
+/// dereferenced again. Disarms itself, so at most one walk runs per frame and none once printed.
+void LODFadeManager::NoteResolveMiss(NiAVObject* Geometry) {
+
+	ResolveMissWanted = false;
+	if (!Geometry) return;
+
+	ResolveMissPending = true;
+	MissGeom = (UInt32)Geometry;
+	MissParents[0] = MissParents[1] = MissParents[2] = 0;
+	MissDepth = 0;
+
+	NiAVObject* Node = (NiAVObject*)Geometry->m_parent;
+	for (UInt32 Depth = 0; Node && Depth < 16; Depth++) {
+		if (Depth < 3) MissParents[Depth] = (UInt32)Node;
+		MissDepth = Depth + 1;
+		Node = (NiAVObject*)Node->m_parent;
+	}
 
 }
 
@@ -730,6 +764,36 @@ void LODFadeManager::Update() {
 	// (float)GetTickCount() is large enough that a float32 ulp already exceeds 0.25, which would
 	// quantise the seed to a handful of levels; an integer wrap keeps the full fraction.
 	DitherSeed = (float)((GetTickCount() >> 4) * 2654435769u) * (1.0f / 4294967296.0f);
+
+	// DIAGNOSTIC ONLY: report and reset the draw-path counters the render hook accumulated over the
+	// frame just past. Throttled to one line a second and only emitted while a fade was live, so idle
+	// play stays silent. Read-off: covered=0 means the constant never reached HasFadeParams (a CreateCT
+	// / shader-record binding problem, not a manager one); covered>0 with gated=0 means the gate
+	// condition is wrong; gated>0 with resolved=0 means ResolveGeometry never matches, i.e. the nodes
+	// we fade are not ancestors of the nodes that get drawn; resolved>0 with minAlpha near 1.0 means the
+	// alpha computation; resolved>0 with minAlpha<1.0 means the publish chain is fine and the fault is
+	// in the shader or the constant register.
+	bool LogFade = TheSettingManager->SettingsMain.Develop.LogLODFade;
+	if (LogFade && LiveCount > 0 && CurrentTime - LastDrawLogTime >= 1.0f) {
+		LastDrawLogTime = CurrentTime;
+		Logger::Log("[LODFade] draw: covered=%d gated=%d resolved=%d minAlpha=%.3f live=%d",
+			DrawCovered, DrawGated, DrawResolved, DrawMinAlpha, LiveCount);
+	}
+	// The captured ancestry sample is printed only when the whole frame resolved nothing while a fade
+	// was live, which is the case that says the fade roots are not in the drawn geometry's ancestry.
+	if (ResolveMissPending) {
+		if (LogFade && !ResolveMissLogged && DrawResolved == 0 && LiveCount > 0) {
+			ResolveMissLogged = true;
+			Logger::Log("[LODFade] resolve miss: geom=%08X parents=%08X,%08X,%08X depth=%d",
+				MissGeom, MissParents[0], MissParents[1], MissParents[2], MissDepth);
+		}
+		ResolveMissPending = false;
+	}
+	DrawCovered = 0;
+	DrawGated = 0;
+	DrawResolved = 0;
+	DrawMinAlpha = 2.0f;
+	ResolveMissWanted = LogFade && !ResolveMissLogged;
 
 	// Defensive only: ShaderManager::UpdateConstants already dereferences Tes->sky and
 	// Player->parentCell before it calls Update(), so this branch cannot currently be reached and is

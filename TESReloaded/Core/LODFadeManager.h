@@ -54,6 +54,25 @@ public:
 	/// draw. The draw hook must publish opaque once even with the feature disabled.
 	bool			NeedsOpaquePublish;
 
+	/// DIAGNOSTIC ONLY -- no invariant depends on any of these five and nothing but logging reads them.
+	/// Per-frame draw-path counters, incremented by the LODFade block in
+	/// RenderHook::TrackSetupShaderPrograms and reset at the top of Update() where the line is emitted.
+	/// DrawCovered counts every draw whose pixel shader declares TESR_GEOM_FadeParams, before any other
+	/// condition; DrawGated those that passed the full gate; DrawResolved those ResolveGeometry matched.
+	/// DrawMinAlpha is the smallest Params.x actually published, starting at 2.0 so "nothing published"
+	/// is distinguishable from "published 1.0". ResolveMissWanted is the arming flag for the one-shot
+	/// ancestry sample; the draw hook tests it inline so a missed draw costs one bool load.
+	UInt32			DrawCovered;
+	UInt32			DrawGated;
+	UInt32			DrawResolved;
+	float			DrawMinAlpha;
+	bool			ResolveMissWanted;
+
+	/// DIAGNOSTIC ONLY. Captures one sample of the m_parent walk from a geometry that failed to resolve,
+	/// as plain values so Update() can print it without dereferencing pointers later. Call only when
+	/// ResolveMissWanted is true; it disarms itself, so the walk runs at most once per frame.
+	void			NoteResolveMiss(NiAVObject* Geometry);
+
 	/// Non-mutating test for whether Pin would succeed, so a departure that cannot be held never gets a
 	/// fade record at all. Parent is the node the departing node was attached to when the shadow copy
 	/// last observed it. Logs the decline, which is the diagnostic this feature is measured by.
@@ -155,6 +174,15 @@ private:
 	// PollLandLOD, each printing once per session to prove their node pointers are actually non-NULL.
 	bool												CellGridLogged;
 	bool												LandLODLogged;
+
+	// DIAGNOSTIC ONLY: the captured resolve-miss sample and its latches. Stored as plain values, never
+	// as pointers to dereference, so printing it a frame later is safe.
+	bool												ResolveMissPending;
+	bool												ResolveMissLogged;
+	UInt32												MissGeom;
+	UInt32												MissParents[3];
+	UInt32												MissDepth;
+	float												LastDrawLogTime;
 
 	NiNode*			ResolveDistantRef();
 	void			PollDistantRef();
