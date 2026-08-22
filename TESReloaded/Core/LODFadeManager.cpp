@@ -140,6 +140,22 @@ void LODFadeManager::Unpin(FadeRecord* Record) {
 /// A large fraction of slots changing at once (teleport/fast-travel) is a discontinuity and is suppressed.
 void LODFadeManager::PollDistantGrid() {
 
+	// DISABLED - see below. Returns before touching the grid, so PrevDistant stays empty and no
+	// reference is ever taken on a value from it.
+	//
+	// In-game logging showed all 65*65 = 4225 slots differing from the previous frame on EVERY
+	// frame, so nothing was ever detected. Stable scene-graph pointers cannot do that, which means
+	// DistantGridEntry::unk04 is not the per-cell NiNode* this poller assumed. Game.h:8109 labels
+	// all four entry fields unk*, and the claim came from a reverse-engineering note that had never
+	// been exercised. Grid->size reading exactly 65 confirms the outer struct is right, so the fault
+	// is the entry layout alone.
+	//
+	// This became actively dangerous once the shadow copies started owning references: AssignSlot
+	// does InterlockedIncrement(&Node->m_uiRefCount), i.e. a write at Node + 4, so the poller was
+	// performing ~4225 arbitrary memory writes per frame. Disabled rather than repaired because the
+	// replacement walks DistantRefLOD's children instead, using only NiNode fields.
+	return;
+
 	GridDistantArray* Grid = Tes->gridDistantArray;
 	if (!Grid || !Grid->grid || !Grid->size) return;
 
