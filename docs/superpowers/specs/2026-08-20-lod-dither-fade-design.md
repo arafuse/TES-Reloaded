@@ -30,9 +30,9 @@ are detected by `PollCellGrid` and the departing LOD by `PollDistantRef`, which 
 detections against different structures with no guaranteed pairing, so the full models dither in from
 `a = 0` while the LOD keeps drawing at or near full coverage. That handoff therefore double-draws for
 the duration of the fade rather than staying at exactly 100%. This is deliberate: a double-draw is a
-far less visible artefact than a hole in the world, and pairing across two pollers would require
-reconstructing cell identity that neither tier carries -- the distant tier has none at all, since it
-diffs scene-graph children by membership rather than by cell slot.
+far less visible artefact than a hole in the world, and pairing across two pollers would still be
+impossible: the cell tier now carries cell identity, but the distant tier has none at all -- it diffs
+scene-graph children by membership, with no cell coordinate anywhere in the key.
 
 ## Scope
 
@@ -40,7 +40,8 @@ In scope:
 
 - LOD statics and LOD terrain fading in when they stream in.
 - LOD to full-model handoff on cell load.
-- Full-model to LOD handoff on cell unload.
+- ~~Full-model to LOD handoff on cell unload.~~ **Dropped**: the full-model half cannot fade out;
+  see "Cell fade-out is structurally impossible". The LOD half still fades *in* via the distant tier.
 - LOD statics fading out when they stream out.
 - Draw families: statics, trees and terrain.
 
@@ -50,6 +51,7 @@ Out of scope:
 - Shadows. The existing shadow-map crossfade already smooths shadow updates, so the shadow passes
   are left untouched.
 - Reference-level attach, such as an object created by a script mid-cell. Not a load-boundary pop.
+- Per-reference tracking of a cell's individual objects, which is what a cell fade-out would require.
 
 ## Chosen approach
 
@@ -66,12 +68,15 @@ Poll engine state once per frame and diff it. Rejected alternatives:
 
 Polling wins over attach/detach hooks because it needs no new hook addresses and degrades to a pop
 rather than a crash when an assumption is wrong. What it polls differs per tier. The loaded-cell tier
-uses `Tes->gridCellArray`, whose layout genuinely is reverse-engineered in `Game.h`, and the
-`LandLOD` tier diffs that node's child array by slot index; both are positional diffs. The distant
-tier is a **set-membership diff of `DistantRefLOD`'s scene-graph children**, adopted after
-`Tes->gridDistantArray`'s entry layout proved to be unverified guesswork (see "Engine data used").
+uses `Tes->gridCellArray`, whose layout genuinely is reverse-engineered in `Game.h`, and diffs the
+**set of loaded `TESObjectCELL*`** it holds -- a positional diff was tried first and detects nothing,
+because the grid re-indexes wholesale (see "State machine"). The `LandLOD` tier diffs that node's
+child array by slot index, the one genuinely positional tier. The distant tier is a **set-membership
+diff of `DistantRefLOD`'s scene-graph children**, adopted after `Tes->gridDistantArray`'s entry
+layout proved to be unverified guesswork (see "Engine data used").
 
-Cell identity is therefore *not* available across tiers and LOD-to-full pairing is **not** a lookup.
+Cell identity is therefore available in the cell tier only, and LOD-to-full pairing is **not** a
+lookup.
 Pairing is implicit through a shared `StartTime` where both halves land in one `Update()`, and the
 LOD-to-full handoff — which does not — deliberately double-draws instead; see the Goal section.
 Detection latency of a few frames is invisible against a 1.0 s fade.
@@ -84,19 +89,21 @@ per-geometry shader constant. Three parts:
 
 **Poller.** Runs once per frame from the existing per-frame entry point. Diffs the `DistantRefLOD`
 node's children, `Tes->gridCellArray` and `Tes->LODRoot->m_children` against shadow copies, and
-emits transitions. The two grid-backed tiers diff **by slot index**; the distant tier diffs **by set
-membership** (see below), which is why its shadow copy is keyed by node rather than by index.
+emits transitions. Only `LandLOD` diffs **by slot index**; the distant and cell tiers diff **by set
+membership** (see below), which is why their shadow copies are keyed by node and by cell rather than
+by index.
 
-Every shadow-copy entry carries two things: the remembered node and **the `NiNode*` it was attached
-to when the poller last saw it**. The distant tier holds this as an `unordered_map<NiAVObject*,
-NiNode*>` and the two positional tiers as a vector of `{Node, Parent, ParentOwned}` entries. Recording
-the parent is not optional bookkeeping: a departure is only ever detected one poll *after* the engine
-detached the child, and detaching NULLs `m_parent`, so this is the only surviving record of where the
-node belonged.
+The two pinning tiers' shadow-copy entries carry two things: the remembered node and **the `NiNode*`
+it was attached to when the poller last saw it**. The distant tier holds this as an
+`unordered_map<NiAVObject*, NiNode*>` and `LandLOD` as a vector of `{Node, Parent}` entries.
+Recording the parent is not optional bookkeeping: a departure is only ever detected one poll *after*
+the engine detached the child, and detaching NULLs `m_parent`, so this is the only surviving record
+of where the node belonged. Both tiers refresh it on every poll and neither holds a reference on it;
+see "Pinning".
 
-How stale that parent may be, and whether it carries a reference, **differs by tier** — see "Pinning":
-the distant and `LandLOD` tiers refresh it on every poll and hold no reference on it, while the cell
-tier keeps the last non-NULL answer and therefore owns a reference on it.
+The cell tier keeps no parent at all, because it never pins — its shadow copy is an
+`unordered_map<TESObjectCELL*, NiNode*>` of loaded cell to current container, and it owns a reference
+on the container only. See "Cell fade-out is structurally impossible".
 
 **Fade table.** A fixed-capacity array of `FadeRecord`. Each record holds a root `NiAVObject*`, a
 start time, a pin flag, an invert flag, a flag recording the cull state a pin found, the holder node
@@ -150,29 +157,56 @@ distant membership diff per frame and nothing else: no map probes, no constant s
   or no line at all means the traversal is wrong and must be re-derived — the point of the line is
   that a wrong assumption shows up immediately instead of after another silent session.
 - `Tes->gridCellArray` (`Game.h:8125`) — the loaded-cell grid; each `GridEntry` carries a
-  `TESObjectCELL*` and a `CellInfo` whose `niNode` is the cell's scene-graph node.
+  `TESObjectCELL*` and a `CellInfo*`. **`CellInfo::niNode` is a persistent per-slot container, not
+  the cell's own node**, and `CellInfo` itself is per slot: measured across a boundary crossing, all
+  25 `GridEntry::cell` pointers changed while every `niNode` and every `CellInfo*` stayed identical,
+  and the grid re-indexes wholesale rather than shifting a row. So `GridEntry::cell` is the only
+  field that carries cell identity and it is the diff key; `niNode` is read only as the container to
+  fade, and is never diffed. The `TESObjectCELL*` is used as an opaque pointer value — compared,
+  never dereferenced, and never reference-counted. The container *is* reference-counted for as long
+  as the shadow set names it. Offsets read from `Game.h`'s Oblivion block (lines 5084‑8872).
 - `Tes->LODRoot` (`Game.h:8170`) — misnamed; it points at the `LandLOD` node holding the 12 terrain
   quadrants. Neither grid array covers these, so they get their own 12-entry watcher.
 
 ## State machine
 
-Cell and `LandLOD` transitions are keyed by grid slot. Distant transitions are keyed by **set
-membership**, not by slot: `DistantRefLOD`'s child array is compacted and its slots reused as cells
+`LandLOD` transitions are keyed by grid slot. Distant and cell transitions are keyed by **set
+membership**, not by slot.
+
+For the distant tier: `DistantRefLOD`'s child array is compacted and its slots reused as cells
 stream, so an index-keyed diff reports the whole array changed every frame — exactly the failure the
 grid-array poller hit. Arrivals are nodes present now and absent from the previous set; departures
 are the reverse. This is immune to reordering and to compaction. Pairing remains implicit through
 shared `StartTime` (see "Complementary thresholds"), so losing per-slot cell identity costs nothing.
 
+For the cell tier the set is a mapping of **`TESObjectCELL*` to the container node that currently
+holds it**, built each poll from `Grid->grid[i].cell` and `Grid->grid[i].info->niNode`, skipping any
+entry missing either half. Arrivals are cells present now and absent from the previous set; each one
+fades in the container it currently sits under. The cell pointer is an opaque identity token —
+compared, never dereferenced, never referenced. The set owns one reference on the container in each
+entry, released on departure and in the `!Player || !Tes` guard, so a container cannot be freed while
+a fade names it.
+
+**Why keyed by cell rather than by node or by slot** (settled by in-game measurement, not assumed):
+`CellInfo::niNode` is a persistent per-slot *container*, not a per-cell node. Diagnostics across a
+boundary crossing read `cellptr=25 niNode=0 info=0 (of 25)` — every `GridEntry::cell` changed while
+every `niNode` and every `CellInfo*` stayed byte-identical. The original poller diffed `niNode`, a
+field that structurally cannot change, and correctly concluded nothing ever happened: it emitted no
+transition in four sessions. The grid also re-indexes **wholesale** on a crossing rather than
+shifting a row, so a slot-keyed diff is no better. Cell-set membership is immune to the re-index by
+construction: a crossing is `gridSize` arrivals and `gridSize` departures out of `gridSize²` however
+the slots shuffle.
+
 | Event | Action |
 |---|---|
 | `DistantRefLOD` gained a child | Fade the LOD node in: rising alpha, not inverted. |
-| Cell slot gained a cell | Fade that cell's full models in: rising alpha, not inverted. No pin is taken for the paired distant node here — it keeps rendering at full alpha until it leaves `DistantRefLOD`, which the distant poller detects independently. |
-| Cell slot lost a cell | Pin the departing cell node and fade it out on the inverted rising alpha. |
+| Cell arrived in the loaded set | Fade the container currently holding it in: rising alpha, not inverted. Skipped when that container is already a live fade root. No pin is taken for the paired distant node here — it keeps rendering at full alpha until it leaves `DistantRefLOD`, which the distant poller detects independently. |
+| Cell departed from the loaded set | **No action.** Fade-out is structurally impossible in this tier; see "Cell fade-out is structurally impossible". |
 | `DistantRefLOD` lost a child | Pin the departing LOD node and fade it out on the inverted rising alpha. |
 | `LandLOD` child pointer changed to a new node | Fade the new quadrant in (rising alpha, not inverted); pin the old quadrant and fade it out on the *same* rising alpha with the invert flag set. |
 
-**Complementary thresholds.** There is no fade-out direction. Every departing node — a child leaving
-`DistantRefLOD`, a cell slot losing its cell, or a `LandLOD` quadrant being replaced — is pinned and
+**Complementary thresholds.** There is no fade-out direction. Every departing node that *can* be
+faded out — a child leaving `DistantRefLOD`, or a `LandLOD` quadrant being replaced — is pinned and
 faded using the same rising alpha a fade-in uses, with the invert flag set: the departing draw tests
 `n > a` while an arriving draw (if any) tests `n < a`, against the same rising `a` and the same
 per-frame noise. Pairing is implicit through shared timing rather than an explicit link: when a
@@ -183,7 +217,7 @@ lookup by cell coordinate. Two independent, uncoordinated fades — one declinin
 one rising from its own — would instead leave roughly a quarter of the shared pixels uncovered by
 either draw through the middle of the transition; the shared-`StartTime`, opposite-threshold
 construction is what keeps coverage at exactly 100% instead. A lone departing node with no partner
-arriving in the same poll (the common case for the distant and cell grids) still uses the inverted
+arriving in the same poll (the common case for the distant grid) still uses the inverted
 test; with nothing arriving to complement, it simply presents as a plain 100%-to-0% dissolve.
 
 ### Geometry-to-record resolution
@@ -195,8 +229,8 @@ The first time a geometry is drawn during a live fade, walk `m_parent` upward to
 as a fade root and cache the result in the map. A miss caches `nullptr` so the walk is never
 repeated. Parent-chain depth is under ten, and the walk happens once per geometry per fade episode.
 
-This also makes terrain free: full-resolution `Block (X, Y)` quadrants sit under the cell node and
-resolve like any other geometry.
+This also makes terrain free: full-resolution `Block (X, Y)` quadrants sit under the cell's grid-slot
+container and resolve like any other geometry.
 
 ### Pinning
 
@@ -228,8 +262,8 @@ At poll time, when a node departs:
 
 **Holders are keyed by original parent, not global.** A single holder under `WorldSceneGraph` was the
 obvious construction and is wrong: render context follows position in the scene graph. A distant LOD
-node renders through the `DISTLOD` shaders because it sits under `DistantRefLOD`; a loaded-cell node
-renders as an ordinary object because it sits under the loaded-object root. Hanging both off one
+node renders through the `DISTLOD` shaders because it sits under `DistantRefLOD`; a terrain LOD
+quadrant renders through the terrain LOD shaders because it sits under `LandLOD`. Hanging both off one
 global holder would make one of the two draw wrongly, or not at all. Keying holders by remembered
 parent puts every departing node back in exactly the context it always had.
 
@@ -252,8 +286,8 @@ Supporting properties of the holder design:
 
   The entry is **retained**, not erased. Erasing made the check single-use: a second departure for
   the same parent in the same poll would miss the map and fall through to the creation path, which is
-  reachable — five cell slots change on a boundary crossing and the discontinuity guard only fires
-  above ten. Keeping the tombstone makes every subsequent lookup re-hit the mismatch and keep
+  reachable — several distant nodes can leave the same `DistantRefLOD` parent in one poll and still
+  sit under the discontinuity threshold. Keeping the tombstone makes every subsequent lookup re-hit the mismatch and keep
   declining. The trade is that if the parent's address is later recycled by a live node, that node
   can never get a holder and its departures pop silently — the fail-safe direction.
 - **Holders are excluded from the pollers' own diffs.** `PollDistantRef` and `PollLandLOD` walk the
@@ -293,42 +327,40 @@ dying takes all of its children with it, which every poller sees as mass churn a
 the discontinuity guard *before* any pin is attempted. The guard is therefore load-bearing for
 pin safety, not only for visual sanity.
 
-**This argument holds only for the two non-sticky tiers.** It rests entirely on "at most one poll
-old", and the cell tier below deliberately breaks that. See the next section for what replaces it.
+**The argument applies to every tier that pins**, which since the cell re-key is the distant tier and
+`LandLOD` only. Both refresh the remembered parent unconditionally on every poll and neither takes a
+reference on it.
 
-**The cell tier's remembered parent is sticky, and therefore reference-counted.** The `LandLOD` tier
-observes its nodes *through* a child array, so a node's presence in the poll and a live `m_parent`
-are the same fact, and an unconditional refresh is exactly right. `PollCellGrid` is different: it
-observes `Grid->grid[i].info->niNode`, independently of the scene graph. If the engine detaches a
-cell node before it clears the grid entry, an unconditional refresh would stamp NULL over a perfectly
-good parent while the slot still reads non-NULL, and the departure would then decline with
-`no parent remembered` — silently the same nothing-happens outcome the 43 declines were. The cell
-tier therefore only ever overwrites its remembered parent with a **non-NULL** value.
+**Historical note: the sticky, reference-counted parent is gone.** An earlier revision gave
+`PollCellGrid` a "sticky" remembered parent — one that only ever overwrote with a non-NULL value, so
+it could outlive a poll — and therefore had to reference-count it (`AssignSlot(…, StickyParent)`,
+`SlotEntry::ParentOwned`, `ReleaseParent`'s owned branch). That whole reference-ownership axis existed
+solely to make a cell *fade-out* safe. With cell fade-out established as structurally impossible
+(next section) it has been removed outright. `SlotEntry::Parent` remains, unreferenced and refreshed
+every poll, because `LandLOD` still needs it to pin.
 
-Stickiness means that pointer *can* outlive one poll, which is precisely what the no-reference
-argument above depends on. So **the sticky tier takes a reference on the remembered parent.** This
-reverses the original instruction not to reference the parent — that instruction was correct while
-every tier refreshed unconditionally, and stickiness is exactly what invalidated it. Owning the
-pointer is the only thing that makes it safe to dereference in `Pin`.
+The orphaned-holder check in `GetHolder` is still durable (see the tombstone note under "Holders are
+keyed by original parent"). It was never a substitute for owning the pointer — it cannot help a
+parent freed before any holder was created under it — but with no sticky pointer left, nothing now
+relies on it for staleness.
 
-An earlier revision claimed the orphaned-holder check in `GetHolder` backstopped the staleness
-instead. **That was wrong, and it is worth recording why**, because the reasoning is easy to
-reconstruct and re-adopt:
+### Cell fade-out is structurally impossible
 
-- The check was single-use — it `erase`d the entry on a mismatch. Departure 1 for a dead parent `P`
-  declined correctly; departure 2 *in the same poll* then missed the map entirely and walked into the
-  creation path, dereferencing `P` three times, once as a write.
-- Five cell slots change on a boundary crossing and the guard fires at `Changed > 2 * gridSize` = 10,
-  so five departures in one poll is a **reachable** sequence, not a theoretical one.
-- Even made durable, the check cannot help a parent freed *before any holder was ever created under
-  it*: there is no entry to mismatch against.
+**Do not re-attempt it.** Pinning works by holding a node the engine *detached*: `Pin` either
+un-culls a node still in the graph or re-attaches a detached one under a plugin-owned holder. In the
+cell tier nothing is ever detached. `CellInfo::niNode` is a persistent per-slot container — the same
+pointer before and after a crossing — and what changes is the set of *children* the engine swaps into
+and out of it. There is no departing node to pin, no parent to remember for it, and no holder to hang
+it under.
 
-Both halves are now fixed and both are needed. The check is durable (see the tombstone note under
-"Holders are keyed by original parent"), and the sticky reference means the pointer cannot be freed
-while it is remembered at all. The reference is dropped whenever the slot's node changes, so a
-remembered parent never outlives its node, and `ParentOwned` is stored per entry rather than per tier
-so that no release site — `AssignSlot`'s own overwrite, `ReleaseParent`, `ReleaseSlots`, the
-`!Player || !Tes` guard — has to know which vector it is looking at.
+A real cell fade-out would have to track the departing cell's individual references and hold each one
+alive independently, which is per-reference tracking — explicitly out of scope (see "Out of scope").
+So `PollCellGrid` counts departures for the discontinuity threshold and then takes no action on them:
+it must not call `Pin`, must not track a parent, and must not create holders. Its records fade in and
+retire normally, never pinned.
+
+The visible consequence is that unloading cells pop rather than dissolve, while the LOD replacing
+them still dissolves *in* through the distant tier. That is the accepted trade.
 
 **Unpin ordering.** `Unpin` restores the cull flag, detaches the node from its holder, and only then
 decrements. The decrement can hit zero and destruct the node, so every read and write to it has to
@@ -391,16 +423,23 @@ disabled without losing the fade-in half of the feature.
 ### Discontinuity guard
 
 If a single poll sees arrivals plus departures exceed a quarter of `DistantRefLOD`'s current child
-count, or more than `2 * gridSize` cell slots change, or a cell purge is detected, the manager treats
+count, or more than `2 * gridSize` cells arrive in the loaded set, or a cell purge is detected, the manager treats
 it as a teleport: it resyncs the shadow copies and emits no transitions. Without this, arriving
 anywhere by fast travel would dissolve the entire world in at once. The first population — the
 previous distant set still empty — takes the same silent-resync path, so entering a worldspace never
 dissolves in all ~2075 distant nodes at once.
 
-The cell-slot figure is derived, not guessed. Crossing one cell boundary shifts a single row or
-column of the `gridSize x gridSize` loaded grid, which is `gridSize` slots; crossing a corner shifts
-a row and a column at once, `2 * gridSize - 1` slots. `2 * gridSize` therefore sits one slot above
-the worst legitimate case and well below a full reload of `gridSize²`.
+The cell figure is derived, not guessed, and it counts **cells arrived, not slots changed**. Crossing
+one cell boundary brings in a single row or column of the `gridSize x gridSize` loaded grid, which is
+`gridSize` new cells; crossing a corner brings a row and a column at once, `2 * gridSize - 1` cells;
+a teleport brings all `gridSize²`. `2 * gridSize` therefore sits one cell above the worst legitimate
+case and well below a full reload.
+
+The number is right and always was; what it was measured against was not. The original guard counted
+*changed slots*, derived from a row-shift model of the grid. The grid does not shift a row — it
+re-indexes wholesale, changing every one of the `gridSize²` slots on every crossing — so a
+slot-based count would trip this guard on every single boundary crossing. Counting arrivals over the
+cell set restores the derivation to something that actually holds.
 
 ## Draw-time plumbing
 
@@ -515,13 +554,17 @@ tag naming the poller that emitted it, so a line can be attributed without guess
 ```
 [LODFade] distant start root=%08X live=%d
 [LODFade] distant pin root=%08X mode=reattach
-[LODFade] cell pin root=%08X mode=uncull
+[LODFade] landlod pin root=%08X mode=uncull
 [LODFade] landlod pin declined, no parent remembered root=%08X
 [LODFade] distant pin declined, holder unavailable root=%08X
-[LODFade] cell unpin root=%08X refcount %u -> %u
+[LODFade] landlod unpin root=%08X refcount %u -> %u
 [LODFade] distant retire root=%08X pinned=%d
 [LODFade] holder created under parent=%08X name=%s
+[LODFade] cell discontinuity: %d of %d cells arrived, suppressed
 ```
+
+The `cell` tier only ever emits `start` and `retire` (plus its one-shot `cell grid` line and the
+discontinuity line above): it never pins, so no `cell pin` or `cell unpin` line exists.
 
 ## Failure handling
 
@@ -587,29 +630,22 @@ In-game checklist:
   exterior, `populated` should sit close to `slots` for the cell line (25 at the default
   `uGridsToLoad=5`) and near 12 for the `landlod` line. A `populated=0` on the cell line means
   `CellInfo::niNode` (`Game.h`) is at the wrong offset and the cell tier's silence is a bad read, not
-  proof that no boundary was crossed; a low `landlod` count would point the same way at the
+  proof that no boundary was crossed — the containers are what the tier fades, even though it now
+  diffs `GridEntry::cell`; a low `landlod` count would point the same way at the
   `LandLOD` child-array walk instead. A healthy `populated` count alongside continued silence would
   instead mean the author simply never crossed that tier's boundary this run.
-- **Read the `cell diff` lines if `cell` still emits nothing.** `PollCellGrid` also logs
-  `[LODFade] cell diff: cellptr=%d niNode=%d info=%d (of %d)` (throttled to once a second, plus
-  always the first non-zero poll) whenever at least one of the three candidate keys changes slot
-  count against the previous poll, and a `[LODFade] cell diff sample: slot=%d cell %08X -> %08X,
-  niNode %08X -> %08X` line alongside it when `cellptr` is non-zero. `niNode` is the key the poller
-  already detects transitions on, so it should agree with the silence being investigated. `cellptr`
-  non-zero while `niNode` stays zero confirms the persistent-container hypothesis: the engine is
-  swapping which `TESObjectCELL` occupies a grid slot without ever changing the `CellInfo::niNode`
-  pointer the poller diffs, so the cell tier is keyed on the wrong field and needs to switch to
-  diffing `GridEntry::cell` instead. `info` distinguishes the two ways that could happen -- non-zero
-  means the `CellInfo*` container itself is being replaced (and `niNode`'s silence would then be the
-  real anomaly), zero means the same container is being reused and refilled underneath a stable
-  `CellInfo*` (matching the hypothesis as written above).
+- **The temporary `cell diff` instrumentation is gone.** It was added to settle which `GridEntry`
+  field actually changes on a crossing, it did so (`cellptr=25 niNode=0 info=0 (of 25)`, plus a
+  sample line showing one slot's cell pointer changing under an identical `niNode`), and the poller
+  has been re-keyed onto `GridEntry::cell` as a result. The ordinary `cell start` / `cell retire`
+  lines now carry the signal; the one-shot `cell grid` line above is kept.
 - Fast-travel and confirm the discontinuity guard suppresses a world-wide dissolve.
 - Set `PinDeparting=0` and confirm the fade-in half still works alone. This is the fallback: if the
   re-attach path crashes, shipping with `PinDeparting=0` is an acceptable outcome and forcing the
   re-attach path is not.
 - Toggle TAA off and confirm the dither is noisy but not broken.
-- Walk a cell boundary watching for cells that are still loaded and visible dithering out. The
-  slot-keyed pollers (cell and `LandLOD`) treat any slot going from one non-NULL node to a different
+- Walk a cell boundary watching for quadrants that are still loaded and visible dithering out. The
+  slot-keyed poller (`LandLOD`) treats any slot going from one non-NULL node to a different
   one as a departure, which is required so a direct swap is not missed — but if the engine re-indexes
   the loaded grid on a boundary crossing rather than rotating it, still-present cells produce that
   same pattern. This failure mode cannot affect the distant tier, which diffs by membership. The
@@ -635,10 +671,10 @@ holder to an engine-owned container and re-parenting a detached node under it is
 structures the engine owns, so a mistake faults rather than glitches. The mitigations are the ones
 listed under "Pinning": holders are never freed, an orphaned holder declines the pin rather than
 writing into a parent it has just concluded is dead *and keeps its entry as a tombstone so that check
-is durable*, holders append rather than filling a freed slot, the two non-sticky tiers' remembered
-parent is never more than one poll old and a container's death is always accompanied by a suppressing
-discontinuity, the sticky cell tier holds a reference so its parent cannot be freed while remembered,
-and the whole path stays behind `PinDeparting`.
+is durable*, holders append rather than filling a freed slot, both pinning tiers' remembered parent
+is never more than one poll old and a container's death is always accompanied by a suppressing
+discontinuity, and the whole path stays behind `PinDeparting`. The cell tier does not pin at all, so
+it contributes nothing to this risk.
 
 **Resurrection** -- the engine re-attaching a node it dropped while we still hold it under a holder
 -- is handled by detaching unconditionally in `Unpin` and restoring the owner `RemoveObject` NULLs;
@@ -651,9 +687,12 @@ and the leak it would otherwise have caused is fixed. See "Unpin ordering". The 
 in place as the regression test.
 
 **The `cell` and `landlod` tiers are unverified in game.** The run that exercised the re-attach path
-produced `distant` transitions only. Both other tiers share the pin, holder, refcount and sticky-parent
-machinery, so the risk is that a tier-specific assumption — the cell tier's sticky parent, or the
-`LandLOD` array's fixed arity — is wrong in a way `distant` traffic cannot reveal.
+produced `distant` transitions only, and the `cell` tier has since been re-keyed onto cell-set
+membership and reduced to fade-in only, so its detection path has never emitted a transition in game.
+`landlod` still shares the pin, holder and refcount machinery, so the risk there is that a
+tier-specific assumption — the `LandLOD` array's fixed arity — is wrong in a way `distant` traffic
+cannot reveal. For `cell` the open question is simply whether arrivals are now detected at all, and
+whether fading a persistent per-slot container fades the right geometry.
 
 **TAA history rejection.** Dithered pixels change every frame by construction. If TAA's history
 rejection treats the changing coverage as disocclusion, the fade may flicker rather than resolve.

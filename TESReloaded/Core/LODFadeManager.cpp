@@ -15,8 +15,6 @@ LODFadeManager::LODFadeManager() {
 	DistantRefLogged = false;
 	CellGridLogged = false;
 	LandLODLogged = false;
-	LastCellDiffLogTime = 0.0f;
-	CellDiffFirstLogged = false;
 
 }
 
@@ -24,73 +22,31 @@ LODFadeManager::LODFadeManager() {
 /// reference and the outgoing node loses the one the slot held. Every write to a Prev* slot goes
 /// through here so the ownership invariant declared in the header holds on every path.
 ///
-/// Without StickyParent the remembered parent is refreshed on every poll, so it is never more than one
-/// poll old and needs no reference: a container that dies inside that window takes all of its children
-/// with it, which the poller sees as a discontinuity and suppresses before any pin is attempted.
+/// The remembered parent is refreshed on every poll, so it is never more than one poll old and needs
+/// no reference of its own: a container that dies inside that window takes all of its children with
+/// it, which the poller sees as a discontinuity and suppresses before any pin is attempted.
 ///
-/// StickyParent exists for the cell tier alone, and it breaks that argument. PollCellGrid observes
-/// Grid->grid[i].info->niNode independently of the scene graph, so if the engine detaches a cell node
-/// before it clears the grid entry, an unconditional refresh would stamp NULL over a perfectly good
-/// parent while the slot still reads non-NULL, and the departure would decline with "no parent
-/// remembered" -- silently the same nothing-happens outcome this re-attach path exists to end. Sticky
-/// keeps the last non-NULL answer instead, which means the pointer CAN outlive one poll, so the sticky
-/// tier takes a reference on it. Owning it is the only thing that makes it safe to dereference in Pin;
-/// the orphaned-holder tombstone in GetHolder is a backstop, not a substitute -- it cannot help a
-/// parent that was freed before any holder was ever created under it.
-///
-/// The sticky reference is still dropped whenever the slot's NODE changes, so a remembered parent
-/// never outlives the node it belonged to.
-///
-/// ORDERING, precisely -- the two fields are NOT alike, and assuming they are is a trap. The NODE
-/// field takes the new reference before releasing the old, so re-assigning a slot to what it already
-/// holds cannot destruct it mid-swap. The PARENT field on the node-changed branch does the opposite:
-/// ReleaseParent runs BEFORE the parent is re-read and re-acquired. That is safe for a different
-/// reason. The incoming node was increfed first, so a parent destructing inside ReleaseParent cannot
-/// take the node whose m_parent is read on the next line with it; and a destructed parent NULLs its
-/// children's m_parent, so that read yields NULL and the sticky early-out returns without ever
-/// re-acquiring a freed pointer.
-void LODFadeManager::AssignSlot(SlotEntry& Entry, NiAVObject* Node, bool StickyParent) {
+/// ORDERING: the node field takes the new reference before releasing the old, so re-assigning a slot
+/// to what it already holds cannot destruct it mid-swap. The parent is then re-read from the node
+/// that survived that swap, so it can never be read out of freed memory.
+void LODFadeManager::AssignSlot(SlotEntry& Entry, NiAVObject* Node) {
 
 	if (Entry.Node != Node) {
 		if (Node) InterlockedIncrement(&Node->m_uiRefCount);
 		if (Entry.Node && !InterlockedDecrement(&Entry.Node->m_uiRefCount)) Entry.Node->Destructor(true);
 		Entry.Node = Node;
-		// New occupant: whatever the old one was attached to means nothing now.
-		ReleaseParent(Entry);
 	}
 
-	NiNode* Parent = Node ? Node->m_parent : NULL;
-	if (!Parent && StickyParent) return;
-	if (Parent == Entry.Parent && Entry.ParentOwned == StickyParent) return;
-
-	bool Own = StickyParent && Parent;
-	if (Own) InterlockedIncrement(&Parent->m_uiRefCount);
-	// ParentOwned implies Parent is non-NULL -- nothing sets it without one -- so this needs no NULL
-	// check. ReleaseParent carries one anyway because it also runs on entries never assigned here.
-	if (Entry.ParentOwned && !InterlockedDecrement(&Entry.Parent->m_uiRefCount)) Entry.Parent->Destructor(true);
-	Entry.Parent = Parent;
-	Entry.ParentOwned = Own;
-
-}
-
-/// Drops a slot's remembered parent, releasing the reference if this entry owns one. Every path that
-/// abandons or replaces SlotEntry::Parent goes through here or through AssignSlot, so the sticky
-/// tier's parent references balance on every path the way the node references already do.
-void LODFadeManager::ReleaseParent(SlotEntry& Entry) {
-
-	if (Entry.ParentOwned && Entry.Parent && !InterlockedDecrement(&Entry.Parent->m_uiRefCount)) Entry.Parent->Destructor(true);
-	Entry.Parent = NULL;
-	Entry.ParentOwned = false;
+	Entry.Parent = Node ? Node->m_parent : NULL;
 
 }
 
 /// Releases every reference a shadow-copy vector owns and empties it. Used by the resync paths and
-/// the main-menu guard, both of which abandon the whole vector at once. Parents are released through
-/// ReleaseParent, which no-ops for the tiers that do not own one, so this needs no tier argument.
+/// the main-menu guard, both of which abandon the whole vector at once. SlotEntry::Parent owns
+/// nothing, so only the node needs releasing.
 void LODFadeManager::ReleaseSlots(std::vector<SlotEntry>& Slots) {
 
 	for (UInt32 i = 0; i < Slots.size(); i++) {
-		ReleaseParent(Slots[i]);
 		NiAVObject* Node = Slots[i].Node;
 		if (Node && !InterlockedDecrement(&Node->m_uiRefCount)) Node->Destructor(true);
 	}
@@ -132,6 +88,46 @@ void LODFadeManager::ResyncSlots(std::unordered_map<NiAVObject*, NiNode*>& Slots
 		if (!Current.count(Node) && !InterlockedDecrement(&Node->m_uiRefCount)) Node->Destructor(true);
 	}
 	Slots.swap(Current);
+
+}
+
+/// Releases every container reference the cell shadow map owns and empties it. The TESObjectCELL*
+/// keys own nothing and are never dereferenced, so only the mapped containers are touched. Used by
+/// the main-menu guard, which abandons the whole map at once.
+void LODFadeManager::ReleaseCells(std::unordered_map<TESObjectCELL*, NiNode*>& Cells) {
+
+	for (std::unordered_map<TESObjectCELL*, NiNode*>::iterator it = Cells.begin(); it != Cells.end(); ++it) {
+		NiNode* Node = it->second;
+		if (Node && !InterlockedDecrement(&Node->m_uiRefCount)) Node->Destructor(true);
+	}
+	Cells.clear();
+
+}
+
+/// Moves the cell shadow map onto the current poll's membership, carrying reference ownership on the
+/// CONTAINER -- the mapped value -- with it. Ownership is per ENTRY rather than per distinct node:
+/// a cell that survives a crossing lands in a different grid slot and so acquires a different
+/// container, and counting per entry keeps that case balanced without tracking which entries share a
+/// pointer. Every current container is increfed BEFORE any previous one is released, so a container
+/// held by both maps can never be destructed mid-swap.
+///
+/// Unlike ResyncSlots this does not skip the unchanged entries. The cell grid is 25 slots at the
+/// default uGridsToLoad, so the redundant interlocked pairs are unmeasurable; the distant tier's
+/// ~2075 nodes are why that one bothers.
+///
+/// WARNING: Current is SWAPPED, not copied, so it does not survive the call. On return it holds the
+/// PREVIOUS poll's membership -- stale pointers that own nothing and may already be destructed. It
+/// must be cleared or overwritten before its next use, and must never be passed to ReleaseCells.
+void LODFadeManager::ResyncCells(std::unordered_map<TESObjectCELL*, NiNode*>& Cells, std::unordered_map<TESObjectCELL*, NiNode*>& Current) {
+
+	for (std::unordered_map<TESObjectCELL*, NiNode*>::iterator it = Current.begin(); it != Current.end(); ++it) {
+		if (it->second) InterlockedIncrement(&it->second->m_uiRefCount);
+	}
+	for (std::unordered_map<TESObjectCELL*, NiNode*>::iterator it = Cells.begin(); it != Cells.end(); ++it) {
+		NiNode* Node = it->second;
+		if (Node && !InterlockedDecrement(&Node->m_uiRefCount)) Node->Destructor(true);
+	}
+	Cells.swap(Current);
 
 }
 
@@ -235,8 +231,9 @@ void LODFadeManager::RefreshHolder(NiNode* Holder) {
 /// fresh holder to a pointer just concluded to be dead. The stale entry is deliberately RETAINED as a
 /// tombstone: erasing it would make the check single-use, and a second departure for the same parent
 /// in the same poll would then miss the map and walk straight into the creation path -- three
-/// dereferences of the freed parent, one of them a write. Five cell departures in one poll sit under
-/// the discontinuity threshold, so that sequence is reachable, not theoretical. The trade is that if
+/// dereferences of the freed parent, one of them a write. Several distant nodes can depart from the
+/// same DistantRefLOD parent in one poll and still sit under the discontinuity threshold, so that
+/// sequence is reachable, not theoretical. The trade is that if
 /// Parent's address is later recycled by a live node, that node can never get a holder and its
 /// departures pop silently, which is the fail-safe direction.
 ///
@@ -317,7 +314,7 @@ bool LODFadeManager::Pin(FadeRecord* Record, NiNode* Parent) {
 	if (!Node->m_parent) {
 		// Already detached: re-attach under a holder hanging off the original parent, so the node
 		// renders in exactly the context it always did -- a distant LOD node under DistantRefLOD binds
-		// the DISTLOD shaders, a cell node under the loaded-object root draws as an ordinary object.
+		// the DISTLOD shaders, a LandLOD quadrant under LandLOD binds the terrain LOD shaders.
 		NiNode* Holder = GetHolder(Parent);
 		if (!Holder) {
 			if (TheSettingManager->SettingsMain.Develop.LogLODFade)
@@ -579,11 +576,10 @@ void LODFadeManager::PollLandLOD() {
 		SlotEntry Empty;
 		Empty.Node = NULL;
 		Empty.Parent = NULL;
-		Empty.ParentOwned = false;
 		PrevLandLOD.assign(Slots, Empty);
 		for (UInt32 i = 0; i < Slots; i++) {
 			NiAVObject* Child = LandLOD->m_children.data[i];
-			AssignSlot(PrevLandLOD[i], IsHolder(Child) ? NULL : Child, false);
+			AssignSlot(PrevLandLOD[i], IsHolder(Child) ? NULL : Child);
 		}
 		return;
 	}
@@ -603,7 +599,7 @@ void LODFadeManager::PollLandLOD() {
 			Logger::Log("[LODFade] landlod discontinuity: %d of %d slots changed, suppressed", Changed, Slots);
 		for (UInt32 i = 0; i < Slots; i++) {
 			NiAVObject* Child = LandLOD->m_children.data[i];
-			AssignSlot(PrevLandLOD[i], IsHolder(Child) ? NULL : Child, false);
+			AssignSlot(PrevLandLOD[i], IsHolder(Child) ? NULL : Child);
 		}
 		return;
 	}
@@ -632,14 +628,32 @@ void LODFadeManager::PollLandLOD() {
 		}
 
 		// Unconditional, so an unchanged slot still gets its remembered parent refreshed this poll.
-		AssignSlot(PrevLandLOD[i], Node, false);
+		AssignSlot(PrevLandLOD[i], Node);
 	}
 
 }
 
-/// Detects loaded-cell slots gaining or losing a cell by diffing Tes->gridCellArray against the
-/// previous frame. Cell gains fade the cell's full models in; cell losses hold the departing full
-/// models via Pin while they fade out on the inverted rising alpha, same shape as the distant grid.
+/// Detects loaded cells arriving by diffing Tes->gridCellArray against the previous poll as a SET of
+/// cells, each mapped to the container node that currently holds it. An arriving cell fades its
+/// container's contents in.
+///
+/// KEYED BY CELL, NOT BY SLOT AND NOT BY NODE. CellInfo::niNode is a persistent per-slot container
+/// the engine repopulates, not a per-cell node: measured in game, all 25 GridEntry::cell pointers
+/// change on a boundary crossing while every niNode and every CellInfo* stays byte-identical. The
+/// original niNode-keyed diff therefore watched a field that structurally cannot change and never
+/// emitted a transition in four sessions. The grid also re-indexes wholesale rather than shifting a
+/// row, so a slot-keyed diff is no better; set membership over cells is immune to the re-index by
+/// construction -- a crossing is 5 arrivals and 5 departures out of 25 however the slots shuffle.
+///
+/// FADE-IN ONLY. Departures are counted and then deliberately ignored. Pinning works by holding a
+/// node the engine detached, and in this tier nothing is ever detached: the container persists and
+/// its CHILDREN are swapped out from under it, so there is no node to pin and no fade-out to run.
+/// Doing it properly needs per-reference tracking, which the design scopes out. Do not reintroduce
+/// Pin, a remembered parent or a holder here.
+///
+/// Two live cells sharing one container would start two fade records on the same root. Containers
+/// are per slot and slots are distinct, so that cannot happen; if it ever did the records would be
+/// identical, unpinned and separately retired, so it is harmless rather than guarded against.
 void LODFadeManager::PollCellGrid() {
 
 	GridCellArray* Grid = Tes->gridCellArray;
@@ -661,122 +675,47 @@ void LODFadeManager::PollCellGrid() {
 		Logger::Log("[LODFade] cell grid size=%d slots=%d populated=%d", Dim, Slots, Populated);
 	}
 
-	if (PrevCell.size() != Slots) {
-		ReleaseSlots(PrevCell);
-		SlotEntry Empty;
-		Empty.Node = NULL;
-		Empty.Parent = NULL;
-		Empty.ParentOwned = false;
-		PrevCell.assign(Slots, Empty);
-		// Diagnostic-only shadow copies, resized in lockstep so the diff below never runs against a
-		// stale size; see the header comment on PrevCellPtr/PrevCellInfo.
-		PrevCellPtr.assign(Slots, NULL);
-		PrevCellInfo.assign(Slots, NULL);
-		for (UInt32 i = 0; i < Slots; i++) {
-			GridCellArray::GridEntry* Entry = &Grid->grid[i];
-			AssignSlot(PrevCell[i], Entry->info ? (NiAVObject*)Entry->info->niNode : NULL, true);
-			PrevCellPtr[i] = Entry->cell;
-			PrevCellInfo[i] = Entry->info;
-		}
+	// An entry missing either half is not a loaded cell: a NULL cell has no identity to key on and a
+	// NULL container has nothing to fade, so both are skipped rather than recorded as a NULL value.
+	CurCellSet.clear();
+	if (Slots && CurCellSet.bucket_count() < Slots) CurCellSet.reserve(Slots);
+	for (UInt32 i = 0; i < Slots; i++) {
+		GridCellArray::GridEntry* Entry = &Grid->grid[i];
+		if (!Entry->cell || !Entry->info || !Entry->info->niNode) continue;
+		CurCellSet[Entry->cell] = Entry->info->niNode;
+	}
+	UInt32 Count = (UInt32)CurCellSet.size();
+
+	// Count first, so a teleport is suppressed before any fade is started rather than after. Crossing
+	// one boundary brings in a row or column of Dim NEW CELLS and a corner brings 2*Dim-1, so 2*Dim
+	// sits one above the worst legitimate case and far below a full reload of Dim squared. The
+	// threshold counts ARRIVALS, not changed slots: the wholesale re-index changes every slot on
+	// every crossing, so a slot-based count would trip this guard every single time.
+	UInt32 Arrived = 0;
+	for (std::unordered_map<TESObjectCELL*, NiNode*>::iterator it = CurCellSet.begin(); it != CurCellSet.end(); ++it) {
+		if (!PrevCellSet.count(it->first)) Arrived++;
+	}
+
+	// An empty previous set is the first population: resync silently rather than dissolving in every
+	// loaded cell at once.
+	bool Discontinuity = !PrevValid || PrevCellSet.empty() || Arrived > Dim * 2;
+	if (Discontinuity) {
+		if (PrevValid && !PrevCellSet.empty() && TheSettingManager->SettingsMain.Develop.LogLODFade)
+			Logger::Log("[LODFade] cell discontinuity: %d of %d cells arrived, suppressed", Arrived, Count);
+		ResyncCells(PrevCellSet, CurCellSet);
 		return;
 	}
 
-	// Crossing one boundary shifts Dim slots and a corner shifts 2*Dim-1, so 2*Dim sits one above
-	// the worst legitimate case and far below a full reload of Dim squared.
-	UInt32 Changed = 0;
-	for (UInt32 i = 0; i < Slots; i++) {
-		GridCellArray::GridEntry* Entry = &Grid->grid[i];
-		NiAVObject* Node = Entry->info ? (NiAVObject*)Entry->info->niNode : NULL;
-		if (Node != PrevCell[i].Node) Changed++;
+	// Cell gained: its full models fade in. The paired LOD node is handled by the distant poller's own
+	// membership change in the same frame, so no cross-poller lookup is needed. Departures are not
+	// acted on at all; see the fade-in-only note above.
+	for (std::unordered_map<TESObjectCELL*, NiNode*>::iterator it = CurCellSet.begin(); it != CurCellSet.end(); ++it) {
+		if (PrevCellSet.count(it->first)) continue;
+		if (RootIndex.count(it->second)) continue;
+		AddFade(it->second, "cell");
 	}
 
-	if (Changed > Dim * 2) {
-		if (TheSettingManager->SettingsMain.Develop.LogLODFade)
-			Logger::Log("[LODFade] cell discontinuity: %d of %d slots changed, suppressed", Changed, Slots);
-		for (UInt32 i = 0; i < Slots; i++) {
-			GridCellArray::GridEntry* Entry = &Grid->grid[i];
-			AssignSlot(PrevCell[i], Entry->info ? (NiAVObject*)Entry->info->niNode : NULL, true);
-			// Keep the diagnostic shadow copies in step with the resync so the next real poll's
-			// diff is against this frame, not a stale one from before the suppressed jump.
-			PrevCellPtr[i] = Entry->cell;
-			PrevCellInfo[i] = Entry->info;
-		}
-		return;
-	}
-
-	// DIAGNOSTIC ONLY, testing the persistent-container hypothesis: does Grid->grid[i].cell or
-	// Grid->grid[i].info change on a cell boundary crossing even when niNode (Changed, above) does
-	// not? Accumulated below, never read by the detection logic. SampleSlot/SampleOld*/SampleNew*
-	// capture the first cellptr-changed slot this poll so the sample line can show plausible-looking
-	// pointer values rather than just a count.
-	bool LogDiag = TheSettingManager->SettingsMain.Develop.LogLODFade;
-	UInt32 DiffCellPtr = 0, DiffInfo = 0;
-	UInt32 SampleSlot = 0xFFFFFFFF;
-	TESObjectCELL *SampleOldCell = NULL, *SampleNewCell = NULL;
-	NiAVObject *SampleOldNode = NULL, *SampleNewNode = NULL;
-
-	for (UInt32 i = 0; i < Slots; i++) {
-		GridCellArray::GridEntry* Entry = &Grid->grid[i];
-		NiAVObject* Node = Entry->info ? (NiAVObject*)Entry->info->niNode : NULL;
-
-		if (Node != PrevCell[i].Node) {
-			// Departure and arrival are independent tests, not if/else, so a slot that swaps one cell
-			// node straight for another fades both halves instead of popping the outgoing one.
-			if (PrevCell[i].Node && TheSettingManager->SettingsMain.LODFade.PinDeparting) {
-				// Cell lost: hold the departing full models while the LOD fades back in, via the
-				// inverted rising alpha rather than a declining-alpha fade-out (Ruling F14).
-				if (CanPin(PrevCell[i].Node, PrevCell[i].Parent, "cell")) {
-					NiNode* GoneParent = PrevCell[i].Parent;
-					FadeRecord* Out = AddFade(PrevCell[i].Node, "cell");
-					if (Out) {
-						Out->Invert = true;
-						if (!Pin(Out, GoneParent)) Retire((UInt32)(Fades.size() - 1));
-					}
-				}
-			}
-			if (Node && !RootIndex.count(Node)) {
-				// Cell gained: full models fade in. The paired LOD node is pinned by the distant
-				// poller's own slot change in the same frame, so no cross-poller lookup is needed.
-				AddFade(Node, "cell");
-			}
-		}
-
-		if (LogDiag) {
-			if (Entry->cell != PrevCellPtr[i]) {
-				DiffCellPtr++;
-				if (SampleSlot == 0xFFFFFFFF) {
-					SampleSlot = i;
-					SampleOldCell = PrevCellPtr[i];
-					SampleNewCell = Entry->cell;
-					SampleOldNode = PrevCell[i].Node;
-					SampleNewNode = Node;
-				}
-			}
-			if (Entry->info != PrevCellInfo[i]) DiffInfo++;
-		}
-
-		// Unconditional, so an unchanged slot still gets its remembered parent refreshed this poll.
-		AssignSlot(PrevCell[i], Node, true);
-		PrevCellPtr[i] = Entry->cell;
-		PrevCellInfo[i] = Entry->info;
-	}
-
-	// Changed (computed above, before this loop touched PrevCell) is the niNode key the poller
-	// actually detects on -- reused here rather than recounted so the two numbers can never diverge
-	// by construction. Logged at most once per second, plus always on the first non-zero occurrence,
-	// so a single boundary crossing early in a quiet session is never missed.
-	if (LogDiag && (DiffCellPtr || Changed || DiffInfo)) {
-		bool ShouldLog = !CellDiffFirstLogged || (CurrentTime - LastCellDiffLogTime >= 1.0f);
-		if (ShouldLog) {
-			CellDiffFirstLogged = true;
-			LastCellDiffLogTime = CurrentTime;
-			Logger::Log("[LODFade] cell diff: cellptr=%d niNode=%d info=%d (of %d)", DiffCellPtr, Changed, DiffInfo, Slots);
-			if (DiffCellPtr && SampleSlot != 0xFFFFFFFF) {
-				Logger::Log("[LODFade] cell diff sample: slot=%d cell %08X -> %08X, niNode %08X -> %08X",
-					SampleSlot, (UInt32)SampleOldCell, (UInt32)SampleNewCell, (UInt32)SampleOldNode, (UInt32)SampleNewNode);
-			}
-		}
-	}
+	ResyncCells(PrevCellSet, CurCellSet);
 
 }
 
@@ -806,13 +745,16 @@ void LODFadeManager::Update() {
 		Fades.clear();
 		RootIndex.clear();
 		GeomCache.clear();
-		// The shadow copies own a reference to every non-NULL entry; abandoning them without
-		// releasing would leak one reference per occupied grid slot.
+		// The shadow copies own a reference to every non-NULL entry -- the node for the first two, the
+		// mapped container for the cell set; abandoning them without releasing would leak one
+		// reference per occupied grid slot.
 		ReleaseSlots(PrevDistant);
 		ReleaseSlots(PrevLandLOD);
-		ReleaseSlots(PrevCell);
+		ReleaseCells(PrevCellSet);
 		// Tes is gone, so the cached DistantRefLOD pointer is meaningless and must be re-resolved.
+		// Both scratch maps hold stale post-swap pointers that own nothing, so they are only cleared.
 		CurDistant.clear();
+		CurCellSet.clear();
 		DistantRef = NULL;
 		// Every holder's parent went with the scene graph, so the parent-keyed lookup is meaningless.
 		// HolderNodes and its references are deliberately kept: they are what stops those pointers

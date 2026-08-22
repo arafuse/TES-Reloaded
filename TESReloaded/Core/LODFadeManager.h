@@ -81,42 +81,29 @@ private:
 	// detected the engine has already NULLed m_parent and the original parent is otherwise
 	// unrecoverable.
 	//
-	// HOW LONG Parent MAY BE STALE DIFFERS BY TIER, and so does whether it carries a reference:
-	//
-	// - LandLOD (AssignSlot with StickyParent false) refreshes Parent on EVERY poll, so it is never
-	//   more than one poll old, and it carries NO reference. That tier observes its nodes through a
-	//   child array, so a node's presence in the poll and a live m_parent are the same fact, and a
-	//   container that dies takes all its children with it -- mass churn the discontinuity guard
-	//   suppresses before any pin runs. Refcount traffic that high in the graph would be risk for
-	//   nothing.
-	// - The cell tier (StickyParent true) keeps the last NON-NULL answer instead, because it observes
-	//   Grid->grid[i].info->niNode independently of the scene graph; see AssignSlot. That pointer can
-	//   therefore outlive one poll, which is exactly what the no-reference argument above rests on, so
-	//   the sticky tier OWNS a reference on Parent and ParentOwned records it. Owning it is the only
-	//   thing that makes a sticky pointer safe to dereference in Pin.
-	//
-	// ParentOwned is per entry rather than per tier so no release site has to know which vector it is
-	// looking at. Every path that replaces or drops Parent must go through AssignSlot or ReleaseParent.
+	// Used by the LandLOD tier alone, and Parent carries NO reference. AssignSlot refreshes it on
+	// EVERY poll, so it is never more than one poll old. That tier observes its nodes through a child
+	// array, so a node's presence in the poll and a live m_parent are the same fact, and a container
+	// that dies takes all its children with it -- mass churn the discontinuity guard suppresses before
+	// any pin runs. Refcount traffic that high in the graph would be risk for nothing.
 	struct SlotEntry {
 		NiAVObject*	Node;
 		NiNode*		Parent;
-		bool		ParentOwned;
 	};
 
-	// INVARIANT: these three shadow copies OWN one reference to every non-NULL node they hold. The
+	// INVARIANT: these two shadow copies OWN one reference to every non-NULL node they hold. The
 	// reference is taken when a slot is filled, not when a departure is later detected -- by then the
 	// engine may already have dropped its last reference, and Pin would be reading freed memory.
 	// Every path that overwrites or clears a slot must release exactly once; use AssignSlot,
-	// ResyncSlots and ReleaseSlots rather than writing a slot directly. The same rule applies
-	// independently to SlotEntry::Parent wherever ParentOwned is set; see SlotEntry.
+	// ResyncSlots and ReleaseSlots rather than writing a slot directly. SlotEntry::Parent is NOT
+	// covered by it and owns nothing; see SlotEntry.
 	//
 	// PrevDistant is keyed by NODE, not by index: DistantRefLOD's child array is compacted and its
 	// slots reused as distant cells stream, so an index-keyed diff reports every slot changed on every
 	// frame. Membership diffing is immune to reordering and compaction. The mapped value is the
-	// remembered parent, which is the same role SlotEntry::Parent plays for the two vectors.
+	// remembered parent, which is the same role SlotEntry::Parent plays for the vector.
 	std::unordered_map<NiAVObject*, NiNode*>			PrevDistant;
 	std::vector<SlotEntry>								PrevLandLOD;
-	std::vector<SlotEntry>								PrevCell;
 	std::unordered_map<NiAVObject*, FadeRecord*>		RootIndex;
 	std::unordered_map<NiAVObject*, FadeRecord*>		GeomCache;
 	bool												PrevValid;
@@ -128,10 +115,29 @@ private:
 	// Kept as a member so the swap recycles both maps' buckets instead of reallocating ~2075 nodes.
 	std::unordered_map<NiAVObject*, NiNode*>			CurDistant;
 
+	// The loaded-cell tier, keyed by CELL and mapped to the container node that currently holds it.
+	//
+	// Keyed by cell because CellInfo::niNode is a PERSISTENT PER-SLOT CONTAINER, not a per-cell node:
+	// measured in game, all 25 GridEntry::cell pointers change on a boundary crossing while every
+	// niNode and every CellInfo* stays identical. A niNode-keyed diff therefore watches a field that
+	// structurally cannot change and detects nothing, which is exactly what four sessions showed. The
+	// grid also re-indexes wholesale rather than shifting a row, so a slot-keyed diff is useless here
+	// too; set membership over cells is immune to the re-index by construction.
+	//
+	// PrevCellSet OWNS one reference on the container in each entry -- the mapped value, never the
+	// key -- on the same contract as the shadow copies above, so a container cannot be freed while a
+	// fade names it. Move it only through ResyncCells and ReleaseCells. The TESObjectCELL* key is an
+	// opaque identity token: it is compared and never dereferenced, and no reference is taken on it.
+	//
+	// CurCellSet is the per-frame scratch, with the same swap discipline (and the same warning) as
+	// CurDistant: after ResyncCells it holds the previous poll's stale membership and owns nothing.
+	std::unordered_map<TESObjectCELL*, NiNode*>			PrevCellSet;
+	std::unordered_map<TESObjectCELL*, NiNode*>			CurCellSet;
+
 	// Plugin-owned holder nodes, keyed by the original parent each one hangs under. Keyed rather than
 	// global because render context follows position in the graph: a distant LOD node under
-	// DistantRefLOD binds the DISTLOD shaders and a cell node under the loaded-object root draws as an
-	// ordinary object, so a single shared holder would make one of the two draw wrongly or not at all.
+	// DistantRefLOD binds the DISTLOD shaders and a LandLOD quadrant under LandLOD binds the terrain
+	// LOD shaders, so a single shared holder would make one of the two draw wrongly or not at all.
 	//
 	// Holders are never destroyed. A pinned node is a child of its holder for the duration of a fade,
 	// so releasing a holder a live pin still points at would be a use-after-free in Unpin. HolderNodes
@@ -150,22 +156,6 @@ private:
 	bool												CellGridLogged;
 	bool												LandLODLogged;
 
-	// DIAGNOSTIC ONLY, for the cell-diff instrumentation in PollCellGrid. These hold raw pointer
-	// VALUES from the previous poll, compared for equality only -- they own NO references and must
-	// NEVER be dereferenced. Do not mistake them for the reference-owning SlotEntry shadow copies
-	// (PrevDistant/PrevLandLOD/PrevCell above): that ownership invariant does not apply here because
-	// nothing in this pair is ever read through. They exist solely to test which key actually changes
-	// when a cell streams in or out -- Grid->grid[i].cell vs. Grid->grid[i].info -- as a check on the
-	// niNode-based diff the poller uses for real detection.
-	std::vector<TESObjectCELL*>						PrevCellPtr;
-	std::vector<GridCellArray::CellInfo*>				PrevCellInfo;
-
-	// Throttle for the PollCellGrid diff diagnostic: at most one line per second (CurrentTime-gated),
-	// plus CellDiffFirstLogged forces the very first non-zero occurrence through regardless of timing
-	// so a single boundary crossing is never missed while a session is still quiet.
-	float												LastCellDiffLogTime;
-	bool												CellDiffFirstLogged;
-
 	NiNode*			ResolveDistantRef();
 	void			PollDistantRef();
 	void			PollLandLOD();
@@ -178,11 +168,13 @@ private:
 	/// node they watch registers as an arrival and starts a fade that attaches another holder.
 	bool			IsHolder(NiAVObject* Node) { return !HolderNodes.empty() && HolderNodes.count(Node) != 0; }
 
-	void			AssignSlot(SlotEntry& Entry, NiAVObject* Node, bool StickyParent);
-	void			ReleaseParent(SlotEntry& Entry);
+	void			AssignSlot(SlotEntry& Entry, NiAVObject* Node);
 	void			ReleaseSlots(std::vector<SlotEntry>& Slots);
 	void			ReleaseSlots(std::unordered_map<NiAVObject*, NiNode*>& Slots);
 	void			ResyncSlots(std::unordered_map<NiAVObject*, NiNode*>& Slots, std::unordered_map<NiAVObject*, NiNode*>& Current);
+
+	void			ReleaseCells(std::unordered_map<TESObjectCELL*, NiNode*>& Cells);
+	void			ResyncCells(std::unordered_map<TESObjectCELL*, NiNode*>& Cells, std::unordered_map<TESObjectCELL*, NiNode*>& Current);
 
 	void			Retire(UInt32 Index);
 };
