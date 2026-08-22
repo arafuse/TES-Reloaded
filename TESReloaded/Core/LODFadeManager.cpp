@@ -1,5 +1,10 @@
 #include "LODFadeManager.h"
 
+// DIAGNOSTIC ONLY. Bounds on the one-shot root census walk. It runs on the render thread, so the cap
+// is on total visits as well as on depth; the stack array is sized by the visit cap.
+static const UInt32 kCensusMaxVisits = 512;
+static const UInt32 kCensusMaxDepth = 8;
+
 LODFadeManager::LODFadeManager() {
 
 	TheLODFadeManager = this;
@@ -26,6 +31,105 @@ LODFadeManager::LODFadeManager() {
 	MissParents[0] = MissParents[1] = MissParents[2] = 0;
 	MissDepth = 0;
 	LastDrawLogTime = 0.0f;
+	CensusDistantLogged = false;
+	CensusCellLogged = false;
+	CensusLandLODLogged = false;
+
+}
+
+/// DIAGNOSTIC ONLY. True when Object's runtime type derives from NiNode, decided by walking the
+/// NiRTTI{name,parent} chain returned by NiObject::GetType(). Oblivion's NiObject exposes no
+/// GetAsNiNode slot -- that virtual is present only in the Fallout and Skyrim blocks of GameNi.h --
+/// and a hardcoded VFT whitelist would silently misclassify BSFadeNode, NiBillboardNode and every
+/// other derived container, so the RTTI chain is the only safe "is this a node" test here. The chain
+/// walk is depth-bounded and NULL-guarded at every hop; a broken chain answers "not a node", which
+/// only ever stops the census descending and can never produce a bad cast.
+bool LODFadeManager::IsNiNodeType(NiAVObject* Object) {
+
+	if (!Object) return false;
+
+	NiRTTI* Type = Object->GetType();
+	for (UInt32 Depth = 0; Type && Depth < 16; Depth++) {
+		if (Type->name && !strcmp(Type->name, "NiNode")) return true;
+		Type = Type->parent;
+	}
+	return false;
+
+}
+
+/// DIAGNOSTIC ONLY. Answers the question nothing in this feature has ever verified: does a fade root
+/// actually contain any drawable geometry? We diff and fade CONTAINER nodes, and if the geometry the
+/// renderer submits does not live beneath them then no parent walk from a drawn geometry can ever
+/// reach one, which is exactly the resolved=0 signature the draw counters report.
+///
+/// Runs at most once per TIER per session -- the three tiers pick their roots by completely different
+/// routes, so "geoms=0 on one tier" and "geoms=0 everywhere" are different diagnoses. Read-only
+/// throughout: it takes no reference, writes nothing but its own latch, and never dereferences a
+/// pointer it has not NULL-tested. Bounded at 512 visits and depth 8 because it runs on the render
+/// thread; the bounds are deliberately small, since the question is "any geometry at all", not "how
+/// much". Iterative rather than recursive so the bound is on total work rather than only on depth.
+void LODFadeManager::RunRootCensus(NiAVObject* Root, const char* Tier) {
+
+	if (!Root || !Tier) return;
+	if (!TheSettingManager->SettingsMain.Develop.LogLODFade) return;
+
+	// The latch sits INSIDE the log gate, same discipline as DistantRefLogged, so enabling logging
+	// later in a session still gets each tier its one line.
+	bool* Latch = NULL;
+	if (!strcmp(Tier, "distant")) Latch = &CensusDistantLogged;
+	else if (!strcmp(Tier, "cell")) Latch = &CensusCellLogged;
+	else if (!strcmp(Tier, "landlod")) Latch = &CensusLandLODLogged;
+	if (!Latch || *Latch) return;
+	*Latch = true;
+
+	struct CensusEntry { NiAVObject* Node; UInt32 Depth; };
+	CensusEntry Stack[kCensusMaxVisits];
+	UInt32 Top = 0;
+	UInt32 Visited = 0;
+	UInt32 Nodes = 0;
+	UInt32 Geoms = 0;
+	UInt32 MaxDepth = 0;
+	NiAVObject* FirstGeom = NULL;
+
+	Stack[Top].Node = Root;
+	Stack[Top].Depth = 0;
+	Top++;
+
+	while (Top && Visited < kCensusMaxVisits) {
+		Top--;
+		NiAVObject* Node = Stack[Top].Node;
+		UInt32 Depth = Stack[Top].Depth;
+		if (!Node) continue;
+		Visited++;
+		if (Depth > MaxDepth) MaxDepth = Depth;
+
+		// A leaf -- anything whose RTTI chain does not reach NiNode -- is drawable geometry as far as this
+		// census is concerned, and its address is directly comparable with the geom= value in a draw miss.
+		if (!IsNiNodeType(Node)) {
+			Geoms++;
+			if (!FirstGeom) FirstGeom = Node;
+			continue;
+		}
+
+		Nodes++;
+		if (Depth >= kCensusMaxDepth) continue;
+
+		// Scanned to `end` clamped to `capacity`, never to numObjs: removal NULLs a slot without
+		// compacting it, so numObjs is a live-child count and not a slot bound. NULL entries are skipped.
+		NiNode* Branch = (NiNode*)Node;
+		UInt32 Slots = Branch->m_children.data ? Branch->m_children.end : 0;
+		if (Slots > Branch->m_children.capacity) Slots = Branch->m_children.capacity;
+		for (UInt32 i = 0; i < Slots && Top < kCensusMaxVisits; i++) {
+			NiAVObject* Child = Branch->m_children.data[i];
+			if (!Child) continue;
+			Stack[Top].Node = Child;
+			Stack[Top].Depth = Depth + 1;
+			Top++;
+		}
+	}
+
+	Logger::Log("[LODFade] root census: tier=%s root=%08X depth=%d nodes=%d geoms=%d firstGeom=%08X firstGeomParent=%08X",
+		Tier, (UInt32)Root, MaxDepth, Nodes, Geoms, (UInt32)FirstGeom, FirstGeom ? (UInt32)FirstGeom->m_parent : 0);
 
 }
 
@@ -184,6 +288,10 @@ LODFadeManager::FadeRecord* LODFadeManager::AddFade(NiAVObject* Root, const char
 
 	if (TheSettingManager->SettingsMain.Develop.LogLODFade)
 		Logger::Log("[LODFade] %s start root=%08X live=%d", Tier, (UInt32)Root, LiveCount);
+
+	// DIAGNOSTIC ONLY, and self-latching per tier: the first fade of each tier reports what is actually
+	// underneath its root. Read-only, so it cannot disturb the record just pushed.
+	RunRootCensus(Root, Tier);
 
 	return &Fades.back();
 
@@ -772,12 +880,14 @@ void LODFadeManager::Update() {
 	// condition is wrong; gated>0 with resolved=0 means ResolveGeometry never matches, i.e. the nodes
 	// we fade are not ancestors of the nodes that get drawn; resolved>0 with minAlpha near 1.0 means the
 	// alpha computation; resolved>0 with minAlpha<1.0 means the publish chain is fine and the fault is
-	// in the shader or the constant register.
+	// in the shader or the constant register. rootIdx is RootIndex.size() read BEFORE the rebuild at the
+	// bottom of this function, so it is the index the frame just measured actually resolved against:
+	// rootIdx=0 while live>0 means the rebuild is the fault and the scene graph is not involved at all.
 	bool LogFade = TheSettingManager->SettingsMain.Develop.LogLODFade;
 	if (LogFade && LiveCount > 0 && CurrentTime - LastDrawLogTime >= 1.0f) {
 		LastDrawLogTime = CurrentTime;
-		Logger::Log("[LODFade] draw: covered=%d gated=%d resolved=%d minAlpha=%.3f live=%d",
-			DrawCovered, DrawGated, DrawResolved, DrawMinAlpha, LiveCount);
+		Logger::Log("[LODFade] draw: covered=%d gated=%d resolved=%d minAlpha=%.3f live=%d rootIdx=%d",
+			DrawCovered, DrawGated, DrawResolved, DrawMinAlpha, LiveCount, (UInt32)RootIndex.size());
 	}
 	// The captured ancestry sample is printed only when the whole frame resolved nothing while a fade
 	// was live, which is the case that says the fade roots are not in the drawn geometry's ancestry.

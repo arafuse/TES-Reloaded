@@ -184,6 +184,13 @@ private:
 	UInt32												MissDepth;
 	float												LastDrawLogTime;
 
+	// DIAGNOSTIC ONLY: one-shot subtree census latches, one per tier, so the bounded read-only walk in
+	// RunRootCensus runs at most once per tier per session. The three tiers pick their roots by
+	// completely different routes, so a per-tier latch separates "universal" from "tier-specific".
+	bool												CensusDistantLogged;
+	bool												CensusCellLogged;
+	bool												CensusLandLODLogged;
+
 	NiNode*			ResolveDistantRef();
 	void			PollDistantRef();
 	void			PollLandLOD();
@@ -205,4 +212,14 @@ private:
 	void			ResyncCells(std::unordered_map<TESObjectCELL*, NiNode*>& Cells, std::unordered_map<TESObjectCELL*, NiNode*>& Current);
 
 	void			Retire(UInt32 Index);
+
+	// DIAGNOSTIC ONLY: takes no references, dereferences nothing without a NULL test and mutates nothing
+	// but its own latch. Walks Root downward once per tier per session and reports how many nodes and
+	// how many drawable leaves actually live under a fade root, which nothing has ever verified.
+	void			RunRootCensus(NiAVObject* Root, const char* Tier);
+
+	// True when Object's NiRTTI chain reaches NiNode. Oblivion's NiObject carries no GetAsNiNode slot --
+	// that virtual exists only in the other two GameNi.h blocks -- and a vtable whitelist would silently
+	// misclassify derived node types, so the RTTI chain is the only safe test available here.
+	static bool		IsNiNodeType(NiAVObject* Object);
 };
