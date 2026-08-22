@@ -26,12 +26,13 @@ The exactly-complementary construction -- two draws sharing one `StartTime`, one
 100% between them with neither a hole nor a double-draw -- holds only where both halves provably
 start in the same `Update()`. In the shipped code that is `PollLandLOD`, whose two `AddFade` calls
 are adjacent. It does **not** describe the LOD-to-full handoff on cell load: the arriving full models
-are detected by `PollCellGrid` and the departing LOD by `PollDistantGrid`, which are separate slot
-changes with no guaranteed pairing, so the full models dither in from `a = 0` while the LOD keeps
-drawing at or near full coverage. That handoff therefore double-draws for the duration of the fade
-rather than staying at exactly 100%. This is deliberate: a double-draw is a far less visible artefact
-than a hole in the world, and pairing across two pollers would require reconstructing cell identity
-that the grids do not share.
+are detected by `PollCellGrid` and the departing LOD by `PollDistantRef`, which are independent
+detections against different structures with no guaranteed pairing, so the full models dither in from
+`a = 0` while the LOD keeps drawing at or near full coverage. That handoff therefore double-draws for
+the duration of the fade rather than staying at exactly 100%. This is deliberate: a double-draw is a
+far less visible artefact than a hole in the world, and pairing across two pollers would require
+reconstructing cell identity that neither tier carries -- the distant tier has none at all, since it
+diffs scene-graph children by membership rather than by cell slot.
 
 ## Scope
 
@@ -52,7 +53,7 @@ Out of scope:
 
 ## Chosen approach
 
-Poll the engine's grid arrays and diff them. Rejected alternatives:
+Poll engine state once per frame and diff it. Rejected alternatives:
 
 - **Scene-graph diff** — walk `DistantRefLOD` / `LandLOD` / `ObjectLODRoot` children each frame and
   diff pointer sets. Catches everything, but costs 2000+ node visits per frame and loses cell
@@ -63,9 +64,17 @@ Poll the engine's grid arrays and diff them. Rejected alternatives:
 - **Engine attach/detach hooks** — exact timing and no polling, but requires reverse-engineering
   addresses this fork does not have, and a mis-hook in cell loading crashes rather than glitches.
 
-Polling wins because the grid arrays are already reverse-engineered in `Game.h` and carry cell
-identity, which turns LOD-to-full pairing into a lookup. Detection latency of a few frames is
-invisible against a 1.0 s fade.
+Polling wins over attach/detach hooks because it needs no new hook addresses and degrades to a pop
+rather than a crash when an assumption is wrong. What it polls differs per tier. The loaded-cell tier
+uses `Tes->gridCellArray`, whose layout genuinely is reverse-engineered in `Game.h`, and the
+`LandLOD` tier diffs that node's child array by slot index; both are positional diffs. The distant
+tier is a **set-membership diff of `DistantRefLOD`'s scene-graph children**, adopted after
+`Tes->gridDistantArray`'s entry layout proved to be unverified guesswork (see "Engine data used").
+
+Cell identity is therefore *not* available across tiers and LOD-to-full pairing is **not** a lookup.
+Pairing is implicit through a shared `StartTime` where both halves land in one `Update()`, and the
+LOD-to-full handoff — which does not — deliberately double-draws instead; see the Goal section.
+Detection latency of a few frames is invisible against a 1.0 s fade.
 
 ## Architecture
 
@@ -90,8 +99,8 @@ Alongside the table, an `unordered_map<NiGeometry*, FadeRecord*>` populated lazi
 **Draw hook.** In `RenderHook::TrackSetupShaderPrograms` (`RenderHook.cpp:381`), while any fade is
 live, resolve the drawn geometry to a record and publish `TESR_GEOM_FadeParams`.
 
-With an empty fade table the manager costs one grid diff and one distant membership diff per frame
-and nothing else: no map probes, no constant sets, no shader work.
+With an empty fade table the manager costs one cell-grid diff, one `LandLOD` child diff and one
+distant membership diff per frame and nothing else: no map probes, no constant sets, no shader work.
 
 ### Engine data used
 
@@ -336,7 +345,9 @@ Every failure mode degrades to a pop, never a crash:
 
 ## Performance
 
-Steady state is one grid diff per frame with an empty fade table, and no per-draw work at all.
+Steady state, with an empty fade table, is one cell-grid diff, one `LandLOD` child diff and one
+`DistantRefLOD` membership diff per frame -- the last a hash-set build of ~2075 pointers -- and no
+per-draw work at all.
 During a transition, both the LOD and full-model versions of the affected cell are drawn for up to
 `FadeTime`, so overdraw rises for that window. Cell loads are already the most expensive moment in
 exterior travel, so the added draws land where there is already a hitch rather than creating a new
@@ -367,9 +378,10 @@ In-game checklist:
 - Set `PinDeparting=0` and confirm the fade-in half still works alone.
 - Toggle TAA off and confirm the dither is noisy but not broken.
 - Walk a cell boundary watching for cells that are still loaded and visible dithering out. The
-  pollers treat any slot going from one non-NULL node to a different one as a departure, which is
-  required so a direct swap is not missed — but if the engine re-indexes the loaded grid on a
-  boundary crossing rather than rotating it, still-present cells produce that same pattern. The
+  slot-keyed pollers (cell and `LandLOD`) treat any slot going from one non-NULL node to a different
+  one as a departure, which is required so a direct swap is not missed — but if the engine re-indexes
+  the loaded grid on a boundary crossing rather than rotating it, still-present cells produce that
+  same pattern. This failure mode cannot affect the distant tier, which diffs by membership. The
   `Changed > 2 * size` discontinuity guard should mask it; this checks that it does.
 - Watch a `LandLOD` quadrant that is replaced by nothing rather than by a new quadrant. The
   complementary construction only reaches exactly 100% coverage when an arrival accompanies the

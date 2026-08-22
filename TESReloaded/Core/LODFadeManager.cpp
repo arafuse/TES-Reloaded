@@ -279,36 +279,52 @@ void LODFadeManager::PollDistantRef() {
 }
 
 /// Detects LandLOD (terrain LOD) quadrants gaining a new node by diffing the child array against
-/// the previous frame. A size change resyncs to the actual current pointers rather than NULL,
+/// the previous frame. A slot-count change resyncs to the actual current pointers rather than NULL,
 /// since stamping NULL would make every already-loaded quadrant look newly-populated next poll.
+///
+/// This diff stays POSITIONAL, unlike the distant one: LandLOD holds a fixed dozen quadrants that the
+/// engine replaces in place, and slot identity is what pairs an outgoing quadrant with its incoming
+/// replacement so the two share a StartTime. A NULL slot is therefore a meaningful value here, not an
+/// entry to skip -- a slot going non-NULL to NULL is exactly the departure signal.
 void LODFadeManager::PollLandLOD() {
 
 	NiNode* LandLOD = Tes->LODRoot;
 	if (!LandLOD) return;
 
-	UInt32 Count = LandLOD->m_children.numObjs;
-	if (PrevLandLOD.size() != Count) {
+	// Bounded by `end`, not `numObjs`, for the same reason as the distant poller: numObjs counts live
+	// children, so NULLing a quadrant in place would shrink it, truncate the tail, and trip the
+	// resync below -- silently discarding the very transition this function exists to catch.
+	// Capacity is the hard clamp, and covers a zero-capacity (NULL data) array by making Slots 0.
+	UInt32 Slots = LandLOD->m_children.end;
+	if (Slots > LandLOD->m_children.capacity) Slots = LandLOD->m_children.capacity;
+
+	// Also the first-population path (PrevLandLOD empty), which must resync silently rather than
+	// fade in every quadrant at once. With the `end` bound this now fires only when the array itself
+	// grows or its trailing slots are freed, not merely because a quadrant went NULL.
+	if (PrevLandLOD.size() != Slots) {
 		ReleaseSlots(PrevLandLOD);
-		PrevLandLOD.assign(Count, NULL);
-		for (UInt32 i = 0; i < Count; i++) AssignSlot(PrevLandLOD[i], LandLOD->m_children.data[i]);
+		PrevLandLOD.assign(Slots, NULL);
+		for (UInt32 i = 0; i < Slots; i++) AssignSlot(PrevLandLOD[i], LandLOD->m_children.data[i]);
 		return;
 	}
 
 	// Count first, so a teleport is suppressed before any fade is started rather than after.
 	UInt32 Changed = 0;
-	for (UInt32 i = 0; i < Count; i++) {
+	for (UInt32 i = 0; i < Slots; i++) {
 		NiAVObject* Node = LandLOD->m_children.data[i];
 		if (Node != PrevLandLOD[i]) Changed++;
 	}
 
-	if (Changed > (Count / 2)) {
+	// Half the SLOTS, not half the live children: the diff is positional, so the denominator has to be
+	// the number of positions being compared or a sparse array would lower the bar for suppression.
+	if (Changed > (Slots / 2)) {
 		if (TheSettingManager->SettingsMain.Develop.LogLODFade)
-			Logger::Log("[LODFade] landlod discontinuity: %d of %d slots changed, suppressed", Changed, Count);
-		for (UInt32 i = 0; i < Count; i++) AssignSlot(PrevLandLOD[i], LandLOD->m_children.data[i]);
+			Logger::Log("[LODFade] landlod discontinuity: %d of %d slots changed, suppressed", Changed, Slots);
+		for (UInt32 i = 0; i < Slots; i++) AssignSlot(PrevLandLOD[i], LandLOD->m_children.data[i]);
 		return;
 	}
 
-	for (UInt32 i = 0; i < Count; i++) {
+	for (UInt32 i = 0; i < Slots; i++) {
 		NiAVObject* Node = LandLOD->m_children.data[i];
 		if (Node == PrevLandLOD[i]) continue;
 
