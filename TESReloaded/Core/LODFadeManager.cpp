@@ -13,6 +13,8 @@ LODFadeManager::LODFadeManager() {
 	NeedsOpaquePublish = true;
 	DistantRef = NULL;
 	DistantRefLogged = false;
+	CellGridLogged = false;
+	LandLODLogged = false;
 
 }
 
@@ -554,6 +556,19 @@ void LODFadeManager::PollLandLOD() {
 	UInt32 Slots = LandLOD->m_children.end;
 	if (Slots > LandLOD->m_children.capacity) Slots = LandLOD->m_children.capacity;
 
+	// One-shot diagnostic: proves the child array is actually populated with real NiNode pointers
+	// before the tier's silence is trusted as "no LandLOD quadrant changed". The latch sits INSIDE the
+	// log gate, same discipline as DistantRefLogged, so enabling logging later still gets the line.
+	if (!LandLODLogged && TheSettingManager->SettingsMain.Develop.LogLODFade) {
+		LandLODLogged = true;
+		UInt32 Populated = 0;
+		for (UInt32 i = 0; i < Slots; i++) {
+			NiAVObject* Child = LandLOD->m_children.data[i];
+			if (Child && !IsHolder(Child)) Populated++;
+		}
+		Logger::Log("[LODFade] landlod children=%d populated=%d", Slots, Populated);
+	}
+
 	// Also the first-population path (PrevLandLOD empty), which must resync silently rather than fade
 	// in every quadrant at once. An appended holder grows the array and takes this path exactly once,
 	// costing one missed poll; thereafter it reads as a permanently empty trailing slot.
@@ -630,6 +645,20 @@ void LODFadeManager::PollCellGrid() {
 
 	UInt32 Dim = Grid->size;
 	UInt32 Slots = Dim * Dim;
+
+	// One-shot diagnostic: proves Grid->grid[i].info->niNode is actually the right offset before the
+	// tier's silence is trusted as "no cell boundary crossed". Zero populated standing in a loaded
+	// exterior is the smoking gun that CellInfo::niNode needs re-deriving. Latch sits INSIDE the log
+	// gate, same discipline as DistantRefLogged, so enabling logging later still gets the line.
+	if (!CellGridLogged && TheSettingManager->SettingsMain.Develop.LogLODFade) {
+		CellGridLogged = true;
+		UInt32 Populated = 0;
+		for (UInt32 i = 0; i < Slots; i++) {
+			if (Grid->grid[i].info && Grid->grid[i].info->niNode) Populated++;
+		}
+		Logger::Log("[LODFade] cell grid size=%d slots=%d populated=%d", Dim, Slots, Populated);
+	}
+
 	if (PrevCell.size() != Slots) {
 		ReleaseSlots(PrevCell);
 		SlotEntry Empty;

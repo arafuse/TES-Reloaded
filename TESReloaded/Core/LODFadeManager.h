@@ -145,6 +145,11 @@ private:
 	NiNode*												DistantRef;
 	bool												DistantRefLogged;
 
+	// Latches for the one-shot cell-grid and LandLOD population diagnostics in PollCellGrid and
+	// PollLandLOD, each printing once per session to prove their node pointers are actually non-NULL.
+	bool												CellGridLogged;
+	bool												LandLODLogged;
+
 	NiNode*			ResolveDistantRef();
 	void			PollDistantRef();
 	void			PollLandLOD();

@@ -581,6 +581,15 @@ In-game checklist:
   `distant` lines — neither of the other two pollers emitted a single transition, so both remain
   entirely unverified in game despite sharing the pin, holder and refcount machinery. Cross a cell
   boundary on foot and cross a `LandLOD` quadrant boundary, watching for `cell` and `landlod` tags.
+- **Read the one-shot `cell grid` and `landlod` population lines** before trusting either tier's
+  silence. `PollCellGrid` logs `[LODFade] cell grid size=%d slots=%d populated=%d` and `PollLandLOD`
+  logs `[LODFade] landlod children=%d populated=%d`, each once per session. Standing in a loaded
+  exterior, `populated` should sit close to `slots` for the cell line (25 at the default
+  `uGridsToLoad=5`) and near 12 for the `landlod` line. A `populated=0` on the cell line means
+  `CellInfo::niNode` (`Game.h`) is at the wrong offset and the cell tier's silence is a bad read, not
+  proof that no boundary was crossed; a low `landlod` count would point the same way at the
+  `LandLOD` child-array walk instead. A healthy `populated` count alongside continued silence would
+  instead mean the author simply never crossed that tier's boundary this run.
 - Fast-travel and confirm the discontinuity guard suppresses a world-wide dissolve.
 - Set `PinDeparting=0` and confirm the fade-in half still works alone. This is the fallback: if the
   re-attach path crashes, shipping with `PinDeparting=0` is an acceptable outcome and forcing the
