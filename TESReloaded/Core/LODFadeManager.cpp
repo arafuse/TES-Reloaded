@@ -243,7 +243,7 @@ void LODFadeManager::NoteResolveMiss(NiAVObject* Geometry) {
 /// DIAGNOSTIC ONLY. Tallies one covered draw under its pixel shader and, the first time a shader is
 /// seen, records that draw's geometry ancestry as text. Mutates nothing but its own census fields and
 /// dereferences only pointers the draw hook is holding live at this instant.
-void LODFadeManager::NoteCoveredDraw(const char* ShaderName, NiAVObject* Geometry, bool Resolved) {
+void LODFadeManager::NoteCoveredDraw(const char* ShaderName, NiAVObject* Geometry, bool Resolved, bool Covered) {
 
 	// Rows are matched on the ShaderRecord's own string pointer; see the header for why that is enough.
 	const char* Name = ShaderName ? ShaderName : "(unnamed)";
@@ -263,6 +263,7 @@ void LODFadeManager::NoteCoveredDraw(const char* ShaderName, NiAVObject* Geometr
 	Entry.Name = Name;
 	Entry.Draws = 1;
 	Entry.Resolved = Resolved ? 1 : 0;
+	Entry.Covered = Covered;
 	Entry.Chain[0] = 0;
 
 	// The measurement: the ancestry of the first geometry this shader drew, leaf first, each hop as
@@ -415,7 +416,8 @@ LODFadeManager::FadeRecord* LODFadeManager::AddFade(NiAVObject* Root, const char
 	FadeSetDirty = true;
 
 	if (TheSettingManager->SettingsMain.Develop.LogLODFade)
-		Logger::Log("[LODFade] %s start root=%08X live=%d", Tier, (UInt32)Root, LiveCount);
+		Logger::Log("[LODFade] %s start t=%.2f dir=%s root=%08X live=%d",
+			Tier, CurrentTime, Departing ? "out" : "in", (UInt32)Root, LiveCount);
 
 	// DIAGNOSTIC ONLY, and self-latching per tier: the first fade of each tier reports what is actually
 	// underneath its root. Read-only, so it cannot disturb the record just pushed.
@@ -442,7 +444,8 @@ float LODFadeManager::GetAlpha(FadeRecord* Record) {
 void LODFadeManager::Retire(UInt32 Index) {
 
 	if (TheSettingManager->SettingsMain.Develop.LogLODFade)
-		Logger::Log("[LODFade] %s retire root=%08X pinned=%d", Fades[Index].Tier, (UInt32)Fades[Index].Root, Fades[Index].Pinned ? 1 : 0);
+		Logger::Log("[LODFade] %s retire t=%.2f root=%08X pinned=%d age=%.2f", Fades[Index].Tier, CurrentTime,
+			(UInt32)Fades[Index].Root, Fades[Index].Pinned ? 1 : 0, CurrentTime - Fades[Index].StartTime);
 
 	if (Fades[Index].Pinned) Unpin(&Fades[Index]);
 
@@ -600,7 +603,7 @@ bool LODFadeManager::Pin(FadeRecord* Record, NiNode* Parent) {
 		RefreshHolder(Holder);
 
 		if (TheSettingManager->SettingsMain.Develop.LogLODFade)
-			Logger::Log("[LODFade] %s pin root=%08X mode=reattach", Record->Tier, (UInt32)Node);
+			Logger::Log("[LODFade] %s pin t=%.2f root=%08X mode=reattach", Record->Tier, CurrentTime, (UInt32)Node);
 
 		// DIAGNOSTIC ONLY, once per tier: the pinned node's ancestry AFTER the re-attach. A departure is
 		// detached when it is detected, so its detection-time census can say nothing about whether the
@@ -627,7 +630,7 @@ bool LODFadeManager::Pin(FadeRecord* Record, NiNode* Parent) {
 	Record->Pinned = true;
 
 	if (TheSettingManager->SettingsMain.Develop.LogLODFade)
-		Logger::Log("[LODFade] %s pin root=%08X mode=uncull", Record->Tier, (UInt32)Node);
+		Logger::Log("[LODFade] %s pin t=%.2f root=%08X mode=uncull", Record->Tier, CurrentTime, (UInt32)Node);
 
 	return true;
 
@@ -1070,10 +1073,11 @@ void LODFadeManager::Update() {
 		CoveredLogged = true;
 		CoveredCensusWanted = false;
 		for (UInt32 i = 0; i < CoveredShaderCount; i++) {
-			Logger::Log("[LODFade] covered shader: %s draws=%d resolved=%d chain=%s",
-				CoveredShaders[i].Name, CoveredShaders[i].Draws, CoveredShaders[i].Resolved, CoveredShaders[i].Chain);
+			Logger::Log("[LODFade] shader: %s covered=%d draws=%d resolved=%d chain=%s",
+				CoveredShaders[i].Name, CoveredShaders[i].Covered ? 1 : 0,
+				CoveredShaders[i].Draws, CoveredShaders[i].Resolved, CoveredShaders[i].Chain);
 		}
-		Logger::Log("[LODFade] covered shader: (total) names=%d overflow=%d", CoveredShaderCount, CoveredOverflow);
+		Logger::Log("[LODFade] shader: (total) names=%d overflow=%d", CoveredShaderCount, CoveredOverflow);
 	}
 
 	DrawCovered = 0;

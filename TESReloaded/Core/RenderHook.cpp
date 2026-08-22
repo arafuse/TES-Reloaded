@@ -540,11 +540,12 @@ UInt32 RenderHook::TrackSetupShaderPrograms(NiGeometry* Geometry, NiSkinInstance
 		// NeedsOpaquePublish forces one publish regardless of the INI toggle: D3D9 seeds pixel shader
 		// float constants to ZERO, so until c110 is written once the clip kills every covered pixel.
 		// c110 is device-global, so that single publish repairs every covered shader at once.
-		if (PixelShader->ShaderProg && PixelShader->ShaderProg->HasFadeParams) {
+		bool HasFade = PixelShader->ShaderProg && PixelShader->ShaderProg->HasFadeParams;
+		bool DrawWasResolved = false;
+		if (HasFade) {
 			// Diagnostic only, and deliberately counted before every other condition so it is a pure
 			// measure of how many draws the constant actually reaches. See LODFadeManager::Update().
 			TheLODFadeManager->DrawCovered++;
-			bool DrawWasResolved = false;
 			bool FadeActive = TheSettingManager->SettingsMain.LODFade.Enabled &&
 				(TheLODFadeManager->AnyFadesLive() || TheLODFadeManager->FadeResetPending);
 			if (FadeActive || TheLODFadeManager->NeedsOpaquePublish) {
@@ -564,11 +565,13 @@ UInt32 RenderHook::TrackSetupShaderPrograms(NiGeometry* Geometry, NiSkinInstance
 				// to land mid-fade does not count as the one that repaired the register.
 				if (!Record) TheLODFadeManager->NeedsOpaquePublish = false;
 			}
-			// Diagnostic only, and outside the gate so the census sees every covered draw. Self-latching:
-			// once the report has printed CoveredCensusWanted stays false and this costs one bool load.
-			if (TheLODFadeManager->CoveredCensusWanted)
-				TheLODFadeManager->NoteCoveredDraw(PixelShader->ShaderName, Geometry, DrawWasResolved);
 		}
+		// Diagnostic only, and outside the coverage test as well as the gate, so the census sees draws
+		// through shaders that carry no fade clip at all -- a shader the plugin does not replace has no
+		// ShaderProg, never receives c110, and can never dither whatever the manager does. Self-latching:
+		// once the report has printed CoveredCensusWanted stays false and this costs one bool load.
+		if (TheLODFadeManager->CoveredCensusWanted)
+			TheLODFadeManager->NoteCoveredDraw(PixelShader->ShaderName, Geometry, DrawWasResolved, HasFade);
 
 		if (PixelShader->isRefraction) {
 			RenderState->SetRenderState(D3DRS_ZWRITEENABLE, FALSE, 0);

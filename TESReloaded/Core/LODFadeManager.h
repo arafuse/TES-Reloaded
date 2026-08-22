@@ -75,12 +75,14 @@ public:
 	/// ResolveMissWanted is true; it disarms itself, so the walk runs at most once per frame.
 	void			NoteResolveMiss(NiAVObject* Geometry);
 
-	/// DIAGNOSTIC ONLY. Records one covered draw against the pixel shader that issued it, and for the
-	/// first draw of each distinct shader captures that geometry's m_parent chain to the top of the
-	/// graph, by name and address. Answers the one question the counters cannot: WHICH shaders the
-	/// covered draws belong to, and WHERE in the scene graph their geometry lives.
+	/// DIAGNOSTIC ONLY. Records one draw against the pixel shader that issued it, and for the first
+	/// draw of each distinct shader captures that geometry's m_parent chain to the top of the graph, by
+	/// name and address. Answers what the counters cannot: WHICH shaders the draws belong to and WHERE
+	/// their geometry lives. Covered says whether that shader carries TESR_GEOM_FadeParams -- a draw
+	/// under a fade root through an UNCOVERED shader can never dither, however sound the manager is,
+	/// which is the only way left for a tier to work for some objects and not others.
 	/// Only ever called while CoveredCensusWanted is true.
-	void			NoteCoveredDraw(const char* ShaderName, NiAVObject* Geometry, bool Resolved);
+	void			NoteCoveredDraw(const char* ShaderName, NiAVObject* Geometry, bool Resolved, bool Covered);
 
 	/// DIAGNOSTIC ONLY. False once the per-shader covered-draw census has printed. The draw hook tests
 	/// it inline, so after the single report every covered draw pays one bool load and no call.
@@ -221,9 +223,10 @@ private:
 		const char*	Name;
 		UInt32		Draws;
 		UInt32		Resolved;
+		bool		Covered;
 		char		Chain[320];
 	};
-	static const UInt32								kCoveredShaderMax = 24;
+	static const UInt32								kCoveredShaderMax = 64;
 	CoveredShaderEntry								CoveredShaders[kCoveredShaderMax];
 	UInt32											CoveredShaderCount;
 	UInt32											CoveredOverflow;
