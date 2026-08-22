@@ -339,24 +339,36 @@ meantime. Skipping it in that case is the obvious resurrection guard and it is w
 the node in the holder's child array forever, drawn and referenced every frame. `RemoveObject` NULLs
 `m_parent`, so the owner is read before the call and restored after it when it was not our holder.
 
-**`RemoveObject`'s reference accounting is UNSETTLED and is being measured, not guessed.** Either it
-*releases* the parent's reference — in which case `Unpin`'s single `InterlockedDecrement` is already
-correct — or it *transfers* it into the out parameter, which is really an `NiAVObjectPtr` slot, in
-which case one further decrement is owed and a whole subtree leaks per re-attached pin without it.
-The argument for transfer is the **signature**: `NiAVObject** RemovedChild` is the address of an
-`NiAVObjectPtr`'s raw slot, and Gamebryo's `DetachChild` AddRefs into that out-slot before releasing
-the array slot, netting zero. `EquipmentManager.cpp:636` looks like corroboration and is **not** —
-its `Object->Destructor(1)` is a direct deleting-destructor call that bypasses refcounting entirely,
-so it is consistent with both readings. Nothing is changed on a guess; `Unpin` logs the refcount
-either side of the call:
+**`RemoveObject` TRANSFERS the child array's reference — settled by measurement, not argument.** The
+question was whether it *releases* the array's reference or *transfers* it into the out parameter,
+which is really an `NiAVObjectPtr` slot. The two readings differed by a leak versus a use-after-free,
+in opposite directions, so `Unpin` was shipped instrumented rather than guessed:
 
 ```
 [LODFade] %s unpin root=%08X refcount %u -> %u
 ```
 
-Unchanged means transfer, and one more decrement is owed. Down by one means the current code is
-right. It is safe either way today: the count is at least 2 at the detach (Pin's reference plus the
-holder's), so `RemoveObject` cannot reach zero.
+**35 re-attached pins in game all logged `refcount 2 -> 2`** — unchanged across the call. Transfer,
+unambiguously. The arithmetic closes exactly: the two references at the detach are Pin's own and the
+holder array's; `RemoveObject` moves the array's into `Removed`, which is discarded, so the count
+holds at 2, and the single `InterlockedDecrement` left it at 1 with nothing ever dropping the last
+one. Every re-attached pin was leaking its node and entire subtree — 35 of them in seconds of play.
+
+`Unpin` therefore drops that transferred reference explicitly, **inside the holder branch only**: the
+un-cull path performs no `AddObject` and no `RemoveObject`, so it never acquires the array reference
+and keeps its single decrement. The extra decrement carries no `Destructor` because it provably
+cannot reach zero — Pin's own reference is still outstanding — and the final decrement remains the
+only one that can destruct.
+
+This confirmed the **signature** argument: `NiAVObject** RemovedChild` is the address of an
+`NiAVObjectPtr`'s raw slot, and Gamebryo's `DetachChild` AddRefs into that out-slot before releasing
+the array slot, netting zero. It also vindicates discarding `EquipmentManager.cpp:636` as evidence —
+its `Object->Destructor(1)` is a direct deleting-destructor call that bypasses refcounting entirely
+and fits either reading.
+
+The instrumentation is **kept as the regression test** for this. It brackets `RemoveObject` alone and
+not the extra decrement, so the correct reading stays `refcount 2 -> 2` on a re-attach and `0 -> 0` on
+an un-cull, which takes neither branch. Those numbers are not a bug to be "fixed" back.
 
 The out parameter is initialised to **NULL** rather than aliasing the node, and that is the *safe*
 initialisation, not merely the tidier one: if the slot really is a smart pointer's, assignment through
@@ -562,11 +574,13 @@ In-game checklist:
   object root, one for `LandLOD`) and then never again. Many `holder created` lines mean the reuse
   validation keeps failing — each failure declines a pin and drops the entry, so holders are being
   rebuilt and departures are being lost.
-- **Settle `RemoveObject`'s reference accounting** from the same run. Read the `refcount %u -> %u`
-  field on the `unpin` lines: **unchanged** means `RemoveObject` transfers rather than releases, and
-  `Unpin` owes one further `InterlockedDecrement` or every re-attached pin leaks its subtree;
-  **down by one** means the shipped accounting is already correct. Nothing else should be changed
-  here until that field has been read.
+- **Regression-check the `refcount %u -> %u` field** on the `unpin` lines. It must read `2 -> 2` on a
+  re-attached pin and `0 -> 0` on an un-cull. Anything else means the reference balance has moved and
+  the extra decrement in the holder branch needs re-deriving; see "Unpin ordering".
+- **Exercise the `cell` and `landlod` tiers.** The run that settled the above contained *only*
+  `distant` lines — neither of the other two pollers emitted a single transition, so both remain
+  entirely unverified in game despite sharing the pin, holder and refcount machinery. Cross a cell
+  boundary on foot and cross a `LandLOD` quadrant boundary, watching for `cell` and `landlod` tags.
 - Fast-travel and confirm the discontinuity guard suppresses a world-wide dissolve.
 - Set `PinDeparting=0` and confirm the fade-in half still works alone. This is the fallback: if the
   re-attach path crashes, shipping with `PinDeparting=0` is an acceptable outcome and forcing the
@@ -610,9 +624,14 @@ see "Unpin ordering". The obvious guard, skipping the detach when `m_parent` is 
 have been worse than the bug: it leaves the node in the holder's array forever, drawn and referenced
 every frame.
 
-**`RemoveObject`'s reference accounting** is the one live unknown, and it is instrumented rather than
-guessed; see "Unpin ordering". Worst case in the wrong direction is a leak, not a fault, and the
-count cannot reach zero inside the call.
+**`RemoveObject`'s reference accounting** was the one live unknown; it is now settled by measurement
+and the leak it would otherwise have caused is fixed. See "Unpin ordering". The instrumentation stays
+in place as the regression test.
+
+**The `cell` and `landlod` tiers are unverified in game.** The run that exercised the re-attach path
+produced `distant` transitions only. Both other tiers share the pin, holder, refcount and sticky-parent
+machinery, so the risk is that a tier-specific assumption — the cell tier's sticky parent, or the
+`LandLOD` array's fixed arity — is wrong in a way `distant` traffic cannot reveal.
 
 **TAA history rejection.** Dithered pixels change every frame by construction. If TAA's history
 rejection treats the changing coverage as disocclusion, the fade may flicker rather than resolve.

@@ -35,8 +35,16 @@ LODFadeManager::LODFadeManager() {
 /// parent that was freed before any holder was ever created under it.
 ///
 /// The sticky reference is still dropped whenever the slot's NODE changes, so a remembered parent
-/// never outlives the node it belonged to. New references are taken before old ones are released, on
-/// both fields, so a slot re-assigned to what it already holds cannot destruct it mid-swap.
+/// never outlives the node it belonged to.
+///
+/// ORDERING, precisely -- the two fields are NOT alike, and assuming they are is a trap. The NODE
+/// field takes the new reference before releasing the old, so re-assigning a slot to what it already
+/// holds cannot destruct it mid-swap. The PARENT field on the node-changed branch does the opposite:
+/// ReleaseParent runs BEFORE the parent is re-read and re-acquired. That is safe for a different
+/// reason. The incoming node was increfed first, so a parent destructing inside ReleaseParent cannot
+/// take the node whose m_parent is read on the next line with it; and a destructed parent NULLs its
+/// children's m_parent, so that read yields NULL and the sticky early-out returns without ever
+/// re-acquiring a freed pointer.
 void LODFadeManager::AssignSlot(SlotEntry& Entry, NiAVObject* Node, bool StickyParent) {
 
 	if (Entry.Node != Node) {
@@ -53,6 +61,8 @@ void LODFadeManager::AssignSlot(SlotEntry& Entry, NiAVObject* Node, bool StickyP
 
 	bool Own = StickyParent && Parent;
 	if (Own) InterlockedIncrement(&Parent->m_uiRefCount);
+	// ParentOwned implies Parent is non-NULL -- nothing sets it without one -- so this needs no NULL
+	// check. ReleaseParent carries one anyway because it also runs on entries never assigned here.
 	if (Entry.ParentOwned && !InterlockedDecrement(&Entry.Parent->m_uiRefCount)) Entry.Parent->Destructor(true);
 	Entry.Parent = Parent;
 	Entry.ParentOwned = Own;
@@ -356,20 +366,20 @@ bool LODFadeManager::Pin(FadeRecord* Record, NiNode* Parent) {
 /// whatever it previously held. The aliased form used elsewhere in this fork is the risky one. NULL
 /// also distinguishes "child not found" for free.
 ///
-/// UNSETTLED: whether RemoveObject RELEASES the holder's reference or TRANSFERS it into the out
-/// parameter. Release means the accounting here is already right; transfer means one further
-/// decrement is owed and a whole subtree leaks per re-attached pin without it.
+/// SETTLED BY MEASUREMENT: RemoveObject TRANSFERS the child array's reference into the out parameter;
+/// it does not release it. 35 re-attached pins in game all logged "refcount 2 -> 2", unchanged across
+/// the call. The two references at that point are Pin's own and the holder array's; the transferred
+/// one lands in Removed, which is discarded, so the re-attach path owes an extra decrement or every
+/// pinned node and its whole subtree leaks. That decrement is the one below inside the Holder branch.
 ///
-/// The argument for transfer is the signature: NiAVObject** RemovedChild is the address of an
+/// This confirmed the signature argument -- NiAVObject** RemovedChild is the address of an
 /// NiAVObjectPtr's raw slot, and Gamebryo's DetachChild AddRefs into that out-slot before releasing
-/// the array slot, netting zero. EquipmentManager.cpp:636 is NOT good evidence either way, despite
-/// looking like it -- its Object->Destructor(1) is a direct deleting-destructor call that bypasses
-/// refcounting entirely, so it is consistent with both readings.
+/// the array slot, netting zero. It also confirms EquipmentManager.cpp:636 was correctly discarded as
+/// evidence: its Object->Destructor(1) bypasses refcounting entirely and fits either reading.
 ///
-/// So this logs the refcount either side of the call rather than guessing. It is safe TODAY either
-/// way: the count is at least 2 at the detach (Pin's reference plus the holder's), so RemoveObject
-/// cannot reach zero. Settle it from the next run's log -- unchanged means transfer and one further
-/// decrement is owed here; down by one means this is already correct.
+/// RefBefore/RefAfter and the log line are KEPT as the regression test for exactly this. They bracket
+/// RemoveObject alone, not the extra decrement, so the correct reading remains "refcount 2 -> 2" on a
+/// re-attach and "0 -> 0" on an un-cull, which takes neither branch. Do not "fix" those numbers.
 void LODFadeManager::Unpin(FadeRecord* Record) {
 
 	NiAVObject* Node = Record->Root;
@@ -389,6 +399,9 @@ void LODFadeManager::Unpin(FadeRecord* Record) {
 		Record->Holder->RemoveObject(&Removed, Node);
 		RefAfter = Node->m_uiRefCount;
 		if (Owner != Record->Holder) Node->m_parent = Owner;
+		// Drop the reference RemoveObject transferred into Removed, which we discard. Cannot reach zero
+		// and so needs no Destructor: Pin's own reference is still held and is released just below.
+		InterlockedDecrement(&Node->m_uiRefCount);
 		Record->Holder = NULL;
 	}
 
