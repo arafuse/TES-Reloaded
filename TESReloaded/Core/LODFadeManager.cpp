@@ -929,9 +929,13 @@ void LODFadeManager::PollLandLOD() {
 /// are what this now diffs, so the nodes it fades are by construction ancestors of drawn geometry.
 /// The CellInfo layout in Game.h was never more than a guess and nothing here depends on it now.
 ///
-/// FADE-IN ONLY. Departures are deliberately ignored: a cell unloading is the full model going away
-/// as its distant LOD arrives, and the distant tier already fades that pair from its own side.
-/// Do not reintroduce Pin, a remembered parent or a holder here.
+/// BOTH DIRECTIONS, and the departure half is what makes the transition a crossfade rather than a
+/// gap. An earlier version of this tier was fade-in only, on the reasoning that the container persists
+/// and only its children are swapped, so there was nothing to pin. That was true of the CellInfo node
+/// it used to watch and is false of this one: a cell unloading is a child REMOVED from ObjectLODRoot,
+/// the same shape the distant tier already pins. Without it the full models vanish the instant the
+/// engine drops them while the arriving LOD is still near zero alpha, which reads in game as the cell
+/// unloading completely and the LOD then fading in over the hole it left.
 void LODFadeManager::PollCellGrid() {
 
 	NiNode* Root = Tes->ObjectLODRoot;
@@ -968,12 +972,32 @@ void LODFadeManager::PollCellGrid() {
 
 	// An empty previous set is the first population: resync silently rather than fading in every
 	// loaded cell at once. A Count of 0 makes any churn a discontinuity, which is the safe answer.
-	bool Discontinuity = !PrevValid || PrevCellSet.empty() || Arrived > (Count / 4);
+	//
+	// HALF, not the distant tier's quarter. That tier diffs ~2075 nodes; this one diffs uGridsToLoad
+	// squared, 25 by default, where crossing a boundary is 5 arrivals and crossing a corner is 9 --
+	// already past 25/4, so a quarter here would suppress every corner crossing there is. Half still
+	// catches the case that matters, a teleport replacing the entire grid at once.
+	bool Discontinuity = !PrevValid || PrevCellSet.empty() || Arrived > (Count / 2);
 	if (Discontinuity) {
 		if (PrevValid && !PrevCellSet.empty() && TheSettingManager->SettingsMain.Develop.LogLODFade)
 			Logger::Log("[LODFade] cell discontinuity: %d of %d arrived, suppressed", Arrived, Count);
 		ResyncSlots(PrevCellSet, CurCellSet);
 		return;
+	}
+
+	// Departures run first and are fully consumed before any arrival: AddFade returns a pointer into
+	// Fades, which the next push_back would reallocate out from under Out. Holding a whole cell for the
+	// fade is the point -- its models stay drawn until the LOD that replaces them has faded up.
+	if (TheSettingManager->SettingsMain.LODFade.PinDeparting) {
+		for (std::unordered_map<NiAVObject*, NiNode*>::iterator it = PrevCellSet.begin(); it != PrevCellSet.end(); ++it) {
+			if (CurCellSet.count(it->first)) continue;
+			if (!CanPin(it->first, it->second, "cell")) continue;
+			FadeRecord* Out = AddFade(it->first, "cell", true);
+			if (Out) {
+				Out->Invert = true;
+				if (!Pin(Out, it->second)) Retire((UInt32)(Fades.size() - 1));
+			}
+		}
 	}
 
 	for (std::unordered_map<NiAVObject*, NiNode*>::iterator it = CurCellSet.begin(); it != CurCellSet.end(); ++it) {
