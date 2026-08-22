@@ -9,6 +9,18 @@ static const UInt32 kCensusMaxDepth = 8;
 /// separated by '<'. Bounded in both depth and buffer length, and every hop is NULL-tested before it
 /// is followed. Addresses are included so a chain can be compared directly against the root=%08X the
 /// fade start lines print. Buffer is always NUL-terminated, empty when Node is NULL.
+/// DIAGNOSTIC ONLY. Bit position for a tier's one-shot latches; 3 for anything unrecognised, which
+/// no caller passes and which every latch mask treats as "already logged".
+static UInt32 TierIndex(const char* Tier) {
+
+	if (!Tier) return 3;
+	if (!strcmp(Tier, "distant")) return 0;
+	if (!strcmp(Tier, "cell")) return 1;
+	if (!strcmp(Tier, "landlod")) return 2;
+	return 3;
+
+}
+
 static void FormatAncestry(NiAVObject* Node, char* Buffer, UInt32 Size) {
 
 	UInt32 Used = 0;
@@ -53,9 +65,8 @@ LODFadeManager::LODFadeManager() {
 	MissParents[0] = MissParents[1] = MissParents[2] = 0;
 	MissDepth = 0;
 	LastDrawLogTime = 0.0f;
-	CensusDistantLogged = false;
-	CensusCellLogged = false;
-	CensusLandLODLogged = false;
+	CensusLogged = 0;
+	PinChainLogged = 0;
 	CoveredCensusWanted = true;
 	CoveredShaderCount = 0;
 	CoveredOverflow = 0;
@@ -94,19 +105,18 @@ bool LODFadeManager::IsNiNodeType(NiAVObject* Object) {
 /// pointer it has not NULL-tested. Bounded at 512 visits and depth 8 because it runs on the render
 /// thread; the bounds are deliberately small, since the question is "any geometry at all", not "how
 /// much". Iterative rather than recursive so the bound is on total work rather than only on depth.
-void LODFadeManager::RunRootCensus(NiAVObject* Root, const char* Tier) {
+void LODFadeManager::RunRootCensus(NiAVObject* Root, const char* Tier, bool Departing) {
 
 	if (!Root || !Tier) return;
 	if (!TheSettingManager->SettingsMain.Develop.LogLODFade) return;
 
 	// The latch sits INSIDE the log gate, same discipline as DistantRefLogged, so enabling logging
-	// later in a session still gets each tier its one line.
-	bool* Latch = NULL;
-	if (!strcmp(Tier, "distant")) Latch = &CensusDistantLogged;
-	else if (!strcmp(Tier, "cell")) Latch = &CensusCellLogged;
-	else if (!strcmp(Tier, "landlod")) Latch = &CensusLandLODLogged;
-	if (!Latch || *Latch) return;
-	*Latch = true;
+	// later in a session still gets each tier its lines. Keyed by direction as well as tier: a
+	// departure is already detached when it is detected and an arrival is not, so one shared latch
+	// would report only whichever happened to come first.
+	UInt32 Bit = 1 << (TierIndex(Tier) + (Departing ? 3 : 0));
+	if (TierIndex(Tier) > 2 || (CensusLogged & Bit)) return;
+	CensusLogged |= Bit;
 
 	// The root's OWN position in the graph, in the same name@address form the covered-draw census
 	// prints for drawn geometry. The two are directly comparable: a root that never appears on any
@@ -114,8 +124,8 @@ void LODFadeManager::RunRootCensus(NiAVObject* Root, const char* Tier) {
 	// its subtree contains. culled is the root's AppCulled bit, since a culled root draws nothing.
 	char RootChain[320];
 	FormatAncestry(Root, RootChain, sizeof(RootChain));
-	Logger::Log("[LODFade] root chain: tier=%s culled=%d %s",
-		Tier, (Root->m_flags & NiAVObject::kFlag_AppCulled) ? 1 : 0, RootChain);
+	Logger::Log("[LODFade] root chain: tier=%s dir=%s culled=%d %s",
+		Tier, Departing ? "out" : "in", (Root->m_flags & NiAVObject::kFlag_AppCulled) ? 1 : 0, RootChain);
 
 	struct CensusEntry { NiAVObject* Node; UInt32 Depth; };
 	CensusEntry Stack[kCensusMaxVisits];
@@ -170,8 +180,8 @@ void LODFadeManager::RunRootCensus(NiAVObject* Root, const char* Tier) {
 	// culledGeoms/culledNodes are the other half of "is this root drawable": a subtree that is entirely
 	// AppCulled at the moment the transition is detected explains resolved=0 without any graph fault,
 	// because the renderer never descends into it and no draw can carry the fade's alpha.
-	Logger::Log("[LODFade] root census: tier=%s root=%08X depth=%d nodes=%d geoms=%d culledNodes=%d culledGeoms=%d firstGeom=%08X firstGeomParent=%08X",
-		Tier, (UInt32)Root, MaxDepth, Nodes, Geoms, CulledNodes, CulledGeoms,
+	Logger::Log("[LODFade] root census: tier=%s dir=%s root=%08X depth=%d nodes=%d geoms=%d culledNodes=%d culledGeoms=%d firstGeom=%08X firstGeomParent=%08X",
+		Tier, Departing ? "out" : "in", (UInt32)Root, MaxDepth, Nodes, Geoms, CulledNodes, CulledGeoms,
 		(UInt32)FirstGeom, FirstGeom ? (UInt32)FirstGeom->m_parent : 0);
 
 	// The decisive half: walk back UP from the geometry the descent just found, under EXACTLY
@@ -201,8 +211,8 @@ void LODFadeManager::RunRootCensus(NiAVObject* Root, const char* Tier) {
 	// which is the PREVIOUS frame's index: this runs from AddFade, inside the poll phase, and Update()
 	// rebuilds RootIndex only afterwards. Read it as "was this a root last frame", not as the lookup
 	// the next draw will do.
-	Logger::Log("[LODFade] census updown: tier=%s root=%08X firstGeom=%08X upReached=%d upDepth=%d up1=%08X up2=%08X up3=%08X selfRoot=%d inIndex=%d",
-		Tier, (UInt32)Root, (UInt32)FirstGeom, UpReached, UpDepth, Up[0], Up[1], Up[2],
+	Logger::Log("[LODFade] census updown: tier=%s dir=%s root=%08X firstGeom=%08X upReached=%d upDepth=%d up1=%08X up2=%08X up3=%08X selfRoot=%d inIndex=%d",
+		Tier, Departing ? "out" : "in", (UInt32)Root, (UInt32)FirstGeom, UpReached, UpDepth, Up[0], Up[1], Up[2],
 		(FirstGeom && FirstGeom == Root) ? 1 : 0, FirstGeom ? (UInt32)RootIndex.count(FirstGeom) : 0);
 
 }
@@ -336,47 +346,7 @@ void LODFadeManager::ResyncSlots(std::unordered_map<NiAVObject*, NiNode*>& Slots
 
 }
 
-/// Releases every container reference the cell shadow map owns and empties it. The TESObjectCELL*
-/// keys own nothing and are never dereferenced, so only the mapped containers are touched. Used by
-/// the main-menu guard, which abandons the whole map at once.
-void LODFadeManager::ReleaseCells(std::unordered_map<TESObjectCELL*, NiNode*>& Cells) {
-
-	for (std::unordered_map<TESObjectCELL*, NiNode*>::iterator it = Cells.begin(); it != Cells.end(); ++it) {
-		NiNode* Node = it->second;
-		if (Node && !InterlockedDecrement(&Node->m_uiRefCount)) Node->Destructor(true);
-	}
-	Cells.clear();
-
-}
-
-/// Moves the cell shadow map onto the current poll's membership, carrying reference ownership on the
-/// CONTAINER -- the mapped value -- with it. Ownership is per ENTRY rather than per distinct node:
-/// a cell that survives a crossing lands in a different grid slot and so acquires a different
-/// container, and counting per entry keeps that case balanced without tracking which entries share a
-/// pointer. Every current container is increfed BEFORE any previous one is released, so a container
-/// held by both maps can never be destructed mid-swap.
-///
-/// Unlike ResyncSlots this does not skip the unchanged entries. The cell grid is 25 slots at the
-/// default uGridsToLoad, so the redundant interlocked pairs are unmeasurable; the distant tier's
-/// ~2075 nodes are why that one bothers.
-///
-/// WARNING: Current is SWAPPED, not copied, so it does not survive the call. On return it holds the
-/// PREVIOUS poll's membership -- stale pointers that own nothing and may already be destructed. It
-/// must be cleared or overwritten before its next use, and must never be passed to ReleaseCells.
-void LODFadeManager::ResyncCells(std::unordered_map<TESObjectCELL*, NiNode*>& Cells, std::unordered_map<TESObjectCELL*, NiNode*>& Current) {
-
-	for (std::unordered_map<TESObjectCELL*, NiNode*>::iterator it = Current.begin(); it != Current.end(); ++it) {
-		if (it->second) InterlockedIncrement(&it->second->m_uiRefCount);
-	}
-	for (std::unordered_map<TESObjectCELL*, NiNode*>::iterator it = Cells.begin(); it != Cells.end(); ++it) {
-		NiNode* Node = it->second;
-		if (Node && !InterlockedDecrement(&Node->m_uiRefCount)) Node->Destructor(true);
-	}
-	Cells.swap(Current);
-
-}
-
-LODFadeManager::FadeRecord* LODFadeManager::AddFade(NiAVObject* Root, const char* Tier) {
+LODFadeManager::FadeRecord* LODFadeManager::AddFade(NiAVObject* Root, const char* Tier, bool Departing) {
 
 	if (!Root) return NULL;
 	if (Fades.size() >= TheSettingManager->SettingsMain.LODFade.MaxFades) return NULL;
@@ -398,7 +368,7 @@ LODFadeManager::FadeRecord* LODFadeManager::AddFade(NiAVObject* Root, const char
 
 	// DIAGNOSTIC ONLY, and self-latching per tier: the first fade of each tier reports what is actually
 	// underneath its root. Read-only, so it cannot disturb the record just pushed.
-	RunRootCensus(Root, Tier);
+	RunRootCensus(Root, Tier, Departing);
 
 	return &Fades.back();
 
@@ -580,6 +550,19 @@ bool LODFadeManager::Pin(FadeRecord* Record, NiNode* Parent) {
 
 		if (TheSettingManager->SettingsMain.Develop.LogLODFade)
 			Logger::Log("[LODFade] %s pin root=%08X mode=reattach", Record->Tier, (UInt32)Node);
+
+		// DIAGNOSTIC ONLY, once per tier: the pinned node's ancestry AFTER the re-attach. A departure is
+		// detached when it is detected, so its detection-time census can say nothing about whether the
+		// pin put it back somewhere the renderer traverses. A chain that ends at the holder instead of
+		// reaching WorldRoot Node means the holder itself is not in the graph and nothing under a pin
+		// can ever draw.
+		UInt32 PinBit = 1 << TierIndex(Record->Tier);
+		if (TheSettingManager->SettingsMain.Develop.LogLODFade && TierIndex(Record->Tier) <= 2 && !(PinChainLogged & PinBit)) {
+			PinChainLogged |= PinBit;
+			char PinChain[320];
+			FormatAncestry(Node, PinChain, sizeof(PinChain));
+			Logger::Log("[LODFade] pin chain: tier=%s holder=%08X %s", Record->Tier, (UInt32)Holder, PinChain);
+		}
 
 		return true;
 	}
@@ -768,7 +751,7 @@ void LODFadeManager::PollDistantRef() {
 			// drops the one that kept this pointer valid. Viability is tested before the record is
 			// created so an unpinnable departure never churns the fade table.
 			if (!CanPin(it->first, it->second, "distant")) continue;
-			FadeRecord* Out = AddFade(it->first, "distant");
+			FadeRecord* Out = AddFade(it->first, "distant", true);
 			if (Out) {
 				Out->Invert = true;
 				if (!Pin(Out, it->second)) Retire((UInt32)(Fades.size() - 1));
@@ -777,7 +760,7 @@ void LODFadeManager::PollDistantRef() {
 	}
 
 	for (std::unordered_map<NiAVObject*, NiNode*>::iterator it = CurDistant.begin(); it != CurDistant.end(); ++it) {
-		if (!PrevDistant.count(it->first) && !RootIndex.count(it->first)) AddFade(it->first, "distant");
+		if (!PrevDistant.count(it->first) && !RootIndex.count(it->first)) AddFade(it->first, "distant", false);
 	}
 
 	ResyncSlots(PrevDistant, CurDistant);
@@ -866,14 +849,14 @@ void LODFadeManager::PollLandLOD() {
 				// calls land in this Update()), so no cross-record link is needed.
 				if (CanPin(PrevLandLOD[i].Node, PrevLandLOD[i].Parent, "landlod")) {
 					NiNode* GoneParent = PrevLandLOD[i].Parent;
-					FadeRecord* Out = AddFade(PrevLandLOD[i].Node, "landlod");
+					FadeRecord* Out = AddFade(PrevLandLOD[i].Node, "landlod", true);
 					if (Out) {
 						Out->Invert = true;
 						if (!Pin(Out, GoneParent)) Retire((UInt32)(Fades.size() - 1));
 					}
 				}
 			}
-			if (Node && !RootIndex.count(Node)) AddFade(Node, "landlod");
+			if (Node && !RootIndex.count(Node)) AddFade(Node, "landlod", false);
 		}
 
 		// Unconditional, so an unchanged slot still gets its remembered parent refreshed this poll.
@@ -882,89 +865,71 @@ void LODFadeManager::PollLandLOD() {
 
 }
 
-/// Detects loaded cells arriving by diffing Tes->gridCellArray against the previous poll as a SET of
-/// cells, each mapped to the container node that currently holds it. An arriving cell fades its
-/// container's contents in.
+/// Detects loaded cells arriving by diffing the CHILDREN OF Tes->ObjectLODRoot against the previous
+/// poll as a set of nodes. An arriving child is one loaded cell's worth of full models, and it fades
+/// in. Structurally identical to PollDistantRef, and it shares that tier's slot plumbing.
 ///
-/// KEYED BY CELL, NOT BY SLOT AND NOT BY NODE. CellInfo::niNode is a persistent per-slot container
-/// the engine repopulates, not a per-cell node: measured in game, all 25 GridEntry::cell pointers
-/// change on a boundary crossing while every niNode and every CellInfo* stays byte-identical. The
-/// original niNode-keyed diff therefore watched a field that structurally cannot change and never
-/// emitted a transition in four sessions. The grid also re-indexes wholesale rather than shifting a
-/// row, so a slot-keyed diff is no better; set membership over cells is immune to the re-index by
-/// construction -- a crossing is 5 arrivals and 5 departures out of 25 however the slots shuffle.
+/// IT WATCHES THE RENDER GRAPH, NOT THE CELL GRID, and that is the whole point. The original version
+/// diffed GridCellArray::CellInfo::niNode and never produced a visible fade in five sessions. The
+/// covered-draw census settled why: that field resolves to `Water Node`, a child of WaterRoot, and it
+/// is AppCulled at the moment a cell arrives -- the renderer never descends into it, so no draw could
+/// ever carry the alpha. Every loaded object actually measured, landscape and doors and creatures and
+/// the player alike, hangs under Tes->ObjectLODRoot through one direct child per cell. Those children
+/// are what this now diffs, so the nodes it fades are by construction ancestors of drawn geometry.
+/// The CellInfo layout in Game.h was never more than a guess and nothing here depends on it now.
 ///
-/// FADE-IN ONLY. Departures are counted and then deliberately ignored. Pinning works by holding a
-/// node the engine detached, and in this tier nothing is ever detached: the container persists and
-/// its CHILDREN are swapped out from under it, so there is no node to pin and no fade-out to run.
-/// Doing it properly needs per-reference tracking, which the design scopes out. Do not reintroduce
-/// Pin, a remembered parent or a holder here.
-///
-/// Two live cells sharing one container would start two fade records on the same root. Containers
-/// are per slot and slots are distinct, so that cannot happen; if it ever did the records would be
-/// identical, unpinned and separately retired, so it is harmless rather than guarded against.
+/// FADE-IN ONLY. Departures are deliberately ignored: a cell unloading is the full model going away
+/// as its distant LOD arrives, and the distant tier already fades that pair from its own side.
+/// Do not reintroduce Pin, a remembered parent or a holder here.
 void LODFadeManager::PollCellGrid() {
 
-	GridCellArray* Grid = Tes->gridCellArray;
-	if (!Grid || !Grid->grid || !Grid->size) return;
+	NiNode* Root = Tes->ObjectLODRoot;
+	if (!Root || !Root->m_children.data) return;
 
-	UInt32 Dim = Grid->size;
-	UInt32 Slots = Dim * Dim;
-
-	// One-shot diagnostic: proves Grid->grid[i].info->niNode is actually the right offset before the
-	// tier's silence is trusted as "no cell boundary crossed". Zero populated standing in a loaded
-	// exterior is the smoking gun that CellInfo::niNode needs re-deriving. Latch sits INSIDE the log
-	// gate, same discipline as DistantRefLogged, so enabling logging later still gets the line.
-	if (!CellGridLogged && TheSettingManager->SettingsMain.Develop.LogLODFade) {
-		CellGridLogged = true;
-		UInt32 Populated = 0;
-		for (UInt32 i = 0; i < Slots; i++) {
-			if (Grid->grid[i].info && Grid->grid[i].info->niNode) Populated++;
-		}
-		Logger::Log("[LODFade] cell grid size=%d slots=%d populated=%d", Dim, Slots, Populated);
-	}
-
-	// An entry missing either half is not a loaded cell: a NULL cell has no identity to key on and a
-	// NULL container has nothing to fade, so both are skipped rather than recorded as a NULL value.
+	// Scanned to `end` clamped to `capacity`, never to numObjs: removing a cell NULLs its slot without
+	// compacting, so numObjs is a live-child count and not a slot bound. Our own holders are skipped,
+	// or attaching one would register as an arrival and start a fade for it.
 	CurCellSet.clear();
+	UInt32 Slots = Root->m_children.end;
+	if (Slots > Root->m_children.capacity) Slots = Root->m_children.capacity;
 	if (Slots && CurCellSet.bucket_count() < Slots) CurCellSet.reserve(Slots);
 	for (UInt32 i = 0; i < Slots; i++) {
-		GridCellArray::GridEntry* Entry = &Grid->grid[i];
-		if (!Entry->cell || !Entry->info || !Entry->info->niNode) continue;
-		CurCellSet[Entry->cell] = Entry->info->niNode;
+		NiAVObject* Child = Root->m_children.data[i];
+		if (!Child || IsHolder(Child)) continue;
+		CurCellSet[Child] = Child->m_parent;
 	}
 	UInt32 Count = (UInt32)CurCellSet.size();
 
+	// One-shot diagnostic, so a silent tier can be told apart from an empty one before its silence is
+	// read as "no boundary crossed". Latch sits INSIDE the log gate, same discipline as elsewhere.
+	if (!CellGridLogged && TheSettingManager->SettingsMain.Develop.LogLODFade) {
+		CellGridLogged = true;
+		Logger::Log("[LODFade] cell root=%08X slots=%d populated=%d", (UInt32)Root, Slots, Count);
+	}
+
 	// Count first, so a teleport is suppressed before any fade is started rather than after. Crossing
-	// one boundary brings in a row or column of Dim NEW CELLS and a corner brings 2*Dim-1, so 2*Dim
-	// sits one above the worst legitimate case and far below a full reload of Dim squared. The
-	// threshold counts ARRIVALS, not changed slots: the wholesale re-index changes every slot on
-	// every crossing, so a slot-based count would trip this guard every single time.
+	// one boundary brings in a row of uGridsToLoad cells out of that many squared, so a quarter of the
+	// live count sits well above the worst legitimate case and far below a full reload.
 	UInt32 Arrived = 0;
-	for (std::unordered_map<TESObjectCELL*, NiNode*>::iterator it = CurCellSet.begin(); it != CurCellSet.end(); ++it) {
+	for (std::unordered_map<NiAVObject*, NiNode*>::iterator it = CurCellSet.begin(); it != CurCellSet.end(); ++it) {
 		if (!PrevCellSet.count(it->first)) Arrived++;
 	}
 
-	// An empty previous set is the first population: resync silently rather than dissolving in every
-	// loaded cell at once.
-	bool Discontinuity = !PrevValid || PrevCellSet.empty() || Arrived > Dim * 2;
+	// An empty previous set is the first population: resync silently rather than fading in every
+	// loaded cell at once. A Count of 0 makes any churn a discontinuity, which is the safe answer.
+	bool Discontinuity = !PrevValid || PrevCellSet.empty() || Arrived > (Count / 4);
 	if (Discontinuity) {
 		if (PrevValid && !PrevCellSet.empty() && TheSettingManager->SettingsMain.Develop.LogLODFade)
-			Logger::Log("[LODFade] cell discontinuity: %d of %d cells arrived, suppressed", Arrived, Count);
-		ResyncCells(PrevCellSet, CurCellSet);
+			Logger::Log("[LODFade] cell discontinuity: %d of %d arrived, suppressed", Arrived, Count);
+		ResyncSlots(PrevCellSet, CurCellSet);
 		return;
 	}
 
-	// Cell gained: its full models fade in. The paired LOD node is handled by the distant poller's own
-	// membership change in the same frame, so no cross-poller lookup is needed. Departures are not
-	// acted on at all; see the fade-in-only note above.
-	for (std::unordered_map<TESObjectCELL*, NiNode*>::iterator it = CurCellSet.begin(); it != CurCellSet.end(); ++it) {
-		if (PrevCellSet.count(it->first)) continue;
-		if (RootIndex.count(it->second)) continue;
-		AddFade(it->second, "cell");
+	for (std::unordered_map<NiAVObject*, NiNode*>::iterator it = CurCellSet.begin(); it != CurCellSet.end(); ++it) {
+		if (!PrevCellSet.count(it->first) && !RootIndex.count(it->first)) AddFade(it->first, "cell", false);
 	}
 
-	ResyncCells(PrevCellSet, CurCellSet);
+	ResyncSlots(PrevCellSet, CurCellSet);
 
 }
 
@@ -993,8 +958,15 @@ void LODFadeManager::Update() {
 	bool LogFade = TheSettingManager->SettingsMain.Develop.LogLODFade;
 	if (LogFade && LiveCount > 0 && CurrentTime - LastDrawLogTime >= 1.0f) {
 		LastDrawLogTime = CurrentTime;
-		Logger::Log("[LODFade] draw: covered=%d gated=%d resolved=%d minAlpha=%.3f live=%d rootIdx=%d",
-			DrawCovered, DrawGated, DrawResolved, DrawMinAlpha, LiveCount, (UInt32)RootIndex.size());
+		// in/out split the live fades by direction. Both directions have to work for the feature to be
+		// visible, but they fail for different reasons -- an arrival is a node already in the graph, a
+		// departure only draws if Pin put it back somewhere the renderer traverses -- so "in=0 always"
+		// and "out=0 always" are completely different bugs and the totals alone cannot tell them apart.
+		UInt32 FadesIn = 0;
+		UInt32 FadesOut = 0;
+		for (UInt32 i = 0; i < Fades.size(); i++) Fades[i].Invert ? FadesOut++ : FadesIn++;
+		Logger::Log("[LODFade] draw: covered=%d gated=%d resolved=%d minAlpha=%.3f live=%d in=%d out=%d rootIdx=%d",
+			DrawCovered, DrawGated, DrawResolved, DrawMinAlpha, LiveCount, FadesIn, FadesOut, (UInt32)RootIndex.size());
 	}
 	// The captured ancestry sample is printed only when the whole frame resolved nothing while a fade
 	// was live, which is the case that says the fade roots are not in the drawn geometry's ancestry.
@@ -1050,7 +1022,7 @@ void LODFadeManager::Update() {
 		// reference per occupied grid slot.
 		ReleaseSlots(PrevDistant);
 		ReleaseSlots(PrevLandLOD);
-		ReleaseCells(PrevCellSet);
+		ReleaseSlots(PrevCellSet);
 		// Tes is gone, so the cached DistantRefLOD pointer is meaningless and must be re-resolved.
 		// Both scratch maps hold stale post-swap pointers that own nothing, so they are only cleared.
 		CurDistant.clear();

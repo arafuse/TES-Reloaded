@@ -30,8 +30,10 @@ public:
 	void			Update();
 
 	/// Starts a fade. Returns NULL when the table is full, in which case the caller pops as before.
-	/// Tier must be a string literal; it is stored by pointer and used only for logging.
-	FadeRecord*		AddFade(NiAVObject* Root, const char* Tier);
+	/// Tier must be a string literal; it is stored by pointer and used only for logging. Departing
+	/// names the direction for diagnostics only -- the caller still sets Invert itself, because the
+	/// record is not fully configured until Pin has had its say.
+	FadeRecord*		AddFade(NiAVObject* Root, const char* Tier, bool Departing);
 
 	/// Fade fraction for a record: 0 to 1, rising. Invert is applied by the shader, not here.
 	float			GetAlpha(FadeRecord* Record);
@@ -145,24 +147,21 @@ private:
 	// Kept as a member so the swap recycles both maps' buckets instead of reallocating ~2075 nodes.
 	std::unordered_map<NiAVObject*, NiNode*>			CurDistant;
 
-	// The loaded-cell tier, keyed by CELL and mapped to the container node that currently holds it.
+	// The loaded-cell tier: set membership over the CHILDREN OF Tes->ObjectLODRoot, in exactly the
+	// shape the distant tier uses over DistantRefLOD, and sharing its AssignSlot/ResyncSlots plumbing.
 	//
-	// Keyed by cell because CellInfo::niNode is a PERSISTENT PER-SLOT CONTAINER, not a per-cell node:
-	// measured in game, all 25 GridEntry::cell pointers change on a boundary crossing while every
-	// niNode and every CellInfo* stays identical. A niNode-keyed diff therefore watches a field that
-	// structurally cannot change and detects nothing, which is exactly what four sessions showed. The
-	// grid also re-indexes wholesale rather than shifting a row, so a slot-keyed diff is useless here
-	// too; set membership over cells is immune to the re-index by construction.
+	// It watched GridCellArray::CellInfo::niNode for four sessions and never faded anything visible.
+	// The covered-draw census settled why: that field resolves to `Water Node`, a child of WaterRoot
+	// and AppCulled at the moment a cell arrives, so the tier was fading a node the renderer never
+	// descends into. Every loaded object measured -- landscape, doors, creatures, the player -- hangs
+	// under Tes->ObjectLODRoot instead, one direct child per loaded cell, which is what these maps
+	// now hold. Watching the render graph directly also removes the dependency on a CellInfo layout
+	// that was only ever a guess.
 	//
-	// PrevCellSet OWNS one reference on the container in each entry -- the mapped value, never the
-	// key -- on the same contract as the shadow copies above, so a container cannot be freed while a
-	// fade names it. Move it only through ResyncCells and ReleaseCells. The TESObjectCELL* key is an
-	// opaque identity token: it is compared and never dereferenced, and no reference is taken on it.
-	//
-	// CurCellSet is the per-frame scratch, with the same swap discipline (and the same warning) as
-	// CurDistant: after ResyncCells it holds the previous poll's stale membership and owns nothing.
-	std::unordered_map<TESObjectCELL*, NiNode*>			PrevCellSet;
-	std::unordered_map<TESObjectCELL*, NiNode*>			CurCellSet;
+	// Ownership is the shadow-copy contract declared above: PrevCellSet owns one reference per
+	// non-NULL node. CurCellSet is per-frame scratch with the same post-swap warning as CurDistant.
+	std::unordered_map<NiAVObject*, NiNode*>			PrevCellSet;
+	std::unordered_map<NiAVObject*, NiNode*>			CurCellSet;
 
 	// Plugin-owned holder nodes, keyed by the original parent each one hangs under. Keyed rather than
 	// global because render context follows position in the graph: a distant LOD node under
@@ -181,7 +180,7 @@ private:
 	NiNode*												DistantRef;
 	bool												DistantRefLogged;
 
-	// Latches for the one-shot cell-grid and LandLOD population diagnostics in PollCellGrid and
+	// Latches for the one-shot cell-root and LandLOD population diagnostics in PollCellGrid and
 	// PollLandLOD, each printing once per session to prove their node pointers are actually non-NULL.
 	bool												CellGridLogged;
 	bool												LandLODLogged;
@@ -195,12 +194,13 @@ private:
 	UInt32												MissDepth;
 	float												LastDrawLogTime;
 
-	// DIAGNOSTIC ONLY: one-shot subtree census latches, one per tier, so the bounded read-only walk in
-	// RunRootCensus runs at most once per tier per session. The three tiers pick their roots by
-	// completely different routes, so a per-tier latch separates "universal" from "tier-specific".
-	bool												CensusDistantLogged;
-	bool												CensusCellLogged;
-	bool												CensusLandLODLogged;
+	// DIAGNOSTIC ONLY: one-shot latches as bitmasks, so a walk runs at most once per tier per session.
+	// CensusLogged is keyed by tier AND direction -- bit (tier + 3*departing) -- because a departure is
+	// detached from the graph by the time it is detected and an arrival is not, so the two directions
+	// say completely different things and one shared latch would report only whichever came first.
+	// PinChainLogged is keyed by tier alone and covers the post-re-attach ancestry line in Pin.
+	UInt32												CensusLogged;
+	UInt32												PinChainLogged;
 
 	// DIAGNOSTIC ONLY: the per-shader covered-draw census. Name is the ShaderRecord's own string
 	// pointer and rows are matched by pointer alone -- two records sharing a spelling merely produce
@@ -236,9 +236,6 @@ private:
 	void			ReleaseSlots(std::unordered_map<NiAVObject*, NiNode*>& Slots);
 	void			ResyncSlots(std::unordered_map<NiAVObject*, NiNode*>& Slots, std::unordered_map<NiAVObject*, NiNode*>& Current);
 
-	void			ReleaseCells(std::unordered_map<TESObjectCELL*, NiNode*>& Cells);
-	void			ResyncCells(std::unordered_map<TESObjectCELL*, NiNode*>& Cells, std::unordered_map<TESObjectCELL*, NiNode*>& Current);
-
 	void			Retire(UInt32 Index);
 
 	// DIAGNOSTIC ONLY: takes no references, dereferences nothing without a NULL test and mutates nothing
@@ -246,7 +243,7 @@ private:
 	// how many drawable leaves actually live under a fade root, which nothing has ever verified.
 	// It then walks back UP from that same leaf under ResolveGeometry's exact rule, so a m_parent chain
 	// that does not mirror the child arrays shows up as upReached=0 on a node known to be under Root.
-	void			RunRootCensus(NiAVObject* Root, const char* Tier);
+	void			RunRootCensus(NiAVObject* Root, const char* Tier, bool Departing);
 
 	// True when Object's NiRTTI chain reaches NiNode. Oblivion's NiObject carries no GetAsNiNode slot --
 	// that virtual exists only in the other two GameNi.h blocks -- and a vtable whitelist would silently
