@@ -77,22 +77,38 @@ private:
 	float					CurrentTime;
 
 	// One shadow-copy entry: a remembered node plus the parent it was attached to when last observed.
-	// The parent is captured while the node is still IN the graph and refreshed on every poll, because
-	// by the time a departure is detected the engine has already NULLed m_parent and the original
-	// parent is otherwise unrecoverable. No reference is taken on Parent -- it is an engine-owned
-	// container that outlives its children, and refcount traffic that high in the graph is risk for
-	// nothing. See Pin for why a one-poll-old parent pointer is safe to dereference.
+	// The parent is captured while the node is still IN the graph, because by the time a departure is
+	// detected the engine has already NULLed m_parent and the original parent is otherwise
+	// unrecoverable.
+	//
+	// HOW LONG Parent MAY BE STALE DIFFERS BY TIER, and so does whether it carries a reference:
+	//
+	// - LandLOD (AssignSlot with StickyParent false) refreshes Parent on EVERY poll, so it is never
+	//   more than one poll old, and it carries NO reference. That tier observes its nodes through a
+	//   child array, so a node's presence in the poll and a live m_parent are the same fact, and a
+	//   container that dies takes all its children with it -- mass churn the discontinuity guard
+	//   suppresses before any pin runs. Refcount traffic that high in the graph would be risk for
+	//   nothing.
+	// - The cell tier (StickyParent true) keeps the last NON-NULL answer instead, because it observes
+	//   Grid->grid[i].info->niNode independently of the scene graph; see AssignSlot. That pointer can
+	//   therefore outlive one poll, which is exactly what the no-reference argument above rests on, so
+	//   the sticky tier OWNS a reference on Parent and ParentOwned records it. Owning it is the only
+	//   thing that makes a sticky pointer safe to dereference in Pin.
+	//
+	// ParentOwned is per entry rather than per tier so no release site has to know which vector it is
+	// looking at. Every path that replaces or drops Parent must go through AssignSlot or ReleaseParent.
 	struct SlotEntry {
 		NiAVObject*	Node;
 		NiNode*		Parent;
+		bool		ParentOwned;
 	};
 
 	// INVARIANT: these three shadow copies OWN one reference to every non-NULL node they hold. The
 	// reference is taken when a slot is filled, not when a departure is later detected -- by then the
 	// engine may already have dropped its last reference, and Pin would be reading freed memory.
 	// Every path that overwrites or clears a slot must release exactly once; use AssignSlot,
-	// ResyncSlots and ReleaseSlots rather than writing a slot directly. The remembered parent carries
-	// no reference and is exempt from all of the above.
+	// ResyncSlots and ReleaseSlots rather than writing a slot directly. The same rule applies
+	// independently to SlotEntry::Parent wherever ParentOwned is set; see SlotEntry.
 	//
 	// PrevDistant is keyed by NODE, not by index: DistantRefLOD's child array is compacted and its
 	// slots reused as distant cells stream, so an index-keyed diff reports every slot changed on every
@@ -142,6 +158,7 @@ private:
 	bool			IsHolder(NiAVObject* Node) { return !HolderNodes.empty() && HolderNodes.count(Node) != 0; }
 
 	void			AssignSlot(SlotEntry& Entry, NiAVObject* Node, bool StickyParent);
+	void			ReleaseParent(SlotEntry& Entry);
 	void			ReleaseSlots(std::vector<SlotEntry>& Slots);
 	void			ReleaseSlots(std::unordered_map<NiAVObject*, NiNode*>& Slots);
 	void			ResyncSlots(std::unordered_map<NiAVObject*, NiNode*>& Slots, std::unordered_map<NiAVObject*, NiNode*>& Current);
