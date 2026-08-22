@@ -150,6 +150,22 @@ private:
 	bool												CellGridLogged;
 	bool												LandLODLogged;
 
+	// DIAGNOSTIC ONLY, for the cell-diff instrumentation in PollCellGrid. These hold raw pointer
+	// VALUES from the previous poll, compared for equality only -- they own NO references and must
+	// NEVER be dereferenced. Do not mistake them for the reference-owning SlotEntry shadow copies
+	// (PrevDistant/PrevLandLOD/PrevCell above): that ownership invariant does not apply here because
+	// nothing in this pair is ever read through. They exist solely to test which key actually changes
+	// when a cell streams in or out -- Grid->grid[i].cell vs. Grid->grid[i].info -- as a check on the
+	// niNode-based diff the poller uses for real detection.
+	std::vector<TESObjectCELL*>						PrevCellPtr;
+	std::vector<GridCellArray::CellInfo*>				PrevCellInfo;
+
+	// Throttle for the PollCellGrid diff diagnostic: at most one line per second (CurrentTime-gated),
+	// plus CellDiffFirstLogged forces the very first non-zero occurrence through regardless of timing
+	// so a single boundary crossing is never missed while a session is still quiet.
+	float												LastCellDiffLogTime;
+	bool												CellDiffFirstLogged;
+
 	NiNode*			ResolveDistantRef();
 	void			PollDistantRef();
 	void			PollLandLOD();

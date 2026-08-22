@@ -15,6 +15,8 @@ LODFadeManager::LODFadeManager() {
 	DistantRefLogged = false;
 	CellGridLogged = false;
 	LandLODLogged = false;
+	LastCellDiffLogTime = 0.0f;
+	CellDiffFirstLogged = false;
 
 }
 
@@ -666,9 +668,15 @@ void LODFadeManager::PollCellGrid() {
 		Empty.Parent = NULL;
 		Empty.ParentOwned = false;
 		PrevCell.assign(Slots, Empty);
+		// Diagnostic-only shadow copies, resized in lockstep so the diff below never runs against a
+		// stale size; see the header comment on PrevCellPtr/PrevCellInfo.
+		PrevCellPtr.assign(Slots, NULL);
+		PrevCellInfo.assign(Slots, NULL);
 		for (UInt32 i = 0; i < Slots; i++) {
 			GridCellArray::GridEntry* Entry = &Grid->grid[i];
 			AssignSlot(PrevCell[i], Entry->info ? (NiAVObject*)Entry->info->niNode : NULL, true);
+			PrevCellPtr[i] = Entry->cell;
+			PrevCellInfo[i] = Entry->info;
 		}
 		return;
 	}
@@ -688,9 +696,24 @@ void LODFadeManager::PollCellGrid() {
 		for (UInt32 i = 0; i < Slots; i++) {
 			GridCellArray::GridEntry* Entry = &Grid->grid[i];
 			AssignSlot(PrevCell[i], Entry->info ? (NiAVObject*)Entry->info->niNode : NULL, true);
+			// Keep the diagnostic shadow copies in step with the resync so the next real poll's
+			// diff is against this frame, not a stale one from before the suppressed jump.
+			PrevCellPtr[i] = Entry->cell;
+			PrevCellInfo[i] = Entry->info;
 		}
 		return;
 	}
+
+	// DIAGNOSTIC ONLY, testing the persistent-container hypothesis: does Grid->grid[i].cell or
+	// Grid->grid[i].info change on a cell boundary crossing even when niNode (Changed, above) does
+	// not? Accumulated below, never read by the detection logic. SampleSlot/SampleOld*/SampleNew*
+	// capture the first cellptr-changed slot this poll so the sample line can show plausible-looking
+	// pointer values rather than just a count.
+	bool LogDiag = TheSettingManager->SettingsMain.Develop.LogLODFade;
+	UInt32 DiffCellPtr = 0, DiffInfo = 0;
+	UInt32 SampleSlot = 0xFFFFFFFF;
+	TESObjectCELL *SampleOldCell = NULL, *SampleNewCell = NULL;
+	NiAVObject *SampleOldNode = NULL, *SampleNewNode = NULL;
 
 	for (UInt32 i = 0; i < Slots; i++) {
 		GridCellArray::GridEntry* Entry = &Grid->grid[i];
@@ -718,8 +741,41 @@ void LODFadeManager::PollCellGrid() {
 			}
 		}
 
+		if (LogDiag) {
+			if (Entry->cell != PrevCellPtr[i]) {
+				DiffCellPtr++;
+				if (SampleSlot == 0xFFFFFFFF) {
+					SampleSlot = i;
+					SampleOldCell = PrevCellPtr[i];
+					SampleNewCell = Entry->cell;
+					SampleOldNode = PrevCell[i].Node;
+					SampleNewNode = Node;
+				}
+			}
+			if (Entry->info != PrevCellInfo[i]) DiffInfo++;
+		}
+
 		// Unconditional, so an unchanged slot still gets its remembered parent refreshed this poll.
 		AssignSlot(PrevCell[i], Node, true);
+		PrevCellPtr[i] = Entry->cell;
+		PrevCellInfo[i] = Entry->info;
+	}
+
+	// Changed (computed above, before this loop touched PrevCell) is the niNode key the poller
+	// actually detects on -- reused here rather than recounted so the two numbers can never diverge
+	// by construction. Logged at most once per second, plus always on the first non-zero occurrence,
+	// so a single boundary crossing early in a quiet session is never missed.
+	if (LogDiag && (DiffCellPtr || Changed || DiffInfo)) {
+		bool ShouldLog = !CellDiffFirstLogged || (CurrentTime - LastCellDiffLogTime >= 1.0f);
+		if (ShouldLog) {
+			CellDiffFirstLogged = true;
+			LastCellDiffLogTime = CurrentTime;
+			Logger::Log("[LODFade] cell diff: cellptr=%d niNode=%d info=%d (of %d)", DiffCellPtr, Changed, DiffInfo, Slots);
+			if (DiffCellPtr && SampleSlot != 0xFFFFFFFF) {
+				Logger::Log("[LODFade] cell diff sample: slot=%d cell %08X -> %08X, niNode %08X -> %08X",
+					SampleSlot, (UInt32)SampleOldCell, (UInt32)SampleNewCell, (UInt32)SampleOldNode, (UInt32)SampleNewNode);
+			}
+		}
 	}
 
 }

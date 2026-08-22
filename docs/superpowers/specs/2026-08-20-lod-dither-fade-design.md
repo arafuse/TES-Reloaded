@@ -590,6 +590,19 @@ In-game checklist:
   proof that no boundary was crossed; a low `landlod` count would point the same way at the
   `LandLOD` child-array walk instead. A healthy `populated` count alongside continued silence would
   instead mean the author simply never crossed that tier's boundary this run.
+- **Read the `cell diff` lines if `cell` still emits nothing.** `PollCellGrid` also logs
+  `[LODFade] cell diff: cellptr=%d niNode=%d info=%d (of %d)` (throttled to once a second, plus
+  always the first non-zero poll) whenever at least one of the three candidate keys changes slot
+  count against the previous poll, and a `[LODFade] cell diff sample: slot=%d cell %08X -> %08X,
+  niNode %08X -> %08X` line alongside it when `cellptr` is non-zero. `niNode` is the key the poller
+  already detects transitions on, so it should agree with the silence being investigated. `cellptr`
+  non-zero while `niNode` stays zero confirms the persistent-container hypothesis: the engine is
+  swapping which `TESObjectCELL` occupies a grid slot without ever changing the `CellInfo::niNode`
+  pointer the poller diffs, so the cell tier is keyed on the wrong field and needs to switch to
+  diffing `GridEntry::cell` instead. `info` distinguishes the two ways that could happen -- non-zero
+  means the `CellInfo*` container itself is being replaced (and `niNode`'s silence would then be the
+  real anomaly), zero means the same container is being reused and refilled underneath a stable
+  `CellInfo*` (matching the hypothesis as written above).
 - Fast-travel and confirm the discontinuity guard suppresses a world-wide dissolve.
 - Set `PinDeparting=0` and confirm the fade-in half still works alone. This is the fallback: if the
   re-attach path crashes, shipping with `PinDeparting=0` is an acceptable outcome and forcing the
