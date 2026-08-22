@@ -1063,6 +1063,9 @@ void LODFadeManager::Update() {
 	// the roots are wrong. If a chain does contain one, the fault is in RootIndex or the cache, not in
 	// the graph. And if the LOD shaders (DISTLOD*, terrain) are absent from the table entirely, those
 	// draws never reach this hook and the clip is on the wrong shaders.
+	// Disarmed outright when logging is off, or the draw hook pays the per-shader scan on every covered
+	// draw for the whole session waiting for a report that can never print.
+	if (!LogFade) CoveredCensusWanted = false;
 	if (LogFade && !CoveredLogged && LiveCount > 0 && DrawCovered > 0) {
 		CoveredLogged = true;
 		CoveredCensusWanted = false;
