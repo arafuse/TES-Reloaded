@@ -5,6 +5,28 @@
 static const UInt32 kCensusMaxVisits = 512;
 static const UInt32 kCensusMaxDepth = 8;
 
+/// DIAGNOSTIC ONLY. Writes Node's m_parent chain into Buffer as `name@address` hops, leaf first,
+/// separated by '<'. Bounded in both depth and buffer length, and every hop is NULL-tested before it
+/// is followed. Addresses are included so a chain can be compared directly against the root=%08X the
+/// fade start lines print. Buffer is always NUL-terminated, empty when Node is NULL.
+static void FormatAncestry(NiAVObject* Node, char* Buffer, UInt32 Size) {
+
+	UInt32 Used = 0;
+	Buffer[0] = 0;
+	for (UInt32 Depth = 0; Node && Depth < 10; Depth++) {
+		char Hop[64];
+		const char* Name = (Node->m_pcName && Node->m_pcName[0]) ? Node->m_pcName : "?";
+		sprintf(Hop, "%s%.24s@%08X", Used ? "<" : "", Name, (UInt32)Node);
+		UInt32 Len = strlen(Hop);
+		if (Used + Len >= Size) break;
+		memcpy(Buffer + Used, Hop, Len);
+		Used += Len;
+		Node = (NiAVObject*)Node->m_parent;
+	}
+	Buffer[Used] = 0;
+
+}
+
 LODFadeManager::LODFadeManager() {
 
 	TheLODFadeManager = this;
@@ -86,12 +108,23 @@ void LODFadeManager::RunRootCensus(NiAVObject* Root, const char* Tier) {
 	if (!Latch || *Latch) return;
 	*Latch = true;
 
+	// The root's OWN position in the graph, in the same name@address form the covered-draw census
+	// prints for drawn geometry. The two are directly comparable: a root that never appears on any
+	// covered chain cannot be an ancestor of anything drawn through a fade-carrying shader, whatever
+	// its subtree contains. culled is the root's AppCulled bit, since a culled root draws nothing.
+	char RootChain[320];
+	FormatAncestry(Root, RootChain, sizeof(RootChain));
+	Logger::Log("[LODFade] root chain: tier=%s culled=%d %s",
+		Tier, (Root->m_flags & NiAVObject::kFlag_AppCulled) ? 1 : 0, RootChain);
+
 	struct CensusEntry { NiAVObject* Node; UInt32 Depth; };
 	CensusEntry Stack[kCensusMaxVisits];
 	UInt32 Top = 0;
 	UInt32 Visited = 0;
 	UInt32 Nodes = 0;
 	UInt32 Geoms = 0;
+	UInt32 CulledGeoms = 0;
+	UInt32 CulledNodes = 0;
 	UInt32 MaxDepth = 0;
 	NiAVObject* FirstGeom = NULL;
 
@@ -111,11 +144,13 @@ void LODFadeManager::RunRootCensus(NiAVObject* Root, const char* Tier) {
 		// census is concerned, and its address is directly comparable with the geom= value in a draw miss.
 		if (!IsNiNodeType(Node)) {
 			Geoms++;
+			if (Node->m_flags & NiAVObject::kFlag_AppCulled) CulledGeoms++;
 			if (!FirstGeom) FirstGeom = Node;
 			continue;
 		}
 
 		Nodes++;
+		if (Node->m_flags & NiAVObject::kFlag_AppCulled) CulledNodes++;
 		if (Depth >= kCensusMaxDepth) continue;
 
 		// Scanned to `end` clamped to `capacity`, never to numObjs: removal NULLs a slot without
@@ -132,8 +167,12 @@ void LODFadeManager::RunRootCensus(NiAVObject* Root, const char* Tier) {
 		}
 	}
 
-	Logger::Log("[LODFade] root census: tier=%s root=%08X depth=%d nodes=%d geoms=%d firstGeom=%08X firstGeomParent=%08X",
-		Tier, (UInt32)Root, MaxDepth, Nodes, Geoms, (UInt32)FirstGeom, FirstGeom ? (UInt32)FirstGeom->m_parent : 0);
+	// culledGeoms/culledNodes are the other half of "is this root drawable": a subtree that is entirely
+	// AppCulled at the moment the transition is detected explains resolved=0 without any graph fault,
+	// because the renderer never descends into it and no draw can carry the fade's alpha.
+	Logger::Log("[LODFade] root census: tier=%s root=%08X depth=%d nodes=%d geoms=%d culledNodes=%d culledGeoms=%d firstGeom=%08X firstGeomParent=%08X",
+		Tier, (UInt32)Root, MaxDepth, Nodes, Geoms, CulledNodes, CulledGeoms,
+		(UInt32)FirstGeom, FirstGeom ? (UInt32)FirstGeom->m_parent : 0);
 
 	// The decisive half: walk back UP from the geometry the descent just found, under EXACTLY
 	// ResolveGeometry's rule -- the node itself is tested before any step, and the cap is the same 16 --
@@ -220,19 +259,7 @@ void LODFadeManager::NoteCoveredDraw(const char* ShaderName, NiAVObject* Geometr
 	// name@address so it can be compared directly against the root=%08X the fade logs print. If no
 	// covered shader's chain passes through a node a poller chose as a root, the roots and the drawn
 	// geometry live in different parts of the graph and no alpha could ever reach them.
-	UInt32 Used = 0;
-	NiAVObject* Node = Geometry;
-	for (UInt32 Depth = 0; Node && Depth < 10; Depth++) {
-		char Hop[64];
-		const char* NodeName = (Node->m_pcName && Node->m_pcName[0]) ? Node->m_pcName : "?";
-		sprintf(Hop, "%s%.24s@%08X", Used ? "<" : "", NodeName, (UInt32)Node);
-		UInt32 Len = strlen(Hop);
-		if (Used + Len >= sizeof(Entry.Chain)) break;
-		memcpy(Entry.Chain + Used, Hop, Len);
-		Used += Len;
-		Node = (NiAVObject*)Node->m_parent;
-	}
-	Entry.Chain[Used] = 0;
+	FormatAncestry(Geometry, Entry.Chain, sizeof(Entry.Chain));
 
 }
 
