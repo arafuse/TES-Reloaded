@@ -56,7 +56,10 @@ Poll the engine's grid arrays and diff them. Rejected alternatives:
 
 - **Scene-graph diff** — walk `DistantRefLOD` / `LandLOD` / `ObjectLODRoot` children each frame and
   diff pointer sets. Catches everything, but costs 2000+ node visits per frame and loses cell
-  identity, forcing LOD-to-full pairing to be reconstructed from world position.
+  identity, forcing LOD-to-full pairing to be reconstructed from world position. *Adopted anyway for
+  the distant tier* — see "Engine data used" — because the distant grid array's entry layout turned
+  out to be unverified. The cost is one hash-set build of ~2000 pointers per frame; the lost cell
+  identity is not needed, since pairing is implicit through shared `StartTime` rather than by key.
 - **Engine attach/detach hooks** — exact timing and no polling, but requires reverse-engineering
   addresses this fork does not have, and a mis-hook in cell loading crashes rather than glitches.
 
@@ -70,9 +73,10 @@ One new manager, `LODFadeManager` (`TESReloaded/Core/LODFadeManager.h` and `.cpp
 singleton `TheLODFadeManager` in `Managers.h`, alongside a shared shader include and one new
 per-geometry shader constant. Three parts:
 
-**Poller.** Runs once per frame from the existing per-frame entry point. Diffs
-`Tes->gridDistantArray`, `Tes->gridCellArray` and `Tes->LODRoot->m_children` against shadow copies
-of their slot-to-`NiNode*` mappings, and emits transitions.
+**Poller.** Runs once per frame from the existing per-frame entry point. Diffs the `DistantRefLOD`
+node's children, `Tes->gridCellArray` and `Tes->LODRoot->m_children` against shadow copies, and
+emits transitions. The two grid-backed tiers diff **by slot index**; the distant tier diffs **by set
+membership** (see below), which is why its shadow copy is an `unordered_set` rather than a vector.
 
 **Fade table.** A fixed-capacity array of `FadeRecord`. Each record holds a root `NiAVObject*`, a
 start time, a pin flag, an invert flag and a flag recording the cull state a pin found. The alpha
@@ -86,14 +90,43 @@ Alongside the table, an `unordered_map<NiGeometry*, FadeRecord*>` populated lazi
 **Draw hook.** In `RenderHook::TrackSetupShaderPrograms` (`RenderHook.cpp:381`), while any fade is
 live, resolve the drawn geometry to a record and publish `TESR_GEOM_FadeParams`.
 
-With an empty fade table the manager costs one grid diff per frame and nothing else: no map probes,
-no constant sets, no shader work.
+With an empty fade table the manager costs one grid diff and one distant membership diff per frame
+and nothing else: no map probes, no constant sets, no shader work.
 
 ### Engine data used
 
-- `Tes->gridDistantArray` (`Game.h:8109`) — a `size²` array of 16-byte `DistantGridEntry`, where
-  `unk04` is the distant cell's `NiNode*` and `unk08` / `unk0C` are its signed cell X and Y.
-  `size = uGridsToLoad + 2 * uGridDistantCount`, 65 in practice.
+- **`DistantRefLOD`** — the scene-graph node holding every distant static/tree LOD node, roughly
+  2075 children. Reached by name: `Tes->LODRoot` is misnamed (it *is* the `LandLOD` node), so its
+  `m_parent` is the real container, whose children are `LandLOD`, `DistantRefLOD` and `LODWaterRoot`;
+  match `m_pcName` against `"DistantRefLOD"`. Only well-known Gamebryo fields are involved:
+  `NiObjectNET::m_pcName` (0x008), `NiAVObject::m_parent`, `NiNode::m_children` and
+  `NiRefObject::m_uiRefCount` (0x004), all read from `GameNi.h`'s Oblivion block (lines 1822‑3610).
+  The child array is scanned to `m_children.end` rather than `numObjs`, because removing a distant
+  cell NULLs its slot and decrements `numObjs` without compacting; NULL slots are skipped.
+
+  **`Tes->gridDistantArray` is NOT used, and must not be re-introduced.** The first implementation
+  read it as a `size²` array of 16-byte `DistantGridEntry` and treated `unk04` as the distant cell's
+  `NiNode*` (with `unk08` / `unk0C` as signed cell X and Y). That layout was **never verified** —
+  `Game.h:8109` labels all four entry fields `unk00`/`unk04`/`unk08`/`unk0C`, and the claim came from
+  a reverse-engineering note that had never been exercised. In-game logging showed **all 65×65 = 4225
+  slots differing from the previous frame on every frame**, which stable scene-graph pointers cannot
+  do: nothing was ever detected, everything was suppressed as a discontinuity. It was also actively
+  dangerous — once the shadow copies began owning references, filling a slot did
+  `InterlockedIncrement(&Node->m_uiRefCount)`, a write at `Node + 4`, so the poller performed ~4225
+  arbitrary memory writes per frame. `Grid->size` reading exactly 65 confirms the *outer* struct is
+  right, so the fault is isolated to the entry layout. Anyone wanting the grid array back must first
+  re-derive `DistantGridEntry` from disassembly and prove it with a logged diagnostic.
+
+  **Diagnostic.** On the first successful resolve the manager logs once, gated on
+  `Develop.LogLODFade`:
+
+  ```
+  [LODFade] DistantRefLOD resolved name=%s children=%d
+  ```
+
+  Expect `name=DistantRefLOD` and roughly 2075 children. A wildly different count, a different name,
+  or no line at all means the traversal is wrong and must be re-derived — the point of the line is
+  that a wrong assumption shows up immediately instead of after another silent session.
 - `Tes->gridCellArray` (`Game.h:8125`) — the loaded-cell grid; each `GridEntry` carries a
   `TESObjectCELL*` and a `CellInfo` whose `niNode` is the cell's scene-graph node.
 - `Tes->LODRoot` (`Game.h:8170`) — misnamed; it points at the `LandLOD` node holding the 12 terrain
@@ -101,18 +134,23 @@ no constant sets, no shader work.
 
 ## State machine
 
-All transitions are keyed by grid slot, so pairing is a lookup rather than a positional heuristic.
+Cell and `LandLOD` transitions are keyed by grid slot. Distant transitions are keyed by **set
+membership**, not by slot: `DistantRefLOD`'s child array is compacted and its slots reused as cells
+stream, so an index-keyed diff reports the whole array changed every frame — exactly the failure the
+grid-array poller hit. Arrivals are nodes present now and absent from the previous set; departures
+are the reverse. This is immune to reordering and to compaction. Pairing remains implicit through
+shared `StartTime` (see "Complementary thresholds"), so losing per-slot cell identity costs nothing.
 
 | Event | Action |
 |---|---|
-| Distant slot gained a node | Fade the LOD node in: rising alpha, not inverted. |
-| Cell slot gained a cell | Fade that cell's full models in: rising alpha, not inverted. No pin is taken for the paired distant node here — it keeps rendering at full alpha until its own distant slot changes, which the distant poller detects independently. |
+| `DistantRefLOD` gained a child | Fade the LOD node in: rising alpha, not inverted. |
+| Cell slot gained a cell | Fade that cell's full models in: rising alpha, not inverted. No pin is taken for the paired distant node here — it keeps rendering at full alpha until it leaves `DistantRefLOD`, which the distant poller detects independently. |
 | Cell slot lost a cell | Pin the departing cell node and fade it out on the inverted rising alpha. |
-| Distant slot lost a node | Pin the departing LOD node and fade it out on the inverted rising alpha. |
+| `DistantRefLOD` lost a child | Pin the departing LOD node and fade it out on the inverted rising alpha. |
 | `LandLOD` child pointer changed to a new node | Fade the new quadrant in (rising alpha, not inverted); pin the old quadrant and fade it out on the *same* rising alpha with the invert flag set. |
 
-**Complementary thresholds.** There is no fade-out direction. Every departing node — a distant slot
-losing its node, a cell slot losing its cell, or a `LandLOD` quadrant being replaced — is pinned and
+**Complementary thresholds.** There is no fade-out direction. Every departing node — a child leaving
+`DistantRefLOD`, a cell slot losing its cell, or a `LandLOD` quadrant being replaced — is pinned and
 faded using the same rising alpha a fade-in uses, with the invert flag set: the departing draw tests
 `n > a` while an arriving draw (if any) tests `n < a`, against the same rising `a` and the same
 per-frame noise. Pairing is implicit through shared timing rather than an explicit link: when a
@@ -165,10 +203,12 @@ disabled without losing the fade-in half of the feature.
 
 ### Discontinuity guard
 
-If a single poll sees more than a quarter of the distant slots change, or more than `2 * gridSize`
-cell slots change, or a cell purge is detected, the manager treats it as a teleport: it resyncs the
-shadow copies and emits no transitions. Without this, arriving anywhere by fast travel would
-dissolve the entire world in at once.
+If a single poll sees arrivals plus departures exceed a quarter of `DistantRefLOD`'s current child
+count, or more than `2 * gridSize` cell slots change, or a cell purge is detected, the manager treats
+it as a teleport: it resyncs the shadow copies and emits no transitions. Without this, arriving
+anywhere by fast travel would dissolve the entire world in at once. The first population — the
+previous distant set still empty — takes the same silent-resync path, so entering a worldspace never
+dissolves in all ~2075 distant nodes at once.
 
 The cell-slot figure is derived, not guessed. Crossing one cell boundary shifts a single row or
 column of the `gridSize x gridSize` loaded grid, which is `gridSize` slots; crossing a corner shifts

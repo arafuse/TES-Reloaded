@@ -1,8 +1,9 @@
 #pragma once
 #include <unordered_map>
+#include <unordered_set>
 
 /// Tracks LOD and full-model load transitions and publishes a per-geometry dither fade alpha.
-/// Detection is by polling the engine grid arrays; see
+/// Detection is by polling the loaded-cell grid and the LOD scene-graph nodes; see
 /// docs/superpowers/specs/2026-08-20-lod-dither-fade-design.md.
 class LODFadeManager {
 public:
@@ -66,9 +67,13 @@ private:
 	// INVARIANT: these three shadow copies OWN one reference to every non-NULL entry they hold. The
 	// reference is taken when a slot is filled, not when a departure is later detected -- by then the
 	// engine may already have dropped its last reference, and Pin would be reading freed memory.
-	// Every path that overwrites or clears a slot must release exactly once; use AssignSlot and
-	// ReleaseSlots rather than writing a slot directly.
-	std::vector<NiAVObject*>							PrevDistant;
+	// Every path that overwrites or clears a slot must release exactly once; use AssignSlot,
+	// ResyncSlots and ReleaseSlots rather than writing a slot directly.
+	//
+	// PrevDistant is a SET, not a positional vector: DistantRefLOD's child array is compacted and its
+	// slots reused as distant cells stream, so an index-keyed diff reports every slot changed on every
+	// frame. Membership diffing is immune to reordering and compaction.
+	std::unordered_set<NiAVObject*>						PrevDistant;
 	std::vector<NiAVObject*>							PrevLandLOD;
 	std::vector<NiAVObject*>							PrevCell;
 	std::unordered_map<NiAVObject*, FadeRecord*>		RootIndex;
@@ -76,12 +81,24 @@ private:
 	bool												PrevValid;
 	bool												FadeSetDirty;
 
-	void			PollDistantGrid();
+	// Per-frame scratch for the distant membership diff. Owns NO references -- ownership moves into
+	// PrevDistant via ResyncSlots. Kept as a member only so its buckets are reused frame to frame.
+	std::unordered_set<NiAVObject*>						CurDistant;
+
+	// Cached DistantRefLOD node, revalidated against the live child list every poll so a stale pointer
+	// is never dereferenced. DistantRefLogged keeps the resolve diagnostic to a single line.
+	NiNode*												DistantRef;
+	bool												DistantRefLogged;
+
+	NiNode*			ResolveDistantRef();
+	void			PollDistantRef();
 	void			PollLandLOD();
 	void			PollCellGrid();
 
 	void			AssignSlot(NiAVObject*& Slot, NiAVObject* Node);
 	void			ReleaseSlots(std::vector<NiAVObject*>& Slots);
+	void			ReleaseSlots(std::unordered_set<NiAVObject*>& Slots);
+	void			ResyncSlots(std::unordered_set<NiAVObject*>& Slots, const std::unordered_set<NiAVObject*>& Current);
 
 	void			Retire(UInt32 Index);
 };

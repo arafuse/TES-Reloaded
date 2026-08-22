@@ -11,6 +11,8 @@ LODFadeManager::LODFadeManager() {
 	FadeSetDirty = false;
 	FadeResetPending = false;
 	NeedsOpaquePublish = true;
+	DistantRef = NULL;
+	DistantRefLogged = false;
 
 }
 
@@ -35,6 +37,35 @@ void LODFadeManager::ReleaseSlots(std::vector<NiAVObject*>& Slots) {
 		if (Node && !InterlockedDecrement(&Node->m_uiRefCount)) Node->Destructor(true);
 	}
 	Slots.clear();
+
+}
+
+/// Releases every reference a shadow-copy set owns and empties it. Same contract as the vector
+/// overload; used by the main-menu guard, which abandons the whole set at once.
+void LODFadeManager::ReleaseSlots(std::unordered_set<NiAVObject*>& Slots) {
+
+	for (std::unordered_set<NiAVObject*>::iterator it = Slots.begin(); it != Slots.end(); ++it) {
+		NiAVObject* Node = *it;
+		if (Node && !InterlockedDecrement(&Node->m_uiRefCount)) Node->Destructor(true);
+	}
+	Slots.clear();
+
+}
+
+/// Moves the shadow set onto the current frame's membership, carrying reference ownership with it:
+/// every newly-present node gains a reference and every departed node loses the one the set held.
+/// Releases run last, so a departing node destructed here is one nothing else still holds -- callers
+/// that pin departures must have taken their own reference before calling this.
+void LODFadeManager::ResyncSlots(std::unordered_set<NiAVObject*>& Slots, const std::unordered_set<NiAVObject*>& Current) {
+
+	for (std::unordered_set<NiAVObject*>::const_iterator it = Current.begin(); it != Current.end(); ++it) {
+		if (!Slots.count(*it)) InterlockedIncrement(&(*it)->m_uiRefCount);
+	}
+	for (std::unordered_set<NiAVObject*>::iterator it = Slots.begin(); it != Slots.end(); ++it) {
+		NiAVObject* Node = *it;
+		if (!Current.count(Node) && !InterlockedDecrement(&Node->m_uiRefCount)) Node->Destructor(true);
+	}
+	Slots = Current;
 
 }
 
@@ -136,71 +167,114 @@ void LODFadeManager::Unpin(FadeRecord* Record) {
 
 }
 
-/// Detects distant-LOD slots gaining a node (stream-in) by diffing the grid against the previous frame.
-/// A large fraction of slots changing at once (teleport/fast-travel) is a discontinuity and is suppressed.
-void LODFadeManager::PollDistantGrid() {
+/// Resolves the DistantRefLOD scene-graph node, the container of every distant static/tree LOD node.
+/// Tes->LODRoot is misnamed -- it points at "LandLOD" -- so the real container is its parent, whose
+/// children are LandLOD, DistantRefLOD and LODWaterRoot. The container holds only those three, so the
+/// cached pointer is revalidated by identity against the live child list on every call rather than
+/// simply returned: that costs three pointer compares and guarantees a pointer the engine has since
+/// swapped out is never dereferenced.
+///
+/// This replaced a poller that read Tes->gridDistantArray and treated DistantGridEntry::unk04 as the
+/// per-cell NiNode*. That layout was never verified -- Game.h labels all four entry fields unk* -- and
+/// in-game logging showed all 4225 slots differing every frame, so nothing was ever detected and the
+/// poller was writing a refcount into ~4225 arbitrary addresses per frame. Do not reintroduce it
+/// without first re-deriving DistantGridEntry's layout.
+NiNode* LODFadeManager::ResolveDistantRef() {
 
-	// DISABLED - see below. Returns before touching the grid, so PrevDistant stays empty and no
-	// reference is ever taken on a value from it.
-	//
-	// In-game logging showed all 65*65 = 4225 slots differing from the previous frame on EVERY
-	// frame, so nothing was ever detected. Stable scene-graph pointers cannot do that, which means
-	// DistantGridEntry::unk04 is not the per-cell NiNode* this poller assumed. Game.h:8109 labels
-	// all four entry fields unk*, and the claim came from a reverse-engineering note that had never
-	// been exercised. Grid->size reading exactly 65 confirms the outer struct is right, so the fault
-	// is the entry layout alone.
-	//
-	// This became actively dangerous once the shadow copies started owning references: AssignSlot
-	// does InterlockedIncrement(&Node->m_uiRefCount), i.e. a write at Node + 4, so the poller was
-	// performing ~4225 arbitrary memory writes per frame. Disabled rather than repaired because the
-	// replacement walks DistantRefLOD's children instead, using only NiNode fields.
-	return;
+	NiNode* LandLOD = Tes->LODRoot;
+	if (!LandLOD) return NULL;
 
-	GridDistantArray* Grid = Tes->gridDistantArray;
-	if (!Grid || !Grid->grid || !Grid->size) return;
+	NiNode* Container = LandLOD->m_parent;
+	if (!Container) return NULL;
 
-	UInt32 Slots = Grid->size * Grid->size;
-	if (PrevDistant.size() != Slots) {
-		ReleaseSlots(PrevDistant);
-		PrevDistant.assign(Slots, NULL);
-		PrevValid = false;
+	NiNode* Found = NULL;
+	UInt32 Slots = Container->m_children.end;
+	if (Slots > Container->m_children.capacity) Slots = Container->m_children.capacity;
+	for (UInt32 i = 0; i < Slots; i++) {
+		NiAVObject* Child = Container->m_children.data[i];
+		if (!Child) continue;
+		if (Child == DistantRef) return DistantRef;
+		if (Child->m_pcName && !strcmp(Child->m_pcName, "DistantRefLOD")) Found = (NiNode*)Child;
 	}
+
+	DistantRef = Found;
+
+	// Prove the traversal found the node it assumed before the feature trusts it. Roughly 2075
+	// children is the expected shape; a wildly different count, or no line at all, means the walk is
+	// wrong and must be re-derived rather than silently detecting nothing for another session.
+	if (Found && !DistantRefLogged) {
+		DistantRefLogged = true;
+		if (TheSettingManager->SettingsMain.Develop.LogLODFade)
+			Logger::Log("[LODFade] DistantRefLOD resolved name=%s children=%d", Found->m_pcName, Found->m_children.numObjs);
+	}
+
+	return Found;
+
+}
+
+/// Detects distant LOD nodes streaming in and out by diffing DistantRefLOD's children against the
+/// previous frame as a SET. The diff is deliberately not index-keyed: the engine compacts and reuses
+/// child slots as distant cells stream, so a positional diff reports the whole array changed every
+/// frame. A large fraction of the children churning at once (teleport/fast-travel) is a discontinuity
+/// and is suppressed.
+void LODFadeManager::PollDistantRef() {
+
+	NiNode* Node = ResolveDistantRef();
+	if (!Node) return;
+
+	// Scanned to `end`, not `numObjs`: removing a distant cell NULLs its slot and decrements numObjs
+	// without compacting, so numObjs is a count of live children and not a slot bound. Capacity is the
+	// hard clamp. NULL slots are simply skipped -- membership, not position, is what the diff keys on.
+	CurDistant.clear();
+	UInt32 Slots = Node->m_children.end;
+	if (Slots > Node->m_children.capacity) Slots = Node->m_children.capacity;
+	for (UInt32 i = 0; i < Slots; i++) {
+		NiAVObject* Child = Node->m_children.data[i];
+		if (Child) CurDistant.insert(Child);
+	}
+	UInt32 Count = (UInt32)CurDistant.size();
 
 	// Count first, so a teleport is suppressed before any fade is started rather than after.
 	UInt32 Changed = 0;
-	for (UInt32 i = 0; i < Slots; i++) {
-		NiAVObject* Node = (NiAVObject*)Grid->grid[i].unk04;
-		if (Node != PrevDistant[i]) Changed++;
+	for (std::unordered_set<NiAVObject*>::iterator it = CurDistant.begin(); it != CurDistant.end(); ++it) {
+		if (!PrevDistant.count(*it)) Changed++;
+	}
+	for (std::unordered_set<NiAVObject*>::iterator it = PrevDistant.begin(); it != PrevDistant.end(); ++it) {
+		if (!CurDistant.count(*it)) Changed++;
 	}
 
-	bool Discontinuity = !PrevValid || Changed > (Slots / 4);
+	// An empty previous set is the first population: resync silently rather than dissolving in the
+	// entire world. Count is the live child count, so the quarter test scales with the loaded world
+	// and a Count of 0 (interior) makes any churn at all a discontinuity, which is the safe answer.
+	bool Discontinuity = !PrevValid || PrevDistant.empty() || Changed > (Count / 4);
 	if (Discontinuity) {
-		if (PrevValid && TheSettingManager->SettingsMain.Develop.LogLODFade)
-			Logger::Log("[LODFade] distant discontinuity: %d of %d slots changed, suppressed", Changed, Slots);
-		for (UInt32 i = 0; i < Slots; i++) AssignSlot(PrevDistant[i], (NiAVObject*)Grid->grid[i].unk04);
+		if (PrevValid && !PrevDistant.empty() && TheSettingManager->SettingsMain.Develop.LogLODFade)
+			Logger::Log("[LODFade] distantref discontinuity: %d of %d changed, suppressed", Changed, Count);
+		ResyncSlots(PrevDistant, CurDistant);
 		return;
 	}
 
-	for (UInt32 i = 0; i < Slots; i++) {
-		NiAVObject* Node = (NiAVObject*)Grid->grid[i].unk04;
-		if (Node == PrevDistant[i]) continue;
-
-		// Departure and arrival are independent tests, not if/else: a slot can swap straight from one
-		// non-NULL node to a different one without ever passing through NULL, and both halves of that
-		// swap have to fade. Both AddFade calls land in this Update() so they share a StartTime.
-		if (PrevDistant[i] && TheSettingManager->SettingsMain.LODFade.PinDeparting) {
+	// Departures run first and are fully consumed before any arrival: AddFade returns a pointer into
+	// Fades, which the next push_back would reallocate out from under Out.
+	if (TheSettingManager->SettingsMain.LODFade.PinDeparting) {
+		for (std::unordered_set<NiAVObject*>::iterator it = PrevDistant.begin(); it != PrevDistant.end(); ++it) {
+			if (CurDistant.count(*it)) continue;
 			// Departing node fades out via the inverted rising alpha, not a separate declining-alpha
-			// direction. See FadeRecord::Invert. Pin takes its own reference before the slot below
+			// direction. See FadeRecord::Invert. Pin takes its own reference before ResyncSlots below
 			// drops the one that kept this pointer valid.
-			FadeRecord* Out = AddFade(PrevDistant[i]);
+			FadeRecord* Out = AddFade(*it);
 			if (Out) {
 				Out->Invert = true;
 				if (!Pin(Out)) Retire((UInt32)(Fades.size() - 1));
 			}
 		}
-		if (Node && !RootIndex.count(Node)) AddFade(Node);
-		AssignSlot(PrevDistant[i], Node);
 	}
+
+	for (std::unordered_set<NiAVObject*>::iterator it = CurDistant.begin(); it != CurDistant.end(); ++it) {
+		if (!PrevDistant.count(*it) && !RootIndex.count(*it)) AddFade(*it);
+	}
+
+	ResyncSlots(PrevDistant, CurDistant);
 
 }
 
@@ -352,6 +426,9 @@ void LODFadeManager::Update() {
 		ReleaseSlots(PrevDistant);
 		ReleaseSlots(PrevLandLOD);
 		ReleaseSlots(PrevCell);
+		// Tes is gone, so the cached DistantRefLOD pointer is meaningless and must be re-resolved.
+		CurDistant.clear();
+		DistantRef = NULL;
 		FadeSetDirty = false;
 		LiveCount = 0;
 		FadeResetPending = false;
@@ -376,7 +453,7 @@ void LODFadeManager::Update() {
 		if (HardTimeout || Complete) Retire(i);
 	}
 
-	PollDistantGrid();
+	PollDistantRef();
 	PollCellGrid();
 	PollLandLOD();
 	PrevValid = true;
