@@ -697,3 +697,78 @@ whether fading a persistent per-slot container fades the right geometry.
 **TAA history rejection.** Dithered pixels change every frame by construction. If TAA's history
 rejection treats the changing coverage as disocclusion, the fade may flicker rather than resolve.
 Needs an in-game look before the dither pattern is considered settled.
+
+---
+
+## Corrections from in-game measurement (2026-08-22)
+
+Four load-bearing claims above were falsified once the feature was instrumented end to end. They are
+left in place rather than edited out, because the reasoning that produced them is the interesting
+part; everything in this section supersedes them.
+
+### The cell tier watched a node the renderer never draws
+
+Everything above about `GridCellArray::CellInfo::niNode` — the persistent-per-slot-container model,
+the cell-keyed diff derived from it, the `cellptr=25 niNode=0 info=0` measurement, and the reviewer's
+endorsement of the re-population argument — was reasoning about the wrong node.
+
+A per-shader census of covered draws, printing each drawn geometry's ancestry as `name@address`,
+placed every loaded object in the game under `Tes->ObjectLODRoot`:
+
+```
+SLS2003.pso   LandscapeLogBirchMoss01: < BASE Landscape\Landscape < ?@270BA1A0 < ?@270B9F00 < ?@270B9800 < ObjectLODRoot@19C7E7E0
+SM3LL010.pso  CDoor00:1                < BASE Dungeons\Caves\CDoo < ?@270C6680 < ?@270C63E0 < ?@270C6140 < ObjectLODRoot@19C7E7E0
+SM3LL011.pso  WolfBody_def             < BASE creatures\rat\racco < Raccoon ref < ?@270C6220 < ?@270C6140 < ObjectLODRoot@19C7E7E0
+```
+
+The fade root the cell tier had picked, printed the same way, was:
+
+```
+root chain: tier=cell culled=1  Water Node@19C81020 < WaterRoot@19C80E60 < ObjectLODRoot@19C7E7E0
+```
+
+`CellInfo::niNode` is the cell's **water** node — a child of `WaterRoot`, `AppCulled` at the moment a
+cell arrives. The renderer never descends into it, so no draw could ever carry the alpha, which is
+why five sessions of correct-looking detection produced nothing visible. The `CellInfo` layout in
+`Game.h` was always a guess (the struct is literally `WaterPlaneData*; NiNode*; // ...`), and the
+cell-keyed diff was an elaborate correction to a field that was never the right one.
+
+The tier now diffs the **children of `Tes->ObjectLODRoot`** by set membership, structurally identical
+to `PollDistantRef` and sharing its slot plumbing. One direct child per loaded cell; a census of one
+reads `nodes=247 geoms=265 culledNodes=31 culledGeoms=48`. Nothing depends on `CellInfo` any more,
+and SDD findings 1 and 2 (the wrong-reason reference comment and the container-occupant-changes
+hazard) are void with it — both were properties of the persistent-container model.
+
+### The cell tier is not fade-in only
+
+"FADE-IN ONLY … nothing is ever detached … do not reintroduce Pin" followed from the same wrong
+model. Under `ObjectLODRoot` a departing cell **is** a removed child, the exact shape the distant
+tier already pins. Without the departure half the full models vanish the instant the engine drops
+them while the arriving LOD is still near zero alpha — reported in game as the cell unloading
+completely and the LOD then fading in over the hole. Departures are now pinned and inverted like any
+other, and the transition is a genuine crossfade.
+
+### The discontinuity threshold does not transfer between tiers
+
+The distant tier suppresses on `Changed > Count/4`, tuned against ~2075 nodes. Applied to a 25-cell
+grid that is a limit of 6, while a legitimate corner crossing is 9 arrivals — it would have
+suppressed every corner crossing. The cell tier uses `Arrived > Count/2`, which still catches a
+teleport replacing the whole grid.
+
+### An arrival is attached before it is drawable
+
+A just-arrived distant root censused as `depth=0 nodes=1 geoms=0`: the engine links an empty
+container to `DistantRefLOD` and streams the mesh in afterwards. Attach time is therefore the wrong
+trigger — the object pops when its geometry becomes drawable. `AddArrival` starts the fade
+immediately for a leaf or an already-populated node and otherwise queues it, promoting it when
+`m_children.numObjs` goes non-zero and dropping it after 8 s or if it leaves the graph. Measured
+`pending=0` in practice, so the empty-placeholder case is rare — the fix is correct but was not the
+cause of anything.
+
+### What the draw counters actually mean
+
+`resolved=0` on a frame is **not** evidence of a broken join. Frames with large departure batches
+(`out=83`) resolve nothing while small ones (`out=27`) resolve hundreds, because a mass swap is a
+grid shift whose content is spread all round the player including behind the camera. Read `resolved`
+across many frames, and read `minAlpha` with it: the pipeline is proven end to end by any frame with
+`resolved>0 minAlpha<1.0`, not by every frame having one.
