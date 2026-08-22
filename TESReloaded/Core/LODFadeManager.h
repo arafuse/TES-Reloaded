@@ -141,7 +141,7 @@ private:
 	/// node they watch registers as an arrival and starts a fade that attaches another holder.
 	bool			IsHolder(NiAVObject* Node) { return !HolderNodes.empty() && HolderNodes.count(Node) != 0; }
 
-	void			AssignSlot(SlotEntry& Entry, NiAVObject* Node);
+	void			AssignSlot(SlotEntry& Entry, NiAVObject* Node, bool StickyParent);
 	void			ReleaseSlots(std::vector<SlotEntry>& Slots);
 	void			ReleaseSlots(std::unordered_map<NiAVObject*, NiNode*>& Slots);
 	void			ResyncSlots(std::unordered_map<NiAVObject*, NiNode*>& Slots, std::unordered_map<NiAVObject*, NiNode*>& Current);

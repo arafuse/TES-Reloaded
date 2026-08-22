@@ -238,37 +238,90 @@ Supporting properties of the holder design:
   torn down is dropped from the parent-keyed map but keeps its reference, so its pointer never
   dangles. The cost is a handful of leaked 0xDC-byte nodes per session; the alternative is a
   use-after-free.
-- **Holder reuse is validated, not assumed.** Before a cached holder is reused, `Holder->m_parent ==
-  Parent` is checked. That dereferences only the holder, which we own a reference to, so the test is
-  safe even when the map key has since been freed and its address reused by a different node. A
-  mismatch means the parent was torn down: the entry is dropped and a fresh holder built.
+- **An orphaned cached holder declines the pin — it does not rebuild.** Before a cached holder is
+  reused, `Holder->m_parent == Parent` is checked. That dereferences only the holder, which we own a
+  reference to, so the test is safe even when the map key has since been freed and its address reused
+  by a different node. A mismatch is the *strongest evidence this code ever gets* that `Parent` is
+  freed memory — `~NiNode` NULLs its children's `m_parent`, so an orphaned holder is precisely the
+  signature of a destructed parent. Building a fresh holder there would mean calling `AddObject` on
+  the very pointer just concluded to be dead, so the entry is dropped and `GetHolder` returns NULL.
+  The departure pops once; the next poll's remembered parent is fresh. Note that the creation path
+  validates `Parent` not at all, so this branch is the only place a dead parent can ever be caught.
 - **Holders are excluded from the pollers' own diffs.** `PollDistantRef` and `PollLandLOD` walk the
   child arrays of nodes that holders attach to. Without an explicit skip a holder registers as an
   arrival, gets a fade, and eventually gets pinned under a second holder -- a self-sustaining loop.
-- **The holder is given an identity local transform and a deliberately loose world bound.**
-  `NiNode::New` leaves a zero world bound, and a zero-radius sphere fails the frustum test, so the
-  culler would reject the holder and everything under it -- an invisible fade-out, i.e. the same
-  nothing-happens outcome the decline path already produced. The bound is set to a radius large
-  enough never to be rejected; each pinned child still carries its own correct bound and is culled on
-  that, so the only cost is one extra node visit per frame. The identity local transform is written
-  explicitly rather than trusted from `New`, because a zero scale there would collapse every pinned
-  node to a point. The holder's world transform is copied from its parent, so a pinned child's
-  already-computed world transform stays correct whether or not the engine runs an update pass over
-  that subtree. No engine update pass is called: `UpdateDownwardPass` has no existing call site in
-  this fork, and seeding two fields is the smaller assumption.
+- **Holders are attached with `FirstAvail = 0` (append), not the `1` used everywhere else in this
+  fork.** `1` means "first NULL slot", not "append". Every other `AddObject` call site here attaches
+  to a skeleton node, where filling a hole is harmless. A holder is different: for the `LandLOD` tier
+  it is created *because* a quadrant departed, and this design's own model of a departure is "a slot
+  going non-NULL to NULL", so at that moment `LandLOD->m_children` has a hole at the departed
+  quadrant's index and `1` would drop a bare `NiNode` straight into it. If the engine indexes those
+  dozen children positionally, or casts them to a terrain-LOD node type, that is type confusion and
+  it faults. Nothing else in this fork walks `LODRoot`'s children, so this cannot be settled
+  statically; appending costs nothing and removes the collision entirely.
+- **The holder is given an identity local transform and a deliberately loose world bound, refreshed
+  every frame.** `NiNode::New` leaves a zero world bound, and a zero-radius sphere fails the frustum
+  test, so the culler would reject the holder and everything under it -- an invisible fade-out, i.e.
+  the same nothing-happens outcome the decline path already produced. The bound radius is `1e6`:
+  large enough never to be rejected, and deliberately *not* larger, so that if the engine ever
+  recomputes a parent's bound from its children via `UpdateWorldBound` the value cannot poison the
+  union up the graph and persist on an emptied holder. Each pinned child still carries its own
+  correct bound and is culled on that, so the only cost is one extra node visit per frame. The
+  identity local transform is written explicitly rather than trusted from `New`, because a zero scale
+  there would collapse every pinned node to a point. The holder's world transform is copied from its
+  parent, so a pinned child's already-computed world transform stays correct whether or not the
+  engine runs an update pass over that subtree; it is re-copied for every live holder once per
+  `Update()`, because this fork's LOD roots are anchor- and camera-relative and a parent that moves
+  during the fade would otherwise leave the holder on a stale snapshot. No engine update pass is
+  called: `UpdateDownwardPass` has no existing call site in this fork, properties and effects are
+  already baked onto the geometries and an empty holder contributes none, so seeding two fields is
+  both the smaller assumption and the safer one.
 
 **Why a one-poll-old parent pointer is safe to dereference.** The remembered parent is refreshed on
 every poll while the node is attached, so at departure time it is at most one poll old. For it to
 dangle, the container itself must have been destructed inside that one-poll window -- and a container
 dying takes all of its children with it, which every poller sees as mass churn and suppresses through
 the discontinuity guard *before* any pin is attempted. The guard is therefore load-bearing for
-pin safety, not only for visual sanity.
+pin safety, not only for visual sanity. The orphaned-holder decline above is the backstop for any
+residual staleness this argument does not cover.
+
+**The cell tier's remembered parent is sticky; the other two are not.** The distant and `LandLOD`
+tiers observe their nodes *through* a child array, so a node's presence in the poll and a live
+`m_parent` are the same fact, and an unconditional refresh is exactly right. `PollCellGrid` is
+different: it observes `Grid->grid[i].info->niNode`, independently of the scene graph. If the engine
+detaches a cell node before it clears the grid entry, an unconditional refresh would stamp NULL over
+a perfectly good parent while the slot still reads non-NULL, and the departure would then decline
+with `no parent remembered` — silently the same nothing-happens outcome the 43 declines were. The
+cell tier therefore only ever overwrites its remembered parent with a **non-NULL** value, and clears
+it whenever the slot's node itself changes, so a remembered parent never outlives its node.
 
 **Unpin ordering.** `Unpin` restores the cull flag, detaches the node from its holder, and only then
 decrements. The decrement can hit zero and destruct the node, so every read and write to it has to
-precede it. `RemoveObject` uses this codebase's established aliased-out-parameter convention
-(`Node->RemoveObject(&Alias, Node)`), which releases the holder's reference; together with the
-`InterlockedDecrement` that undoes exactly the two increments the re-attach path made.
+precede it.
+
+The detach is **unconditional**, even when the engine has re-attached the node elsewhere in the
+meantime. Skipping it in that case is the obvious resurrection guard and it is wrong: it would leave
+the node in the holder's child array forever, drawn and referenced every frame. `RemoveObject` NULLs
+`m_parent`, so the owner is read before the call and restored after it when it was not our holder.
+
+**`RemoveObject`'s reference accounting is UNSETTLED and is being measured, not guessed.** Either it
+*releases* the parent's reference — in which case `Unpin`'s single `InterlockedDecrement` is already
+correct — or it *transfers* it into the out parameter, which is really an `NiAVObjectPtr` slot, in
+which case one further decrement is owed and a whole subtree leaks per re-attached pin without it.
+The evidence for transfer is `EquipmentManager.cpp:636`, which does `RemoveObject(&Object, Object)`
+and then `Object->Destructor(1)` — sane only if the object survives the detach still holding a
+transferred reference; under the release reading that shipped code would be a double free. The two
+readings differ by a leak versus a use-after-free, in *opposite* directions, so nothing is changed on
+a guess. `Unpin` logs the refcount either side of the call:
+
+```
+[LODFade] %s unpin root=%08X refcount %d -> %d
+```
+
+Unchanged means transfer, and one more decrement is owed. Down by one means the current code is
+right. It is safe either way today: the count is at least 2 at the detach (Pin's reference plus the
+holder's), so `RemoveObject` cannot reach zero. The out parameter is initialised to NULL rather than
+aliasing the node, so that a callee assigning through the slot could not release the node twice.
 
 **Viability is tested before a record is created.** `CanPin` runs ahead of `AddFade`. Without it,
 every unpinnable departure produced a `start` / `pin declined` / `retire` triple in one call --
@@ -413,7 +466,7 @@ tag naming the poller that emitted it, so a line can be attributed without guess
 [LODFade] cell pin root=%08X mode=uncull
 [LODFade] landlod pin declined, no parent remembered root=%08X
 [LODFade] distant pin declined, holder unavailable root=%08X
-[LODFade] cell unpin root=%08X
+[LODFade] cell unpin root=%08X refcount %d -> %d
 [LODFade] distant retire root=%08X pinned=%d
 [LODFade] holder created under parent=%08X name=%s
 ```
@@ -466,8 +519,14 @@ In-game checklist:
   area and confirm the log now shows `mode=reattach` pins where it previously showed only
   `pin declined`, each followed by a matching `unpin` on the same root. A `[LODFade] holder created`
   line should appear once per container (expect roughly one for `DistantRefLOD`, one for the loaded
-  object root, one for `LandLOD`) and then never again. Many `holder created` lines means the reuse
-  validation is failing and holders are being rebuilt every time.
+  object root, one for `LandLOD`) and then never again. Many `holder created` lines mean the reuse
+  validation keeps failing — each failure declines a pin and drops the entry, so holders are being
+  rebuilt and departures are being lost.
+- **Settle `RemoveObject`'s reference accounting** from the same run. Read the `refcount %d -> %d`
+  field on the `unpin` lines: **unchanged** means `RemoveObject` transfers rather than releases, and
+  `Unpin` owes one further `InterlockedDecrement` or every re-attached pin leaks its subtree;
+  **down by one** means the shipped accounting is already correct. Nothing else should be changed
+  here until that field has been read.
 - Fast-travel and confirm the discontinuity guard suppresses a world-wide dissolve.
 - Set `PinDeparting=0` and confirm the fade-in half still works alone. This is the fallback: if the
   re-attach path crashes, shipping with `PinDeparting=0` is an acceptable outcome and forcing the
@@ -498,13 +557,20 @@ useful even if pinning proves unsafe.
 **Mutating the live scene graph** is the risk the re-attach path adds on top of that. Attaching a
 holder to an engine-owned container and re-parenting a detached node under it is a write into
 structures the engine owns, so a mistake faults rather than glitches. The mitigations are the ones
-listed under "Pinning": holders are never freed, holder reuse is validated against
-`Holder->m_parent`, the remembered parent is never more than one poll old and a container's death is
-always accompanied by a suppressing discontinuity, and the whole path stays behind `PinDeparting`.
-The residual unknown is a node the engine chooses to *resurrect* -- re-attaching the same pointer
-elsewhere while we still hold it under a holder. Nothing observed suggests the engine reuses a node
-it has dropped, and the window is one fade duration, but it is the case this design does not defend
-against.
+listed under "Pinning": holders are never freed, an orphaned holder declines the pin rather than
+writing into a parent it has just concluded is dead, holders append rather than filling a freed slot,
+the remembered parent is never more than one poll old and a container's death is always accompanied
+by a suppressing discontinuity, and the whole path stays behind `PinDeparting`.
+
+**Resurrection** -- the engine re-attaching a node it dropped while we still hold it under a holder
+-- is handled by detaching unconditionally in `Unpin` and restoring the owner `RemoveObject` NULLs;
+see "Unpin ordering". The obvious guard, skipping the detach when `m_parent` is not our holder, would
+have been worse than the bug: it leaves the node in the holder's array forever, drawn and referenced
+every frame.
+
+**`RemoveObject`'s reference accounting** is the one live unknown, and it is instrumented rather than
+guessed; see "Unpin ordering". Worst case in the wrong direction is a leak, not a fault, and the
+count cannot reach zero inside the call.
 
 **TAA history rejection.** Dithered pixels change every frame by construction. If TAA's history
 rejection treats the changing coverage as disocclusion, the fade may flicker rather than resolve.

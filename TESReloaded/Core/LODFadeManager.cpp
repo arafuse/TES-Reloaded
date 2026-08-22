@@ -20,18 +20,30 @@ LODFadeManager::LODFadeManager() {
 /// reference and the outgoing node loses the one the slot held. Every write to a Prev* slot goes
 /// through here so the ownership invariant declared in the header holds on every path.
 ///
-/// The remembered parent is refreshed unconditionally, including when the node itself is unchanged.
+/// The remembered parent is refreshed on every poll, including for a slot whose node is unchanged.
 /// That refresh is what makes the pointer safe to dereference at departure time: it is never more
 /// than one poll old, and a container that dies inside that window takes all of its children with it,
 /// which every poller sees as a discontinuity and suppresses before any pin is attempted.
-void LODFadeManager::AssignSlot(SlotEntry& Entry, NiAVObject* Node) {
+///
+/// StickyParent exists for the cell tier alone. The distant and LandLOD tiers observe their nodes
+/// THROUGH a child array, so presence in the poll and a live m_parent are the same fact. PollCellGrid
+/// observes Grid->grid[i].info->niNode instead, independently of the scene graph: if the engine
+/// detaches a cell node before it clears the grid entry, an unconditional refresh would stamp NULL
+/// over a perfectly good parent while the slot still reads non-NULL, and the departure would decline
+/// with "no parent remembered" -- silently the same nothing-happens outcome this re-attach path
+/// exists to end. Sticky keeps the last non-NULL answer instead, and is cleared whenever the slot's
+/// node changes, so a remembered parent never outlives the node it belonged to.
+void LODFadeManager::AssignSlot(SlotEntry& Entry, NiAVObject* Node, bool StickyParent) {
 
 	if (Entry.Node != Node) {
 		if (Node) InterlockedIncrement(&Node->m_uiRefCount);
 		if (Entry.Node && !InterlockedDecrement(&Entry.Node->m_uiRefCount)) Entry.Node->Destructor(true);
 		Entry.Node = Node;
+		Entry.Parent = NULL;
 	}
-	Entry.Parent = Node ? Node->m_parent : NULL;
+
+	NiNode* Parent = Node ? Node->m_parent : NULL;
+	if (Parent || !StickyParent) Entry.Parent = Parent;
 
 }
 
@@ -140,6 +152,10 @@ void LODFadeManager::Retire(UInt32 Index) {
 /// path exists to fix. Unioning the children's bounds would be tighter, but a holder is transient and
 /// holds a handful of nodes at most, and every child still carries its own correct bound and is culled
 /// on that, so the only cost of the loose bound is one extra node visit per frame.
+///
+/// Called for every live holder once per Update(), not only at pin time: this fork's LOD roots are
+/// anchor- and camera-relative, so a parent that moves during the one-second fade would otherwise
+/// leave the holder holding a stale snapshot of its transform.
 void LODFadeManager::RefreshHolder(NiNode* Holder) {
 
 	NiNode* Parent = Holder->m_parent;
@@ -160,15 +176,19 @@ void LODFadeManager::RefreshHolder(NiNode* Holder) {
 	// pinned child's already-computed world transform stays correct whether or not the engine ever
 	// runs an update pass over this subtree.
 	Holder->m_worldTransform = Parent->m_worldTransform;
+	// Big enough that the frustum test can never reject it, small enough not to poison a union: if the
+	// engine ever recomputes DistantRefLOD's own bound from its children via UpdateWorldBound, a 1e9
+	// radius would propagate up the graph and persist there long after the holder has emptied.
 	Holder->m_kWorldBound.Center = Holder->m_worldTransform.pos;
-	Holder->m_kWorldBound.Radius = 1.0e9f;
+	Holder->m_kWorldBound.Radius = 1.0e6f;
 	Holder->m_combinedBounds = Holder->m_kWorldBound;
 
 }
 
 /// Returns the plugin-owned holder hanging under Parent, creating and attaching it on first use.
 /// Holders are keyed by parent because render context follows position in the scene graph; see the
-/// header. Returns NULL only if Parent is NULL or the allocation fails, both of which decline the pin.
+/// header. Returns NULL -- declining the pin -- when Parent is NULL, when the allocation fails, or
+/// when the cached holder has been orphaned, which is evidence Parent itself has been destructed.
 NiNode* LODFadeManager::GetHolder(NiNode* Parent) {
 
 	if (!Parent) return NULL;
@@ -176,15 +196,19 @@ NiNode* LODFadeManager::GetHolder(NiNode* Parent) {
 	std::unordered_map<NiNode*, NiNode*>::iterator Found = Holders.find(Parent);
 	if (Found != Holders.end()) {
 		// Only the holder is dereferenced here, and we own a reference to it, so this test is safe even
-		// when the key has since been freed and its address reused. A holder the engine has detached
-		// means its parent was torn down: drop the entry and build a fresh one rather than hanging more
-		// pins off an orphan that will never be drawn. The reference is deliberately NOT released --
-		// a live pin may still name that holder, and destructing it under one would fault in Unpin.
+		// when the key has since been freed and its address reused.
 		if (Found->second->m_parent == Parent) {
 			RefreshHolder(Found->second);
 			return Found->second;
 		}
+		// An orphaned holder is the signature of a DESTRUCTED parent -- ~NiNode NULLs its children's
+		// m_parent -- and it is the strongest evidence this code ever gets that Parent is freed memory.
+		// So decline, rather than attaching a fresh holder to the very pointer we just concluded is
+		// dead. The departure pops once; the next poll's remembered parent is fresh and the one after
+		// re-attaches normally. The holder's reference is deliberately NOT released -- a live pin may
+		// still name it, and destructing it under one would fault in Unpin.
 		Holders.erase(Found);
+		return NULL;
 	}
 
 	NiNode* Holder = (NiNode*)MemoryAlloc(sizeof(NiNode));
@@ -192,7 +216,14 @@ NiNode* LODFadeManager::GetHolder(NiNode* Parent) {
 	Holder->New(8);
 	Holder->SetName("ORLODFadeHolder");
 	InterlockedIncrement(&Holder->m_uiRefCount);
-	Parent->AddObject(Holder, 1);
+	// FirstAvail = 0 (append past the end), NOT the 1 every other AddObject in this fork passes. Those
+	// call sites attach to skeleton nodes, where filling the first free slot is harmless. Here the
+	// parent can be a fixed-arity engine-managed array: LandLOD's dozen quadrants have a hole at the
+	// departed quadrant's index at exactly the moment a holder is created for that tier, since a slot
+	// going non-NULL to NULL is what a departure IS. If the engine indexes those children positionally
+	// or casts them to a terrain-LOD type, a bare NiNode in a quadrant slot is type confusion, which
+	// faults. Appending costs nothing and cannot collide.
+	Parent->AddObject(Holder, 0);
 	RefreshHolder(Holder);
 	Holders[Parent] = Holder;
 	HolderNodes.insert(Holder);
@@ -281,6 +312,17 @@ bool LODFadeManager::Pin(FadeRecord* Record, NiNode* Parent) {
 ///
 /// Order is load-bearing throughout: the decrement can hit zero and destruct the node, so every read
 /// and every write to it -- the flag restore and the detach alike -- has to happen first.
+///
+/// UNSETTLED: whether RemoveObject RELEASES the holder's reference or TRANSFERS it into the out
+/// parameter, which is really an NiAVObjectPtr slot. Release means the accounting here is already
+/// right; transfer means one whole subtree leaks per re-attached pin. EquipmentManager.cpp:636 does
+/// RemoveObject(&Object, Object) and then Object->Destructor(1), which only makes sense under
+/// transfer -- under release that shipped code would be a double free. The two readings differ by a
+/// leak versus a use-after-free, in opposite directions, so this logs the refcount either side of the
+/// call rather than guessing. It is safe TODAY either way: the count is at least 2 at the detach
+/// (Pin's reference plus the holder's), so RemoveObject cannot reach zero. Settle it from the next
+/// run's log -- unchanged means transfer and one further decrement is owed here; down by one means
+/// this is already correct.
 void LODFadeManager::Unpin(FadeRecord* Record) {
 
 	NiAVObject* Node = Record->Root;
@@ -289,19 +331,29 @@ void LODFadeManager::Unpin(FadeRecord* Record) {
 	Record->Pinned = false;
 	if (Record->WasCulled) Node->m_flags |= (UInt16)NiAVObject::kFlag_AppCulled;
 
-	// Detach before the decrement below. RemoveObject releases the holder's reference, leaving only
-	// the one Pin took, so the two decrements together undo exactly the two increments the re-attach
-	// path made. The aliased out-parameter is this codebase's established RemoveObject convention.
+	// The out parameter starts NULL rather than aliasing Node: if the callee ever assigned through the
+	// slot instead of constructing into it, an aliased Node would be released twice, and NULL also
+	// distinguishes "child not found" for free.
+	UInt32 RefBefore = 0;
+	UInt32 RefAfter = 0;
 	if (Record->Holder) {
-		NiAVObject* Removed = Node;
+		// Detach UNCONDITIONALLY, even if the engine has re-attached this node elsewhere in the
+		// meantime. Skipping the detach in that case is the obvious guard and it is wrong: it would
+		// leave the node in the holder's child array forever, drawn and referenced every frame.
+		// RemoveObject NULLs m_parent, so the engine's own attachment is restored afterwards.
+		NiNode* Owner = Node->m_parent;
+		NiAVObject* Removed = NULL;
+		RefBefore = Node->m_uiRefCount;
 		Record->Holder->RemoveObject(&Removed, Node);
+		RefAfter = Node->m_uiRefCount;
+		if (Owner != Record->Holder) Node->m_parent = Owner;
 		Record->Holder = NULL;
 	}
 
 	if (!InterlockedDecrement(&Node->m_uiRefCount)) Node->Destructor(true);
 
 	if (TheSettingManager->SettingsMain.Develop.LogLODFade)
-		Logger::Log("[LODFade] %s unpin root=%08X", Record->Tier, (UInt32)Node);
+		Logger::Log("[LODFade] %s unpin root=%08X refcount %d -> %d", Record->Tier, (UInt32)Node, RefBefore, RefAfter);
 
 }
 
@@ -449,9 +501,13 @@ void LODFadeManager::PollLandLOD() {
 
 	// Also the first-population path (PrevLandLOD empty), which must resync silently rather than
 	// fade in every quadrant at once. With the `end` bound this now fires only when the array itself
-	// grows or its trailing slots are freed, not merely because a quadrant went NULL. Attaching a
-	// holder here grows the array once and takes this path, which costs one missed poll and nothing
-	// else; thereafter the holder reads as a permanently empty slot.
+	// grows or its trailing slots are freed, not merely because a quadrant went NULL.
+	//
+	// A holder attached here is APPENDED past the end (GetHolder passes FirstAvail = 0), so it does
+	// grow the array and take this path exactly once, costing one missed poll and nothing else;
+	// thereafter it reads as a permanently empty trailing slot. That is the whole reason for the
+	// append: a holder is created for this tier precisely when a quadrant has just gone NULL, so
+	// FirstAvail = 1 would have dropped a bare NiNode into that quadrant's index instead.
 	if (PrevLandLOD.size() != Slots) {
 		ReleaseSlots(PrevLandLOD);
 		SlotEntry Empty;
@@ -460,7 +516,7 @@ void LODFadeManager::PollLandLOD() {
 		PrevLandLOD.assign(Slots, Empty);
 		for (UInt32 i = 0; i < Slots; i++) {
 			NiAVObject* Child = LandLOD->m_children.data[i];
-			AssignSlot(PrevLandLOD[i], IsHolder(Child) ? NULL : Child);
+			AssignSlot(PrevLandLOD[i], IsHolder(Child) ? NULL : Child, false);
 		}
 		return;
 	}
@@ -480,7 +536,7 @@ void LODFadeManager::PollLandLOD() {
 			Logger::Log("[LODFade] landlod discontinuity: %d of %d slots changed, suppressed", Changed, Slots);
 		for (UInt32 i = 0; i < Slots; i++) {
 			NiAVObject* Child = LandLOD->m_children.data[i];
-			AssignSlot(PrevLandLOD[i], IsHolder(Child) ? NULL : Child);
+			AssignSlot(PrevLandLOD[i], IsHolder(Child) ? NULL : Child, false);
 		}
 		return;
 	}
@@ -509,7 +565,7 @@ void LODFadeManager::PollLandLOD() {
 		}
 
 		// Unconditional, so an unchanged slot still gets its remembered parent refreshed this poll.
-		AssignSlot(PrevLandLOD[i], Node);
+		AssignSlot(PrevLandLOD[i], Node, false);
 	}
 
 }
@@ -532,7 +588,7 @@ void LODFadeManager::PollCellGrid() {
 		PrevCell.assign(Slots, Empty);
 		for (UInt32 i = 0; i < Slots; i++) {
 			GridCellArray::GridEntry* Entry = &Grid->grid[i];
-			AssignSlot(PrevCell[i], Entry->info ? (NiAVObject*)Entry->info->niNode : NULL);
+			AssignSlot(PrevCell[i], Entry->info ? (NiAVObject*)Entry->info->niNode : NULL, true);
 		}
 		return;
 	}
@@ -551,7 +607,7 @@ void LODFadeManager::PollCellGrid() {
 			Logger::Log("[LODFade] cell discontinuity: %d of %d slots changed, suppressed", Changed, Slots);
 		for (UInt32 i = 0; i < Slots; i++) {
 			GridCellArray::GridEntry* Entry = &Grid->grid[i];
-			AssignSlot(PrevCell[i], Entry->info ? (NiAVObject*)Entry->info->niNode : NULL);
+			AssignSlot(PrevCell[i], Entry->info ? (NiAVObject*)Entry->info->niNode : NULL, true);
 		}
 		return;
 	}
@@ -583,7 +639,7 @@ void LODFadeManager::PollCellGrid() {
 		}
 
 		// Unconditional, so an unchanged slot still gets its remembered parent refreshed this poll.
-		AssignSlot(PrevCell[i], Node);
+		AssignSlot(PrevCell[i], Node, true);
 	}
 
 }
@@ -648,6 +704,14 @@ void LODFadeManager::Update() {
 		bool HardTimeout = Elapsed >= FadeTime * 2.0f;
 		bool Complete = Elapsed >= FadeTime;
 		if (HardTimeout || Complete) Retire(i);
+	}
+
+	// Holders re-track their parents every frame, not just at pin time. This fork's LOD roots are
+	// anchor- and camera-relative, so a parent that moves during a one-second fade would leave the
+	// holder -- and therefore anything the engine recomputes through it -- on a stale snapshot.
+	// RefreshHolder returns immediately for an orphaned holder, which is the only unsafe case.
+	for (std::unordered_map<NiNode*, NiNode*>::iterator it = Holders.begin(); it != Holders.end(); ++it) {
+		RefreshHolder(it->second);
 	}
 
 	PollDistantRef();
