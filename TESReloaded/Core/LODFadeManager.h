@@ -82,7 +82,9 @@ private:
 	bool												FadeSetDirty;
 
 	// Per-frame scratch for the distant membership diff. Owns NO references -- ownership moves into
-	// PrevDistant via ResyncSlots. Kept as a member only so its buckets are reused frame to frame.
+	// PrevDistant via ResyncSlots, which SWAPS rather than copies, so on return this holds the previous
+	// frame's stale membership and is rebuilt from scratch next poll. Never pass it to ReleaseSlots.
+	// Kept as a member so the swap recycles both sets' buckets instead of reallocating ~2075 nodes.
 	std::unordered_set<NiAVObject*>						CurDistant;
 
 	// Cached DistantRefLOD node, revalidated against the live child list every poll so a stale pointer
@@ -98,7 +100,7 @@ private:
 	void			AssignSlot(NiAVObject*& Slot, NiAVObject* Node);
 	void			ReleaseSlots(std::vector<NiAVObject*>& Slots);
 	void			ReleaseSlots(std::unordered_set<NiAVObject*>& Slots);
-	void			ResyncSlots(std::unordered_set<NiAVObject*>& Slots, const std::unordered_set<NiAVObject*>& Current);
+	void			ResyncSlots(std::unordered_set<NiAVObject*>& Slots, std::unordered_set<NiAVObject*>& Current);
 
 	void			Retire(UInt32 Index);
 };

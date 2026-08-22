@@ -56,16 +56,23 @@ void LODFadeManager::ReleaseSlots(std::unordered_set<NiAVObject*>& Slots) {
 /// every newly-present node gains a reference and every departed node loses the one the set held.
 /// Releases run last, so a departing node destructed here is one nothing else still holds -- callers
 /// that pin departures must have taken their own reference before calling this.
-void LODFadeManager::ResyncSlots(std::unordered_set<NiAVObject*>& Slots, const std::unordered_set<NiAVObject*>& Current) {
+///
+/// WARNING: Current is SWAPPED, not copied, so it does not survive the call. On return it holds the
+/// PREVIOUS frame's membership -- stale pointers that own nothing and may already be destructed. It
+/// must be cleared or overwritten before its next use, and must never be passed to ReleaseSlots,
+/// which would release references this set no longer owns. The swap is what keeps this O(1): a
+/// copy-assign here was ~2075 node allocations per frame on the render thread. All of the refcount
+/// work above completes before the swap, so the ordering contract is unaffected by it.
+void LODFadeManager::ResyncSlots(std::unordered_set<NiAVObject*>& Slots, std::unordered_set<NiAVObject*>& Current) {
 
-	for (std::unordered_set<NiAVObject*>::const_iterator it = Current.begin(); it != Current.end(); ++it) {
+	for (std::unordered_set<NiAVObject*>::iterator it = Current.begin(); it != Current.end(); ++it) {
 		if (!Slots.count(*it)) InterlockedIncrement(&(*it)->m_uiRefCount);
 	}
 	for (std::unordered_set<NiAVObject*>::iterator it = Slots.begin(); it != Slots.end(); ++it) {
 		NiAVObject* Node = *it;
 		if (!Current.count(Node) && !InterlockedDecrement(&Node->m_uiRefCount)) Node->Destructor(true);
 	}
-	Slots = Current;
+	Slots.swap(Current);
 
 }
 
@@ -202,10 +209,11 @@ NiNode* LODFadeManager::ResolveDistantRef() {
 	// Prove the traversal found the node it assumed before the feature trusts it. Roughly 2075
 	// children is the expected shape; a wildly different count, or no line at all, means the walk is
 	// wrong and must be re-derived rather than silently detecting nothing for another session.
-	if (Found && !DistantRefLogged) {
+	// The latch sits INSIDE the log gate so it means "logged once", not "resolved once": if
+	// LogLODFade is switched on after the first resolve, the line still gets its one chance to print.
+	if (Found && !DistantRefLogged && TheSettingManager->SettingsMain.Develop.LogLODFade) {
 		DistantRefLogged = true;
-		if (TheSettingManager->SettingsMain.Develop.LogLODFade)
-			Logger::Log("[LODFade] DistantRefLOD resolved name=%s children=%d", Found->m_pcName, Found->m_children.numObjs);
+		Logger::Log("[LODFade] DistantRefLOD resolved name=%s children=%d", Found->m_pcName, Found->m_children.numObjs);
 	}
 
 	return Found;
@@ -228,6 +236,9 @@ void LODFadeManager::PollDistantRef() {
 	CurDistant.clear();
 	UInt32 Slots = Node->m_children.end;
 	if (Slots > Node->m_children.capacity) Slots = Node->m_children.capacity;
+	// Sized once on first population; thereafter ResyncSlots swaps the two sets, so both keep their
+	// buckets and the per-frame rebuild never rehashes.
+	if (Slots && CurDistant.bucket_count() < Slots) CurDistant.reserve(Slots);
 	for (UInt32 i = 0; i < Slots; i++) {
 		NiAVObject* Child = Node->m_children.data[i];
 		if (Child) CurDistant.insert(Child);
