@@ -19,64 +19,72 @@ LODFadeManager::LODFadeManager() {
 /// Overwrites one shadow-copy slot, moving reference ownership with it: the incoming node gains a
 /// reference and the outgoing node loses the one the slot held. Every write to a Prev* slot goes
 /// through here so the ownership invariant declared in the header holds on every path.
-void LODFadeManager::AssignSlot(NiAVObject*& Slot, NiAVObject* Node) {
+///
+/// The remembered parent is refreshed unconditionally, including when the node itself is unchanged.
+/// That refresh is what makes the pointer safe to dereference at departure time: it is never more
+/// than one poll old, and a container that dies inside that window takes all of its children with it,
+/// which every poller sees as a discontinuity and suppresses before any pin is attempted.
+void LODFadeManager::AssignSlot(SlotEntry& Entry, NiAVObject* Node) {
 
-	if (Slot == Node) return;
-	if (Node) InterlockedIncrement(&Node->m_uiRefCount);
-	if (Slot && !InterlockedDecrement(&Slot->m_uiRefCount)) Slot->Destructor(true);
-	Slot = Node;
+	if (Entry.Node != Node) {
+		if (Node) InterlockedIncrement(&Node->m_uiRefCount);
+		if (Entry.Node && !InterlockedDecrement(&Entry.Node->m_uiRefCount)) Entry.Node->Destructor(true);
+		Entry.Node = Node;
+	}
+	Entry.Parent = Node ? Node->m_parent : NULL;
 
 }
 
 /// Releases every reference a shadow-copy vector owns and empties it. Used by the resync paths and
 /// the main-menu guard, both of which abandon the whole vector at once.
-void LODFadeManager::ReleaseSlots(std::vector<NiAVObject*>& Slots) {
+void LODFadeManager::ReleaseSlots(std::vector<SlotEntry>& Slots) {
 
 	for (UInt32 i = 0; i < Slots.size(); i++) {
-		NiAVObject* Node = Slots[i];
+		NiAVObject* Node = Slots[i].Node;
 		if (Node && !InterlockedDecrement(&Node->m_uiRefCount)) Node->Destructor(true);
 	}
 	Slots.clear();
 
 }
 
-/// Releases every reference a shadow-copy set owns and empties it. Same contract as the vector
-/// overload; used by the main-menu guard, which abandons the whole set at once.
-void LODFadeManager::ReleaseSlots(std::unordered_set<NiAVObject*>& Slots) {
+/// Releases every reference the distant shadow copy owns and empties it. Same contract as the vector
+/// overload; used by the main-menu guard, which abandons the whole map at once.
+void LODFadeManager::ReleaseSlots(std::unordered_map<NiAVObject*, NiNode*>& Slots) {
 
-	for (std::unordered_set<NiAVObject*>::iterator it = Slots.begin(); it != Slots.end(); ++it) {
-		NiAVObject* Node = *it;
+	for (std::unordered_map<NiAVObject*, NiNode*>::iterator it = Slots.begin(); it != Slots.end(); ++it) {
+		NiAVObject* Node = it->first;
 		if (Node && !InterlockedDecrement(&Node->m_uiRefCount)) Node->Destructor(true);
 	}
 	Slots.clear();
 
 }
 
-/// Moves the shadow set onto the current frame's membership, carrying reference ownership with it:
-/// every newly-present node gains a reference and every departed node loses the one the set held.
+/// Moves the shadow map onto the current frame's membership, carrying reference ownership with it:
+/// every newly-present node gains a reference and every departed node loses the one the map held.
 /// Releases run last, so a departing node destructed here is one nothing else still holds -- callers
-/// that pin departures must have taken their own reference before calling this.
+/// that pin departures must have taken their own reference before calling this. The swap also carries
+/// the freshly-read parents across, which is how the distant tier gets its per-poll parent refresh.
 ///
 /// WARNING: Current is SWAPPED, not copied, so it does not survive the call. On return it holds the
 /// PREVIOUS frame's membership -- stale pointers that own nothing and may already be destructed. It
 /// must be cleared or overwritten before its next use, and must never be passed to ReleaseSlots,
-/// which would release references this set no longer owns. The swap is what keeps this O(1): a
+/// which would release references this map no longer owns. The swap is what keeps this O(1): a
 /// copy-assign here was ~2075 node allocations per frame on the render thread. All of the refcount
 /// work above completes before the swap, so the ordering contract is unaffected by it.
-void LODFadeManager::ResyncSlots(std::unordered_set<NiAVObject*>& Slots, std::unordered_set<NiAVObject*>& Current) {
+void LODFadeManager::ResyncSlots(std::unordered_map<NiAVObject*, NiNode*>& Slots, std::unordered_map<NiAVObject*, NiNode*>& Current) {
 
-	for (std::unordered_set<NiAVObject*>::iterator it = Current.begin(); it != Current.end(); ++it) {
-		if (!Slots.count(*it)) InterlockedIncrement(&(*it)->m_uiRefCount);
+	for (std::unordered_map<NiAVObject*, NiNode*>::iterator it = Current.begin(); it != Current.end(); ++it) {
+		if (!Slots.count(it->first)) InterlockedIncrement(&it->first->m_uiRefCount);
 	}
-	for (std::unordered_set<NiAVObject*>::iterator it = Slots.begin(); it != Slots.end(); ++it) {
-		NiAVObject* Node = *it;
+	for (std::unordered_map<NiAVObject*, NiNode*>::iterator it = Slots.begin(); it != Slots.end(); ++it) {
+		NiAVObject* Node = it->first;
 		if (!Current.count(Node) && !InterlockedDecrement(&Node->m_uiRefCount)) Node->Destructor(true);
 	}
 	Slots.swap(Current);
 
 }
 
-LODFadeManager::FadeRecord* LODFadeManager::AddFade(NiAVObject* Root) {
+LODFadeManager::FadeRecord* LODFadeManager::AddFade(NiAVObject* Root, const char* Tier) {
 
 	if (!Root) return NULL;
 	if (Fades.size() >= TheSettingManager->SettingsMain.LODFade.MaxFades) return NULL;
@@ -87,12 +95,14 @@ LODFadeManager::FadeRecord* LODFadeManager::AddFade(NiAVObject* Root) {
 	Record.Pinned = false;
 	Record.Invert = false;
 	Record.WasCulled = false;
+	Record.Holder = NULL;
+	Record.Tier = Tier;
 	Fades.push_back(Record);
 	LiveCount = Fades.size();
 	FadeSetDirty = true;
 
 	if (TheSettingManager->SettingsMain.Develop.LogLODFade)
-		Logger::Log("[LODFade] start root=%08X live=%d", (UInt32)Root, LiveCount);
+		Logger::Log("[LODFade] %s start root=%08X live=%d", Tier, (UInt32)Root, LiveCount);
 
 	return &Fades.back();
 
@@ -115,7 +125,7 @@ float LODFadeManager::GetAlpha(FadeRecord* Record) {
 void LODFadeManager::Retire(UInt32 Index) {
 
 	if (TheSettingManager->SettingsMain.Develop.LogLODFade)
-		Logger::Log("[LODFade] retire root=%08X pinned=%d", (UInt32)Fades[Index].Root, Fades[Index].Pinned ? 1 : 0);
+		Logger::Log("[LODFade] %s retire root=%08X pinned=%d", Fades[Index].Tier, (UInt32)Fades[Index].Root, Fades[Index].Pinned ? 1 : 0);
 
 	if (Fades[Index].Pinned) Unpin(&Fades[Index]);
 
@@ -124,22 +134,130 @@ void LODFadeManager::Retire(UInt32 Index) {
 
 }
 
-/// Keeps a departing node alive and drawn for the fade duration. Only the un-cull path is
-/// implemented: if the node is already detached from the scene graph, this logs and declines
-/// rather than re-attaching it, since re-attachment touches live scene-graph lifetimes and is a
-/// separate, conditional task. The log line is the measurement that decides whether that task is
-/// ever needed. Callers must still hold the shadow-copy slot's reference when calling this, so the
-/// node is guaranteed live and the m_parent test below is a real attached-vs-detached test rather
-/// than a read of freed memory.
-bool LODFadeManager::Pin(FadeRecord* Record) {
+/// Points a holder at its parent's world transform and gives it a bound the culler cannot reject.
+/// NiNode::New leaves a zero world bound, and a zero-radius sphere fails the frustum test, which would
+/// cull the holder and everything pinned under it -- an invisible fade-out, the exact failure this
+/// path exists to fix. Unioning the children's bounds would be tighter, but a holder is transient and
+/// holds a handful of nodes at most, and every child still carries its own correct bound and is culled
+/// on that, so the only cost of the loose bound is one extra node visit per frame.
+void LODFadeManager::RefreshHolder(NiNode* Holder) {
+
+	NiNode* Parent = Holder->m_parent;
+	if (!Parent) return;
+
+	// Identity local transform, set explicitly rather than trusting what NiNode::New leaves behind: a
+	// zero scale here would collapse every pinned node to a point.
+	NiTransform* Local = &Holder->m_localTransform;
+	for (UInt32 r = 0; r < 3; r++) {
+		for (UInt32 c = 0; c < 3; c++) Local->rot.data[r][c] = (r == c) ? 1.0f : 0.0f;
+	}
+	Local->pos.x = 0.0f;
+	Local->pos.y = 0.0f;
+	Local->pos.z = 0.0f;
+	Local->scale = 1.0f;
+
+	// With an identity local transform the holder's world transform is exactly its parent's, so a
+	// pinned child's already-computed world transform stays correct whether or not the engine ever
+	// runs an update pass over this subtree.
+	Holder->m_worldTransform = Parent->m_worldTransform;
+	Holder->m_kWorldBound.Center = Holder->m_worldTransform.pos;
+	Holder->m_kWorldBound.Radius = 1.0e9f;
+	Holder->m_combinedBounds = Holder->m_kWorldBound;
+
+}
+
+/// Returns the plugin-owned holder hanging under Parent, creating and attaching it on first use.
+/// Holders are keyed by parent because render context follows position in the scene graph; see the
+/// header. Returns NULL only if Parent is NULL or the allocation fails, both of which decline the pin.
+NiNode* LODFadeManager::GetHolder(NiNode* Parent) {
+
+	if (!Parent) return NULL;
+
+	std::unordered_map<NiNode*, NiNode*>::iterator Found = Holders.find(Parent);
+	if (Found != Holders.end()) {
+		// Only the holder is dereferenced here, and we own a reference to it, so this test is safe even
+		// when the key has since been freed and its address reused. A holder the engine has detached
+		// means its parent was torn down: drop the entry and build a fresh one rather than hanging more
+		// pins off an orphan that will never be drawn. The reference is deliberately NOT released --
+		// a live pin may still name that holder, and destructing it under one would fault in Unpin.
+		if (Found->second->m_parent == Parent) {
+			RefreshHolder(Found->second);
+			return Found->second;
+		}
+		Holders.erase(Found);
+	}
+
+	NiNode* Holder = (NiNode*)MemoryAlloc(sizeof(NiNode));
+	if (!Holder) return NULL;
+	Holder->New(8);
+	Holder->SetName("ORLODFadeHolder");
+	InterlockedIncrement(&Holder->m_uiRefCount);
+	Parent->AddObject(Holder, 1);
+	RefreshHolder(Holder);
+	Holders[Parent] = Holder;
+	HolderNodes.insert(Holder);
+
+	if (TheSettingManager->SettingsMain.Develop.LogLODFade)
+		Logger::Log("[LODFade] holder created under parent=%08X name=%s", (UInt32)Parent, Parent->m_pcName ? Parent->m_pcName : "(unnamed)");
+
+	return Holder;
+
+}
+
+/// Non-mutating viability test, run BEFORE AddFade so a departure that cannot be held never gets a
+/// record. Testing after the fact created and destroyed a record in the same call, churning
+/// FadeSetDirty and LiveCount and emitting a start/decline/retire triple per departure.
+bool LODFadeManager::CanPin(NiAVObject* Node, NiNode* Parent, const char* Tier) {
+
+	if (!Node) return false;
+	if (Node->m_parent) return true;
+
+	if (!Parent) {
+		if (TheSettingManager->SettingsMain.Develop.LogLODFade)
+			Logger::Log("[LODFade] %s pin declined, no parent remembered root=%08X", Tier, (UInt32)Node);
+		return false;
+	}
+
+	return true;
+
+}
+
+/// Keeps a departing node alive and drawn for the fade duration. Callers must still hold the shadow
+/// copy's reference when calling this, so the node is guaranteed live and the m_parent test below is a
+/// real attached-vs-detached test rather than a read of freed memory.
+///
+/// Measured in game before the re-attach path existed: 43 declines and 0 successful pins. A departure
+/// is only detected one poll AFTER the engine removed the child, and removal NULLs m_parent, so the
+/// un-cull path alone can never fire for a departure and the fade-out half never ran. Parent is the
+/// node the shadow copy last saw this one attached to, which is the only way to recover where it
+/// belonged; see AssignSlot for why that pointer is safe to dereference here.
+bool LODFadeManager::Pin(FadeRecord* Record, NiNode* Parent) {
 
 	NiAVObject* Node = Record->Root;
 	if (!Node) return false;
 
 	if (!Node->m_parent) {
+		// Already detached: re-attach under a holder hanging off the original parent, so the node
+		// renders in exactly the context it always did -- a distant LOD node under DistantRefLOD binds
+		// the DISTLOD shaders, a cell node under the loaded-object root draws as an ordinary object.
+		NiNode* Holder = GetHolder(Parent);
+		if (!Holder) {
+			if (TheSettingManager->SettingsMain.Develop.LogLODFade)
+				Logger::Log("[LODFade] %s pin declined, holder unavailable root=%08X", Record->Tier, (UInt32)Node);
+			return false;
+		}
+		InterlockedIncrement(&Node->m_uiRefCount);
+		Record->WasCulled = (Node->m_flags & NiAVObject::kFlag_AppCulled) != 0;
+		Node->m_flags &= (UInt16)~NiAVObject::kFlag_AppCulled;
+		Holder->AddObject(Node, 1);
+		Record->Holder = Holder;
+		Record->Pinned = true;
+		RefreshHolder(Holder);
+
 		if (TheSettingManager->SettingsMain.Develop.LogLODFade)
-			Logger::Log("[LODFade] pin declined, node already detached root=%08X", (UInt32)Node);
-		return false;
+			Logger::Log("[LODFade] %s pin root=%08X mode=reattach", Record->Tier, (UInt32)Node);
+
+		return true;
 	}
 
 	// Still in the graph: un-culling is all that is needed, and it touches no lifetime but the
@@ -151,7 +269,7 @@ bool LODFadeManager::Pin(FadeRecord* Record) {
 	Record->Pinned = true;
 
 	if (TheSettingManager->SettingsMain.Develop.LogLODFade)
-		Logger::Log("[LODFade] pin root=%08X", (UInt32)Node);
+		Logger::Log("[LODFade] %s pin root=%08X mode=uncull", Record->Tier, (UInt32)Node);
 
 	return true;
 
@@ -160,6 +278,9 @@ bool LODFadeManager::Pin(FadeRecord* Record) {
 /// Releases a pin taken by Pin. Restores the cull flag to the exact state Pin recorded before
 /// dropping the reference -- a node the engine had never culled must not be left un-culled forever,
 /// and a node the engine had already culled must not be forced visible by this override.
+///
+/// Order is load-bearing throughout: the decrement can hit zero and destruct the node, so every read
+/// and every write to it -- the flag restore and the detach alike -- has to happen first.
 void LODFadeManager::Unpin(FadeRecord* Record) {
 
 	NiAVObject* Node = Record->Root;
@@ -167,10 +288,20 @@ void LODFadeManager::Unpin(FadeRecord* Record) {
 
 	Record->Pinned = false;
 	if (Record->WasCulled) Node->m_flags |= (UInt16)NiAVObject::kFlag_AppCulled;
+
+	// Detach before the decrement below. RemoveObject releases the holder's reference, leaving only
+	// the one Pin took, so the two decrements together undo exactly the two increments the re-attach
+	// path made. The aliased out-parameter is this codebase's established RemoveObject convention.
+	if (Record->Holder) {
+		NiAVObject* Removed = Node;
+		Record->Holder->RemoveObject(&Removed, Node);
+		Record->Holder = NULL;
+	}
+
 	if (!InterlockedDecrement(&Node->m_uiRefCount)) Node->Destructor(true);
 
 	if (TheSettingManager->SettingsMain.Develop.LogLODFade)
-		Logger::Log("[LODFade] unpin root=%08X", (UInt32)Node);
+		Logger::Log("[LODFade] %s unpin root=%08X", Record->Tier, (UInt32)Node);
 
 }
 
@@ -233,25 +364,30 @@ void LODFadeManager::PollDistantRef() {
 	// Scanned to `end`, not `numObjs`: removing a distant cell NULLs its slot and decrements numObjs
 	// without compacting, so numObjs is a count of live children and not a slot bound. Capacity is the
 	// hard clamp. NULL slots are simply skipped -- membership, not position, is what the diff keys on.
+	// Our own holders are skipped too, or attaching one would register as an arrival, start a fade for
+	// it, and pin the holder under a second holder.
 	CurDistant.clear();
 	UInt32 Slots = Node->m_children.end;
 	if (Slots > Node->m_children.capacity) Slots = Node->m_children.capacity;
-	// Sized once on first population; thereafter ResyncSlots swaps the two sets, so both keep their
+	// Sized once on first population; thereafter ResyncSlots swaps the two maps, so both keep their
 	// buckets and the per-frame rebuild never rehashes.
 	if (Slots && CurDistant.bucket_count() < Slots) CurDistant.reserve(Slots);
 	for (UInt32 i = 0; i < Slots; i++) {
 		NiAVObject* Child = Node->m_children.data[i];
-		if (Child) CurDistant.insert(Child);
+		if (!Child || IsHolder(Child)) continue;
+		// The parent is captured here, while the child is still attached. By the time a departure is
+		// detected the engine has already NULLed m_parent, so this is the only chance to record it.
+		CurDistant[Child] = Child->m_parent;
 	}
 	UInt32 Count = (UInt32)CurDistant.size();
 
 	// Count first, so a teleport is suppressed before any fade is started rather than after.
 	UInt32 Changed = 0;
-	for (std::unordered_set<NiAVObject*>::iterator it = CurDistant.begin(); it != CurDistant.end(); ++it) {
-		if (!PrevDistant.count(*it)) Changed++;
+	for (std::unordered_map<NiAVObject*, NiNode*>::iterator it = CurDistant.begin(); it != CurDistant.end(); ++it) {
+		if (!PrevDistant.count(it->first)) Changed++;
 	}
-	for (std::unordered_set<NiAVObject*>::iterator it = PrevDistant.begin(); it != PrevDistant.end(); ++it) {
-		if (!CurDistant.count(*it)) Changed++;
+	for (std::unordered_map<NiAVObject*, NiNode*>::iterator it = PrevDistant.begin(); it != PrevDistant.end(); ++it) {
+		if (!CurDistant.count(it->first)) Changed++;
 	}
 
 	// An empty previous set is the first population: resync silently rather than dissolving in the
@@ -268,21 +404,23 @@ void LODFadeManager::PollDistantRef() {
 	// Departures run first and are fully consumed before any arrival: AddFade returns a pointer into
 	// Fades, which the next push_back would reallocate out from under Out.
 	if (TheSettingManager->SettingsMain.LODFade.PinDeparting) {
-		for (std::unordered_set<NiAVObject*>::iterator it = PrevDistant.begin(); it != PrevDistant.end(); ++it) {
-			if (CurDistant.count(*it)) continue;
+		for (std::unordered_map<NiAVObject*, NiNode*>::iterator it = PrevDistant.begin(); it != PrevDistant.end(); ++it) {
+			if (CurDistant.count(it->first)) continue;
 			// Departing node fades out via the inverted rising alpha, not a separate declining-alpha
 			// direction. See FadeRecord::Invert. Pin takes its own reference before ResyncSlots below
-			// drops the one that kept this pointer valid.
-			FadeRecord* Out = AddFade(*it);
+			// drops the one that kept this pointer valid. Viability is tested before the record is
+			// created so an unpinnable departure never churns the fade table.
+			if (!CanPin(it->first, it->second, "distant")) continue;
+			FadeRecord* Out = AddFade(it->first, "distant");
 			if (Out) {
 				Out->Invert = true;
-				if (!Pin(Out)) Retire((UInt32)(Fades.size() - 1));
+				if (!Pin(Out, it->second)) Retire((UInt32)(Fades.size() - 1));
 			}
 		}
 	}
 
-	for (std::unordered_set<NiAVObject*>::iterator it = CurDistant.begin(); it != CurDistant.end(); ++it) {
-		if (!PrevDistant.count(*it) && !RootIndex.count(*it)) AddFade(*it);
+	for (std::unordered_map<NiAVObject*, NiNode*>::iterator it = CurDistant.begin(); it != CurDistant.end(); ++it) {
+		if (!PrevDistant.count(it->first) && !RootIndex.count(it->first)) AddFade(it->first, "distant");
 	}
 
 	ResyncSlots(PrevDistant, CurDistant);
@@ -311,11 +449,19 @@ void LODFadeManager::PollLandLOD() {
 
 	// Also the first-population path (PrevLandLOD empty), which must resync silently rather than
 	// fade in every quadrant at once. With the `end` bound this now fires only when the array itself
-	// grows or its trailing slots are freed, not merely because a quadrant went NULL.
+	// grows or its trailing slots are freed, not merely because a quadrant went NULL. Attaching a
+	// holder here grows the array once and takes this path, which costs one missed poll and nothing
+	// else; thereafter the holder reads as a permanently empty slot.
 	if (PrevLandLOD.size() != Slots) {
 		ReleaseSlots(PrevLandLOD);
-		PrevLandLOD.assign(Slots, NULL);
-		for (UInt32 i = 0; i < Slots; i++) AssignSlot(PrevLandLOD[i], LandLOD->m_children.data[i]);
+		SlotEntry Empty;
+		Empty.Node = NULL;
+		Empty.Parent = NULL;
+		PrevLandLOD.assign(Slots, Empty);
+		for (UInt32 i = 0; i < Slots; i++) {
+			NiAVObject* Child = LandLOD->m_children.data[i];
+			AssignSlot(PrevLandLOD[i], IsHolder(Child) ? NULL : Child);
+		}
 		return;
 	}
 
@@ -323,7 +469,8 @@ void LODFadeManager::PollLandLOD() {
 	UInt32 Changed = 0;
 	for (UInt32 i = 0; i < Slots; i++) {
 		NiAVObject* Node = LandLOD->m_children.data[i];
-		if (Node != PrevLandLOD[i]) Changed++;
+		if (IsHolder(Node)) Node = NULL;
+		if (Node != PrevLandLOD[i].Node) Changed++;
 	}
 
 	// Half the SLOTS, not half the live children: the diff is positional, so the denominator has to be
@@ -331,27 +478,37 @@ void LODFadeManager::PollLandLOD() {
 	if (Changed > (Slots / 2)) {
 		if (TheSettingManager->SettingsMain.Develop.LogLODFade)
 			Logger::Log("[LODFade] landlod discontinuity: %d of %d slots changed, suppressed", Changed, Slots);
-		for (UInt32 i = 0; i < Slots; i++) AssignSlot(PrevLandLOD[i], LandLOD->m_children.data[i]);
+		for (UInt32 i = 0; i < Slots; i++) {
+			NiAVObject* Child = LandLOD->m_children.data[i];
+			AssignSlot(PrevLandLOD[i], IsHolder(Child) ? NULL : Child);
+		}
 		return;
 	}
 
 	for (UInt32 i = 0; i < Slots; i++) {
 		NiAVObject* Node = LandLOD->m_children.data[i];
-		if (Node == PrevLandLOD[i]) continue;
+		if (IsHolder(Node)) Node = NULL;
 
-		// The out-fade is independent of the arrival, not gated on it: a quadrant replaced by NULL, or
-		// replaced while the incoming node is already mid-fade, still has to fade out rather than pop.
-		if (PrevLandLOD[i] && TheSettingManager->SettingsMain.LODFade.PinDeparting) {
-			// The old quadrant runs on the new one's rising alpha with Invert set (Ruling F14), so the
-			// two together cover exactly 100% throughout. Same StartTime as the partner (both AddFade
-			// calls land in this Update()), so no cross-record link is needed.
-			FadeRecord* Out = AddFade(PrevLandLOD[i]);
-			if (Out) {
-				Out->Invert = true;
-				if (!Pin(Out)) Retire((UInt32)(Fades.size() - 1));
+		if (Node != PrevLandLOD[i].Node) {
+			// The out-fade is independent of the arrival, not gated on it: a quadrant replaced by NULL, or
+			// replaced while the incoming node is already mid-fade, still has to fade out rather than pop.
+			if (PrevLandLOD[i].Node && TheSettingManager->SettingsMain.LODFade.PinDeparting) {
+				// The old quadrant runs on the new one's rising alpha with Invert set (Ruling F14), so the
+				// two together cover exactly 100% throughout. Same StartTime as the partner (both AddFade
+				// calls land in this Update()), so no cross-record link is needed.
+				if (CanPin(PrevLandLOD[i].Node, PrevLandLOD[i].Parent, "landlod")) {
+					NiNode* GoneParent = PrevLandLOD[i].Parent;
+					FadeRecord* Out = AddFade(PrevLandLOD[i].Node, "landlod");
+					if (Out) {
+						Out->Invert = true;
+						if (!Pin(Out, GoneParent)) Retire((UInt32)(Fades.size() - 1));
+					}
+				}
 			}
+			if (Node && !RootIndex.count(Node)) AddFade(Node, "landlod");
 		}
-		if (Node && !RootIndex.count(Node)) AddFade(Node);
+
+		// Unconditional, so an unchanged slot still gets its remembered parent refreshed this poll.
 		AssignSlot(PrevLandLOD[i], Node);
 	}
 
@@ -369,7 +526,10 @@ void LODFadeManager::PollCellGrid() {
 	UInt32 Slots = Dim * Dim;
 	if (PrevCell.size() != Slots) {
 		ReleaseSlots(PrevCell);
-		PrevCell.assign(Slots, NULL);
+		SlotEntry Empty;
+		Empty.Node = NULL;
+		Empty.Parent = NULL;
+		PrevCell.assign(Slots, Empty);
 		for (UInt32 i = 0; i < Slots; i++) {
 			GridCellArray::GridEntry* Entry = &Grid->grid[i];
 			AssignSlot(PrevCell[i], Entry->info ? (NiAVObject*)Entry->info->niNode : NULL);
@@ -383,7 +543,7 @@ void LODFadeManager::PollCellGrid() {
 	for (UInt32 i = 0; i < Slots; i++) {
 		GridCellArray::GridEntry* Entry = &Grid->grid[i];
 		NiAVObject* Node = Entry->info ? (NiAVObject*)Entry->info->niNode : NULL;
-		if (Node != PrevCell[i]) Changed++;
+		if (Node != PrevCell[i].Node) Changed++;
 	}
 
 	if (Changed > Dim * 2) {
@@ -399,24 +559,30 @@ void LODFadeManager::PollCellGrid() {
 	for (UInt32 i = 0; i < Slots; i++) {
 		GridCellArray::GridEntry* Entry = &Grid->grid[i];
 		NiAVObject* Node = Entry->info ? (NiAVObject*)Entry->info->niNode : NULL;
-		if (Node == PrevCell[i]) continue;
 
-		// Departure and arrival are independent tests, not if/else, so a slot that swaps one cell
-		// node straight for another fades both halves instead of popping the outgoing one.
-		if (PrevCell[i] && TheSettingManager->SettingsMain.LODFade.PinDeparting) {
-			// Cell lost: hold the departing full models while the LOD fades back in, via the
-			// inverted rising alpha rather than a declining-alpha fade-out (Ruling F14).
-			FadeRecord* Out = AddFade(PrevCell[i]);
-			if (Out) {
-				Out->Invert = true;
-				if (!Pin(Out)) Retire((UInt32)(Fades.size() - 1));
+		if (Node != PrevCell[i].Node) {
+			// Departure and arrival are independent tests, not if/else, so a slot that swaps one cell
+			// node straight for another fades both halves instead of popping the outgoing one.
+			if (PrevCell[i].Node && TheSettingManager->SettingsMain.LODFade.PinDeparting) {
+				// Cell lost: hold the departing full models while the LOD fades back in, via the
+				// inverted rising alpha rather than a declining-alpha fade-out (Ruling F14).
+				if (CanPin(PrevCell[i].Node, PrevCell[i].Parent, "cell")) {
+					NiNode* GoneParent = PrevCell[i].Parent;
+					FadeRecord* Out = AddFade(PrevCell[i].Node, "cell");
+					if (Out) {
+						Out->Invert = true;
+						if (!Pin(Out, GoneParent)) Retire((UInt32)(Fades.size() - 1));
+					}
+				}
+			}
+			if (Node && !RootIndex.count(Node)) {
+				// Cell gained: full models fade in. The paired LOD node is pinned by the distant
+				// poller's own slot change in the same frame, so no cross-poller lookup is needed.
+				AddFade(Node, "cell");
 			}
 		}
-		if (Node && !RootIndex.count(Node)) {
-			// Cell gained: full models fade in. The paired LOD node is pinned by the distant
-			// poller's own slot change in the same frame, so no cross-poller lookup is needed.
-			AddFade(Node);
-		}
+
+		// Unconditional, so an unchanged slot still gets its remembered parent refreshed this poll.
 		AssignSlot(PrevCell[i], Node);
 	}
 
@@ -456,6 +622,10 @@ void LODFadeManager::Update() {
 		// Tes is gone, so the cached DistantRefLOD pointer is meaningless and must be re-resolved.
 		CurDistant.clear();
 		DistantRef = NULL;
+		// Every holder's parent went with the scene graph, so the parent-keyed lookup is meaningless.
+		// HolderNodes and its references are deliberately kept: they are what stops those pointers
+		// dangling, and a holder is never freed while a pin might still name it.
+		Holders.clear();
 		FadeSetDirty = false;
 		LiveCount = 0;
 		FadeResetPending = false;

@@ -85,10 +85,21 @@ per-geometry shader constant. Three parts:
 **Poller.** Runs once per frame from the existing per-frame entry point. Diffs the `DistantRefLOD`
 node's children, `Tes->gridCellArray` and `Tes->LODRoot->m_children` against shadow copies, and
 emits transitions. The two grid-backed tiers diff **by slot index**; the distant tier diffs **by set
-membership** (see below), which is why its shadow copy is an `unordered_set` rather than a vector.
+membership** (see below), which is why its shadow copy is keyed by node rather than by index.
+
+Every shadow-copy entry carries two things: the remembered node and **the `NiNode*` it was attached
+to when the poller last saw it**. The distant tier holds this as an `unordered_map<NiAVObject*,
+NiNode*>` and the two positional tiers as a vector of `{Node, Parent}` pairs. The parent is refreshed
+on every poll, including for slots whose node has not changed, and carries **no reference** — it is
+an engine-owned container that outlives its children, and refcount traffic that high in the graph
+would be risk for nothing. Recording it is not optional bookkeeping: a departure is only ever
+detected one poll *after* the engine detached the child, and detaching NULLs `m_parent`, so this is
+the only surviving record of where the node belonged. See "Pinning".
 
 **Fade table.** A fixed-capacity array of `FadeRecord`. Each record holds a root `NiAVObject*`, a
-start time, a pin flag, an invert flag and a flag recording the cull state a pin found. The alpha
+start time, a pin flag, an invert flag, a flag recording the cull state a pin found, the holder node
+a re-attached pin was hung under (`NULL` for an un-cull pin), and a tier string literal used only to
+attribute log lines to the poller that emitted them. The alpha
 always rises from 0 to 1 over the fade duration; there is no separate fade-out direction and no
 partner-record link. The invert flag flips which side of the alpha the shader's per-pixel threshold
 test falls on, which is what lets a departing node's rising-alpha fade-out and an arriving node's
@@ -190,21 +201,83 @@ resolve like any other geometry.
 Pinning is the design's principal risk surface, and the only place it touches engine-owned
 lifetimes.
 
+**The measurement that settled it.** The first implementation shipped only the un-cull path below
+and declined anything already detached, with the decline log line as the diagnostic. An in-game
+capture returned **43 declines and 0 successful pins — every single departure declined.** The cause
+is structural, not tunable: a departure is only detected one poll *after* the engine removed the
+child, and removal NULLs `m_parent`, so the un-cull path can never fire for a departure. The
+fade-out half of the feature had never executed once, which also made the cell-load handoff a
+visible regression — the LOD popped out instantly while the full model dithered in over a second,
+leaving the object semi-transparent for that second where vanilla had it solid throughout. That
+measurement is what justified building the re-attach path.
+
 At poll time, when a node departs:
 
 - If it still has an `m_parent`, `AddRef` it, record the cull flag's prior state, and clear
   `kFlag_AppCulled` (`GameNi.h:519`) so it keeps rendering while nothing else in the engine is
   tracking it. Cheap and safe -- no lifetime is touched beyond the refcount. On release, the flag is
   restored to the recorded state rather than unconditionally cleared, since a node the engine had
-  already culled must not be forced visible by the pin's release.
-- If it has already been detached, the pin is declined and logged rather than attempted. Re-attaching
-  a genuinely detached node means creating or reusing a plugin-owned holder node and manipulating the
-  live scene graph, which is materially riskier than the un-cull path above, and is a separate,
-  conditional task gated on measuring in game how often this decline path is actually hit.
+  already culled must not be forced visible by the pin's release. Logged as `mode=uncull`. In
+  practice this path is nearly dead for departures, per the measurement above; it remains as the
+  correct answer for the case where the engine does cull in place.
+- If it has already been detached -- the normal case -- it is `AddRef`ed, un-culled and **re-attached
+  under a plugin-owned holder node hanging off the parent it was last observed under**. Logged as
+  `mode=reattach`.
 
-Only the un-cull path above is implemented. Which of the two the engine actually does -- cull in
-place, or detach outright -- is unknown until measured in game; the decline log line is that
-measurement.
+**Holders are keyed by original parent, not global.** A single holder under `WorldSceneGraph` was the
+obvious construction and is wrong: render context follows position in the scene graph. A distant LOD
+node renders through the `DISTLOD` shaders because it sits under `DistantRefLOD`; a loaded-cell node
+renders as an ordinary object because it sits under the loaded-object root. Hanging both off one
+global holder would make one of the two draw wrongly, or not at all. Keying holders by remembered
+parent puts every departing node back in exactly the context it always had.
+
+Supporting properties of the holder design:
+
+- **Holders are never destroyed.** A pinned node is a child of its holder for the duration of a fade,
+  so freeing a holder a live pin still names would fault in `Unpin`. A holder whose parent has been
+  torn down is dropped from the parent-keyed map but keeps its reference, so its pointer never
+  dangles. The cost is a handful of leaked 0xDC-byte nodes per session; the alternative is a
+  use-after-free.
+- **Holder reuse is validated, not assumed.** Before a cached holder is reused, `Holder->m_parent ==
+  Parent` is checked. That dereferences only the holder, which we own a reference to, so the test is
+  safe even when the map key has since been freed and its address reused by a different node. A
+  mismatch means the parent was torn down: the entry is dropped and a fresh holder built.
+- **Holders are excluded from the pollers' own diffs.** `PollDistantRef` and `PollLandLOD` walk the
+  child arrays of nodes that holders attach to. Without an explicit skip a holder registers as an
+  arrival, gets a fade, and eventually gets pinned under a second holder -- a self-sustaining loop.
+- **The holder is given an identity local transform and a deliberately loose world bound.**
+  `NiNode::New` leaves a zero world bound, and a zero-radius sphere fails the frustum test, so the
+  culler would reject the holder and everything under it -- an invisible fade-out, i.e. the same
+  nothing-happens outcome the decline path already produced. The bound is set to a radius large
+  enough never to be rejected; each pinned child still carries its own correct bound and is culled on
+  that, so the only cost is one extra node visit per frame. The identity local transform is written
+  explicitly rather than trusted from `New`, because a zero scale there would collapse every pinned
+  node to a point. The holder's world transform is copied from its parent, so a pinned child's
+  already-computed world transform stays correct whether or not the engine runs an update pass over
+  that subtree. No engine update pass is called: `UpdateDownwardPass` has no existing call site in
+  this fork, and seeding two fields is the smaller assumption.
+
+**Why a one-poll-old parent pointer is safe to dereference.** The remembered parent is refreshed on
+every poll while the node is attached, so at departure time it is at most one poll old. For it to
+dangle, the container itself must have been destructed inside that one-poll window -- and a container
+dying takes all of its children with it, which every poller sees as mass churn and suppresses through
+the discontinuity guard *before* any pin is attempted. The guard is therefore load-bearing for
+pin safety, not only for visual sanity.
+
+**Unpin ordering.** `Unpin` restores the cull flag, detaches the node from its holder, and only then
+decrements. The decrement can hit zero and destruct the node, so every read and write to it has to
+precede it. `RemoveObject` uses this codebase's established aliased-out-parameter convention
+(`Node->RemoveObject(&Alias, Node)`), which releases the holder's reference; together with the
+`InterlockedDecrement` that undoes exactly the two increments the re-attach path made.
+
+**Viability is tested before a record is created.** `CanPin` runs ahead of `AddFade`. Without it,
+every unpinnable departure produced a `start` / `pin declined` / `retire` triple in one call --
+a record created and destroyed immediately, churning `FadeSetDirty` and `LiveCount` and flooding the
+log. The decline log line is kept; it is still the diagnostic.
+
+**Log lines carry a tier tag.** `start`, `retire`, `pin`, `pin declined` and `unpin` are all prefixed
+with `distant`, `cell` or `landlod`, because the previous capture could not attribute a line to a
+poller and so could not confirm the LOD-to-full handoff at all.
 
 Every pin carries a hard timeout of twice the fade time, after which it is force-released
 regardless of state. The entire pin path sits behind the `PinDeparting` INI toggle, so it can be
@@ -331,7 +404,19 @@ A new `[LODFade]` section in `OblivionReloaded.ini`:
 | `PinDeparting` | 1 | Enables the fade-out half. Off leaves fade-in working and touches no engine lifetimes. |
 | `MaxFades` | 256 | Fade table capacity. |
 
-Plus `Develop.LogLODFade` to dump every emitted transition.
+Plus `Develop.LogLODFade` to dump every emitted transition. Every per-transition line carries a tier
+tag naming the poller that emitted it, so a line can be attributed without guessing:
+
+```
+[LODFade] distant start root=%08X live=%d
+[LODFade] distant pin root=%08X mode=reattach
+[LODFade] cell pin root=%08X mode=uncull
+[LODFade] landlod pin declined, no parent remembered root=%08X
+[LODFade] distant pin declined, holder unavailable root=%08X
+[LODFade] cell unpin root=%08X
+[LODFade] distant retire root=%08X pinned=%d
+[LODFade] holder created under parent=%08X name=%s
+```
 
 ## Failure handling
 
@@ -339,6 +424,9 @@ Every failure mode degrades to a pop, never a crash:
 
 - Fade table full — no fade for the overflowing transition.
 - Parent-walk miss — no fade for that geometry.
+- Departing node detached with no parent remembered — decline before the record is created, logged
+  as `pin declined, no parent remembered`. No fade for that departure; it pops as it did before.
+- Holder allocation fails — decline, logged as `pin declined, holder unavailable`.
 - Pin timeout exceeded — force release.
 - Teleport or cell purge — silent resync, no transitions emitted.
 - `Player` or `Tes` null, as at the main menu — poller does nothing.
@@ -374,8 +462,16 @@ In-game checklist:
 - Watch a LOD-to-full handoff specifically for coplanar z-fighting. For the length of the fade the
   full-detail model and its LOD stand-in occupy the same space and both draw, which is a situation
   vanilla never creates; shimmering on flat faces, roof planes and terrain seams is the symptom.
+- **Acceptance test for the re-attach path.** With `Develop.LogLODFade=1`, ride away from a loaded
+  area and confirm the log now shows `mode=reattach` pins where it previously showed only
+  `pin declined`, each followed by a matching `unpin` on the same root. A `[LODFade] holder created`
+  line should appear once per container (expect roughly one for `DistantRefLOD`, one for the loaded
+  object root, one for `LandLOD`) and then never again. Many `holder created` lines means the reuse
+  validation is failing and holders are being rebuilt every time.
 - Fast-travel and confirm the discontinuity guard suppresses a world-wide dissolve.
-- Set `PinDeparting=0` and confirm the fade-in half still works alone.
+- Set `PinDeparting=0` and confirm the fade-in half still works alone. This is the fallback: if the
+  re-attach path crashes, shipping with `PinDeparting=0` is an acceptable outcome and forcing the
+  re-attach path is not.
 - Toggle TAA off and confirm the dither is noisy but not broken.
 - Walk a cell boundary watching for cells that are still loaded and visible dithering out. The
   slot-keyed pollers (cell and `LandLOD`) treat any slot going from one non-NULL node to a different
@@ -398,6 +494,17 @@ backing data independently of the node — `NiGeometryData::BuffData` is created
 separately, for instance — the pinned draw dereferences freed memory. Mitigations: the hard
 timeout, the `PinDeparting` toggle, and implementing the fade-in half first so the feature is
 useful even if pinning proves unsafe.
+
+**Mutating the live scene graph** is the risk the re-attach path adds on top of that. Attaching a
+holder to an engine-owned container and re-parenting a detached node under it is a write into
+structures the engine owns, so a mistake faults rather than glitches. The mitigations are the ones
+listed under "Pinning": holders are never freed, holder reuse is validated against
+`Holder->m_parent`, the remembered parent is never more than one poll old and a container's death is
+always accompanied by a suppressing discontinuity, and the whole path stays behind `PinDeparting`.
+The residual unknown is a node the engine chooses to *resurrect* -- re-attaching the same pointer
+elsewhere while we still hold it under a holder. Nothing observed suggests the engine reuses a node
+it has dropped, and the window is one fade duration, but it is the case this design does not defend
+against.
 
 **TAA history rejection.** Dithered pixels change every frame by construction. If TAA's history
 rejection treats the changing coverage as disocclusion, the fade may flicker rather than resolve.
