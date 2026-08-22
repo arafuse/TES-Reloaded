@@ -172,6 +172,16 @@ private:
 	// so releasing a holder a live pin still points at would be a use-after-free in Unpin. HolderNodes
 	// keeps every holder ever created, both as the O(1) exclusion test the pollers need and as the
 	// owner of the reference that keeps those pointers from dangling.
+	// Arrivals detected before their subtree existed, held until it does. OWNS one reference on every
+	// key, on the same contract as the shadow copies -- the node may leave the graph while queued, and
+	// the poll that would have released it is the same poll that stops naming it. FirstSeen is the time
+	// it was queued, so an entry that never populates is dropped rather than held forever.
+	struct PendingArrival {
+		float		FirstSeen;
+		const char*	Tier;
+	};
+	std::unordered_map<NiAVObject*, PendingArrival>		Pending;
+
 	std::unordered_map<NiNode*, NiNode*>				Holders;
 	std::unordered_set<NiAVObject*>						HolderNodes;
 
@@ -226,6 +236,18 @@ private:
 
 	NiNode*			GetHolder(NiNode* Parent);
 	void			RefreshHolder(NiNode* Holder);
+
+	/// Queues an arrival whose subtree is still empty, or starts its fade immediately when it is not.
+	/// A distant LOD container is linked to the scene graph BEFORE its mesh finishes streaming, so
+	/// attach time is the wrong trigger: the object pops when its geometry becomes drawable, and a fade
+	/// started at attach expires while the node is still empty. Measured in game -- every frame whose
+	/// live fades were all arrivals resolved zero draws, while the census of a just-arrived distant root
+	/// read nodes=1 geoms=0. Tier must be a string literal, stored by pointer as in FadeRecord.
+	void			AddArrival(NiAVObject* Node, const char* Tier);
+
+	/// Promotes queued arrivals whose subtree has since become non-empty, and drops those that left the
+	/// graph or never populated. Called once per frame from Update() after the pollers have run.
+	void			DrainArrivals();
 
 	/// True when Node is one of our own holders. The pollers must skip these or a holder attached to a
 	/// node they watch registers as an arrival and starts a fade that attaches another holder.

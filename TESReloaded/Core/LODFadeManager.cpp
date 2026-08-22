@@ -346,6 +346,57 @@ void LODFadeManager::ResyncSlots(std::unordered_map<NiAVObject*, NiNode*>& Slots
 
 }
 
+/// How long a queued arrival is given to populate before it is written off, and the cap on how many
+/// may wait at once. The timeout only has to outlast a background mesh load; a node that has not
+/// populated by then either never will or has popped in unfaded already, and either way fading it
+/// afterwards would be a worse artifact than not fading it at all.
+static const float kArrivalTimeout = 8.0f;
+static const UInt32 kMaxPending = 512;
+
+void LODFadeManager::AddArrival(NiAVObject* Node, const char* Tier) {
+
+	if (!Node || Pending.count(Node)) return;
+
+	// Non-empty already: nothing to wait for. A leaf is drawable geometry in its own right, and a node
+	// with children has something under it to draw, which is all this test needs to decide.
+	if (!IsNiNodeType(Node) || ((NiNode*)Node)->m_children.numObjs) {
+		AddFade(Node, Tier, false);
+		return;
+	}
+
+	// Dropping the arrival is the right failure: the object appears unfaded, exactly as it did before
+	// this feature existed, rather than displacing a fade that is already running.
+	if (Pending.size() >= kMaxPending) return;
+
+	InterlockedIncrement(&Node->m_uiRefCount);
+	PendingArrival Entry;
+	Entry.FirstSeen = CurrentTime;
+	Entry.Tier = Tier;
+	Pending[Node] = Entry;
+
+}
+
+void LODFadeManager::DrainArrivals() {
+
+	std::unordered_map<NiAVObject*, PendingArrival>::iterator it = Pending.begin();
+	while (it != Pending.end()) {
+		NiAVObject* Node = it->first;
+		// Left the graph, or waited too long: either way there is nothing to fade in. A queued node is
+		// kept alive by our own reference, so m_parent is the only thing that says it is still attached.
+		bool Populated = !IsNiNodeType(Node) || ((NiNode*)Node)->m_children.numObjs != 0;
+		bool Expired = !Node->m_parent || CurrentTime - it->second.FirstSeen > kArrivalTimeout;
+		if (!Populated && !Expired) {
+			++it;
+			continue;
+		}
+
+		if (Populated && !Expired && !RootIndex.count(Node)) AddFade(Node, it->second.Tier, false);
+		if (!InterlockedDecrement(&Node->m_uiRefCount)) Node->Destructor(true);
+		it = Pending.erase(it);
+	}
+
+}
+
 LODFadeManager::FadeRecord* LODFadeManager::AddFade(NiAVObject* Root, const char* Tier, bool Departing) {
 
 	if (!Root) return NULL;
@@ -760,7 +811,7 @@ void LODFadeManager::PollDistantRef() {
 	}
 
 	for (std::unordered_map<NiAVObject*, NiNode*>::iterator it = CurDistant.begin(); it != CurDistant.end(); ++it) {
-		if (!PrevDistant.count(it->first) && !RootIndex.count(it->first)) AddFade(it->first, "distant", false);
+		if (!PrevDistant.count(it->first) && !RootIndex.count(it->first)) AddArrival(it->first, "distant");
 	}
 
 	ResyncSlots(PrevDistant, CurDistant);
@@ -856,7 +907,7 @@ void LODFadeManager::PollLandLOD() {
 					}
 				}
 			}
-			if (Node && !RootIndex.count(Node)) AddFade(Node, "landlod", false);
+			if (Node && !RootIndex.count(Node)) AddArrival(Node, "landlod");
 		}
 
 		// Unconditional, so an unchanged slot still gets its remembered parent refreshed this poll.
@@ -926,7 +977,7 @@ void LODFadeManager::PollCellGrid() {
 	}
 
 	for (std::unordered_map<NiAVObject*, NiNode*>::iterator it = CurCellSet.begin(); it != CurCellSet.end(); ++it) {
-		if (!PrevCellSet.count(it->first) && !RootIndex.count(it->first)) AddFade(it->first, "cell", false);
+		if (!PrevCellSet.count(it->first) && !RootIndex.count(it->first)) AddArrival(it->first, "cell");
 	}
 
 	ResyncSlots(PrevCellSet, CurCellSet);
@@ -965,8 +1016,9 @@ void LODFadeManager::Update() {
 		UInt32 FadesIn = 0;
 		UInt32 FadesOut = 0;
 		for (UInt32 i = 0; i < Fades.size(); i++) Fades[i].Invert ? FadesOut++ : FadesIn++;
-		Logger::Log("[LODFade] draw: covered=%d gated=%d resolved=%d minAlpha=%.3f live=%d in=%d out=%d rootIdx=%d",
-			DrawCovered, DrawGated, DrawResolved, DrawMinAlpha, LiveCount, FadesIn, FadesOut, (UInt32)RootIndex.size());
+		Logger::Log("[LODFade] draw: covered=%d gated=%d resolved=%d minAlpha=%.3f live=%d in=%d out=%d pending=%d rootIdx=%d",
+			DrawCovered, DrawGated, DrawResolved, DrawMinAlpha, LiveCount, FadesIn, FadesOut,
+			(UInt32)Pending.size(), (UInt32)RootIndex.size());
 	}
 	// The captured ancestry sample is printed only when the whole frame resolved nothing while a fade
 	// was live, which is the case that says the fade roots are not in the drawn geometry's ancestry.
@@ -1020,6 +1072,10 @@ void LODFadeManager::Update() {
 		// The shadow copies own a reference to every non-NULL entry -- the node for the first two, the
 		// mapped container for the cell set; abandoning them without releasing would leak one
 		// reference per occupied grid slot.
+		for (std::unordered_map<NiAVObject*, PendingArrival>::iterator it = Pending.begin(); it != Pending.end(); ++it) {
+			if (!InterlockedDecrement(&it->first->m_uiRefCount)) it->first->Destructor(true);
+		}
+		Pending.clear();
 		ReleaseSlots(PrevDistant);
 		ReleaseSlots(PrevLandLOD);
 		ReleaseSlots(PrevCellSet);
@@ -1066,6 +1122,10 @@ void LODFadeManager::Update() {
 	PollCellGrid();
 	PollLandLOD();
 	PrevValid = true;
+
+	// After the pollers, so an arrival queued this frame is not immediately re-examined, and before the
+	// RootIndex rebuild below, so a fade promoted here is indexed in the same frame it starts.
+	DrainArrivals();
 
 	// Rebuilt wholesale because AddFade/Retire reallocate and shift Fades. Through the poll phase
 	// above, RootIndex therefore holds DANGLING FadeRecord* values; that is safe only because the
