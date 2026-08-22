@@ -544,6 +544,7 @@ UInt32 RenderHook::TrackSetupShaderPrograms(NiGeometry* Geometry, NiSkinInstance
 			// Diagnostic only, and deliberately counted before every other condition so it is a pure
 			// measure of how many draws the constant actually reaches. See LODFadeManager::Update().
 			TheLODFadeManager->DrawCovered++;
+			bool DrawWasResolved = false;
 			bool FadeActive = TheSettingManager->SettingsMain.LODFade.Enabled &&
 				(TheLODFadeManager->AnyFadesLive() || TheLODFadeManager->FadeResetPending);
 			if (FadeActive || TheLODFadeManager->NeedsOpaquePublish) {
@@ -552,7 +553,7 @@ UInt32 RenderHook::TrackSetupShaderPrograms(NiGeometry* Geometry, NiSkinInstance
 				float Alpha = Record ? TheLODFadeManager->GetAlpha(Record) : 1.0f;
 				// Diagnostic only. The miss sample is armed once a frame at most, so a missed draw pays
 				// one bool load here and no call.
-				if (Record) TheLODFadeManager->DrawResolved++;
+				if (Record) { TheLODFadeManager->DrawResolved++; DrawWasResolved = true; }
 				else if (FadeActive && TheLODFadeManager->ResolveMissWanted) TheLODFadeManager->NoteResolveMiss(Geometry);
 				if (Alpha < TheLODFadeManager->DrawMinAlpha) TheLODFadeManager->DrawMinAlpha = Alpha;
 				TheShaderManager->ShaderConst.LODFade.Params.x = Alpha;
@@ -563,6 +564,10 @@ UInt32 RenderHook::TrackSetupShaderPrograms(NiGeometry* Geometry, NiSkinInstance
 				// to land mid-fade does not count as the one that repaired the register.
 				if (!Record) TheLODFadeManager->NeedsOpaquePublish = false;
 			}
+			// Diagnostic only, and outside the gate so the census sees every covered draw. Self-latching:
+			// once the report has printed CoveredCensusWanted stays false and this costs one bool load.
+			if (TheLODFadeManager->CoveredCensusWanted)
+				TheLODFadeManager->NoteCoveredDraw(PixelShader->ShaderName, Geometry, DrawWasResolved);
 		}
 
 		if (PixelShader->isRefraction) {

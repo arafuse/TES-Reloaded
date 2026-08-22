@@ -34,6 +34,10 @@ LODFadeManager::LODFadeManager() {
 	CensusDistantLogged = false;
 	CensusCellLogged = false;
 	CensusLandLODLogged = false;
+	CoveredCensusWanted = true;
+	CoveredShaderCount = 0;
+	CoveredOverflow = 0;
+	CoveredLogged = false;
 
 }
 
@@ -184,6 +188,51 @@ void LODFadeManager::NoteResolveMiss(NiAVObject* Geometry) {
 		MissDepth = Depth + 1;
 		Node = (NiAVObject*)Node->m_parent;
 	}
+
+}
+
+/// DIAGNOSTIC ONLY. Tallies one covered draw under its pixel shader and, the first time a shader is
+/// seen, records that draw's geometry ancestry as text. Mutates nothing but its own census fields and
+/// dereferences only pointers the draw hook is holding live at this instant.
+void LODFadeManager::NoteCoveredDraw(const char* ShaderName, NiAVObject* Geometry, bool Resolved) {
+
+	// Rows are matched on the ShaderRecord's own string pointer; see the header for why that is enough.
+	const char* Name = ShaderName ? ShaderName : "(unnamed)";
+	for (UInt32 i = 0; i < CoveredShaderCount; i++) {
+		if (CoveredShaders[i].Name == Name) {
+			CoveredShaders[i].Draws++;
+			if (Resolved) CoveredShaders[i].Resolved++;
+			return;
+		}
+	}
+	if (CoveredShaderCount >= kCoveredShaderMax) {
+		CoveredOverflow++;
+		return;
+	}
+
+	CoveredShaderEntry& Entry = CoveredShaders[CoveredShaderCount++];
+	Entry.Name = Name;
+	Entry.Draws = 1;
+	Entry.Resolved = Resolved ? 1 : 0;
+	Entry.Chain[0] = 0;
+
+	// The measurement: the ancestry of the first geometry this shader drew, leaf first, each hop as
+	// name@address so it can be compared directly against the root=%08X the fade logs print. If no
+	// covered shader's chain passes through a node a poller chose as a root, the roots and the drawn
+	// geometry live in different parts of the graph and no alpha could ever reach them.
+	UInt32 Used = 0;
+	NiAVObject* Node = Geometry;
+	for (UInt32 Depth = 0; Node && Depth < 10; Depth++) {
+		char Hop[64];
+		const char* NodeName = (Node->m_pcName && Node->m_pcName[0]) ? Node->m_pcName : "?";
+		sprintf(Hop, "%s%.24s@%08X", Used ? "<" : "", NodeName, (UInt32)Node);
+		UInt32 Len = strlen(Hop);
+		if (Used + Len >= sizeof(Entry.Chain)) break;
+		memcpy(Entry.Chain + Used, Hop, Len);
+		Used += Len;
+		Node = (NiAVObject*)Node->m_parent;
+	}
+	Entry.Chain[Used] = 0;
 
 }
 
@@ -930,6 +979,25 @@ void LODFadeManager::Update() {
 		}
 		ResolveMissPending = false;
 	}
+
+	// DIAGNOSTIC ONLY, once per session: the per-shader breakdown of the covered draws, with the
+	// scene-graph ancestry of the first geometry each shader drew. Held until a frame that had both a
+	// live fade and covered draws, so the resolved column is measured against a frame where a match
+	// was actually possible. Read-off: if no chain contains the root=%08X of a fade start line, the
+	// pollers are picking nodes that are not ancestors of anything drawn through a covered shader --
+	// the roots are wrong. If a chain does contain one, the fault is in RootIndex or the cache, not in
+	// the graph. And if the LOD shaders (DISTLOD*, terrain) are absent from the table entirely, those
+	// draws never reach this hook and the clip is on the wrong shaders.
+	if (LogFade && !CoveredLogged && LiveCount > 0 && DrawCovered > 0) {
+		CoveredLogged = true;
+		CoveredCensusWanted = false;
+		for (UInt32 i = 0; i < CoveredShaderCount; i++) {
+			Logger::Log("[LODFade] covered shader: %s draws=%d resolved=%d chain=%s",
+				CoveredShaders[i].Name, CoveredShaders[i].Draws, CoveredShaders[i].Resolved, CoveredShaders[i].Chain);
+		}
+		Logger::Log("[LODFade] covered shader: (total) names=%d overflow=%d", CoveredShaderCount, CoveredOverflow);
+	}
+
 	DrawCovered = 0;
 	DrawGated = 0;
 	DrawResolved = 0;

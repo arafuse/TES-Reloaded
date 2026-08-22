@@ -73,6 +73,17 @@ public:
 	/// ResolveMissWanted is true; it disarms itself, so the walk runs at most once per frame.
 	void			NoteResolveMiss(NiAVObject* Geometry);
 
+	/// DIAGNOSTIC ONLY. Records one covered draw against the pixel shader that issued it, and for the
+	/// first draw of each distinct shader captures that geometry's m_parent chain to the top of the
+	/// graph, by name and address. Answers the one question the counters cannot: WHICH shaders the
+	/// covered draws belong to, and WHERE in the scene graph their geometry lives.
+	/// Only ever called while CoveredCensusWanted is true.
+	void			NoteCoveredDraw(const char* ShaderName, NiAVObject* Geometry, bool Resolved);
+
+	/// DIAGNOSTIC ONLY. False once the per-shader covered-draw census has printed. The draw hook tests
+	/// it inline, so after the single report every covered draw pays one bool load and no call.
+	bool			CoveredCensusWanted;
+
 	/// Non-mutating test for whether Pin would succeed, so a departure that cannot be held never gets a
 	/// fade record at all. Parent is the node the departing node was attached to when the shadow copy
 	/// last observed it. Logs the decline, which is the diagnostic this feature is measured by.
@@ -190,6 +201,23 @@ private:
 	bool												CensusDistantLogged;
 	bool												CensusCellLogged;
 	bool												CensusLandLODLogged;
+
+	// DIAGNOSTIC ONLY: the per-shader covered-draw census. Name is the ShaderRecord's own string
+	// pointer and rows are matched by pointer alone -- two records sharing a spelling merely produce
+	// two rows, which changes nothing about the read-off. Chain is the ancestry of the FIRST geometry
+	// seen for that shader, captured at draw time while the pointers are guaranteed live and stored as
+	// text so printing it a frame later dereferences nothing.
+	struct CoveredShaderEntry {
+		const char*	Name;
+		UInt32		Draws;
+		UInt32		Resolved;
+		char		Chain[320];
+	};
+	static const UInt32								kCoveredShaderMax = 24;
+	CoveredShaderEntry								CoveredShaders[kCoveredShaderMax];
+	UInt32											CoveredShaderCount;
+	UInt32											CoveredOverflow;
+	bool											CoveredLogged;
 
 	NiNode*			ResolveDistantRef();
 	void			PollDistantRef();
