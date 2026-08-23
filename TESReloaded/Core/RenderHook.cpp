@@ -63,6 +63,25 @@ static const UInt32 kFixSunFlagsReturn = 0x0069A938;
 static UInt32 ClearMode = 0;
 #endif
 
+// --- Savegame screenshot -----------------------------------------------------------------------
+// The engine takes a save's thumbnail by re-entering kRender (0x0040C830) - the SAME function the
+// visible frame goes through - a second time in the saving frame, with the thumbnail texture as the
+// render-to-texture argument that arrives at TrackProcessImageSpaceShaders as RenderedTexture2.
+// That render is NOT a private one: it rasterises the scene into the engine's shared
+// full-resolution HDR scene buffer (measured: 3840x2160 A16B16G16R16F, the same surface every
+// normal frame renders into), through a viewport the engine narrows to the top 9/16 of the target
+// so the thumbnail comes out 16:9. The frame's display path then consumes that buffer, so its
+// post-screenshot contents get presented for one frame: the scene squeezed into the top half of the
+// screen with OR's post chain deliberately skipped - the "flash of sky" on every quicksave.
+//
+// SceneHdrSurface is latched from a NORMAL frame, where RenderedTexture1's buffer is that shared
+// surface; the screenshot render is bracketed with a snapshot/restore of it so the visible frame
+// keeps the image it already had. SceneHdrBackup is created on the first save and kept, and is
+// rebuilt if the buffer's description ever changes (resolution change / device reset).
+static IDirect3DSurface9*	SceneHdrSurface		= NULL;
+static IDirect3DSurface9*	SceneHdrBackup		= NULL;
+static D3DSURFACE_DESC		SceneHdrBackupDesc	= {};
+
 class RenderHook {
 public:
 	void*	TrackShowDetectorWindow(HWND, HINSTANCE, NiNode*, char*, int, int, int, int);
@@ -276,7 +295,10 @@ void RenderHook::TrackHDRRender(NiScreenElements* ScreenElements, BSRenderedText
 	
 	//NOTE: textures are set here because applying surface changes directly to the RT interferes with the Refraction shader
 	
-	if (TheSettingManager->SettingsMain.Main.RenderEffectsBeforeHdr) {
+	// Not for the savegame thumbnail: that render skips OR's effect chain, so EffectTexture holds
+	// the PREVIOUS frame's post-processed scene and pointing the tonemap at it would put the wrong
+	// moment in the save. Let the engine tonemap the scene it just rendered.
+	if (TheSettingManager->SettingsMain.Main.RenderEffectsBeforeHdr && !TheRenderManager->IsSaveGameScreenShot) {
 		BSRenderedTexture* rt1 = *RenderedTexture1;
 		rt1->RenderedTexture->rendererData->dTexture = TheShaderManager->EffectTexture;
 		(this->*HDRRender)(ScreenElements, RenderedTexture1, RenderedTexture2, Arg4);
@@ -741,12 +763,32 @@ HRESULT RenderHook::TrackSetSamplerState(UInt32 Sampler, D3DSAMPLERSTATETYPE Typ
 
 NiPixelData* (__cdecl * SaveGameScreenshot)(int*, int*) = (NiPixelData* (__cdecl *)(int*, int*))0x00411B70;
 NiPixelData* __cdecl TrackSaveGameScreenshot(int* pWidth, int* pHeight) {
-	
+
 	NiPixelData* r = NULL;
-	
+
+	// Hold the visible frame's image across the screenshot render, which rasterises into this very
+	// buffer. Best-effort: if the backup cannot be created the save still proceeds, it just flashes.
+	bool Restore = false;
+	if (SceneHdrSurface) {
+		D3DSURFACE_DESC Desc;
+		if (SceneHdrSurface->GetDesc(&Desc) == D3D_OK) {
+			if (SceneHdrBackup && (Desc.Width != SceneHdrBackupDesc.Width || Desc.Height != SceneHdrBackupDesc.Height || Desc.Format != SceneHdrBackupDesc.Format)) {
+				SceneHdrBackup->Release();
+				SceneHdrBackup = NULL;
+			}
+			if (!SceneHdrBackup && SUCCEEDED(TheRenderManager->device->CreateRenderTarget(Desc.Width, Desc.Height, Desc.Format, D3DMULTISAMPLE_NONE, 0, FALSE, &SceneHdrBackup, NULL)))
+				SceneHdrBackupDesc = Desc;
+			if (SceneHdrBackup)
+				Restore = SUCCEEDED(TheRenderManager->device->StretchRect(SceneHdrSurface, NULL, SceneHdrBackup, NULL, D3DTEXF_NONE));
+		}
+	}
+
 	TheRenderManager->IsSaveGameScreenShot = 1;
 	r = SaveGameScreenshot(pWidth, pHeight);
 	TheRenderManager->IsSaveGameScreenShot = 0;
+
+	if (Restore) TheRenderManager->device->StretchRect(SceneHdrBackup, NULL, SceneHdrSurface, NULL, D3DTEXF_NONE);
+
 	return r;
 
 }
@@ -1054,6 +1096,15 @@ void __cdecl TrackProcessImageSpaceShaders(NiDX9Renderer* Renderer, BSRenderedTe
 			TheShaderManager->RenderEffectsPostHdr(TheRenderManager->currentRTGroup->RenderTargets[0]->data->Surface);
 		}
 	}
+	else if (TheRenderManager->IsSaveGameScreenShot) {
+		// Both calls above are inside the gate, and the gate is false for exactly this case:
+		// RenderedTexture2 is the save's thumbnail texture and no menu is open. The engine's
+		// image-space chain is what writes that texture, so skipping it left the thumbnail at
+		// whatever the pooled texture already held - the black quicksave screenshot. OR's own
+		// effect chain stays out of it (it is built around the full-resolution screen buffers,
+		// not this render's narrowed viewport); the engine's chain alone produces the thumbnail.
+		ProcessImageSpaceShaders(Renderer, RenderedTexture1, RenderedTexture2);
+	}
 
 	if (TheRenderManager->IsSaveGameScreenShot) {
 		if (MenuRenderedTexture)
@@ -1061,6 +1112,10 @@ void __cdecl TrackProcessImageSpaceShaders(NiDX9Renderer* Renderer, BSRenderedTe
 		else
 			TheRenderManager->device->StretchRect(TheRenderManager->defaultRTGroup->RenderTargets[0]->data->Surface, NULL, TheRenderManager->currentRTGroup->RenderTargets[0]->data->Surface, &TheRenderManager->SaveGameScreenShotRECT, D3DTEXF_NONE);
 	}
+
+	// Latch the engine's shared scene buffer from normal frames, so a save knows what to preserve.
+	if (!RenderedTexture2 && RenderedTexture1 && RenderedTexture1->RenderedTexture && RenderedTexture1->RenderedTexture->buffer)
+		SceneHdrSurface = RenderedTexture1->RenderedTexture->buffer->data->Surface;
 
 }
 
