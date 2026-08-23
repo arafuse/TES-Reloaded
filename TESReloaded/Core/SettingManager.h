@@ -171,7 +171,6 @@ struct SettingsMainStruct {
 	struct ShadersStruct {
 		bool Blood;
 		bool Grass;
-		bool HDR;
 		bool NightEye;
 		bool POM;
 		bool Skin;
@@ -404,13 +403,6 @@ struct SettingsGrassStruct {
 	float CollisionRadius;
 	float CollisionStrength;
 	float CollisionFlattenStrength;
-};
-
-struct SettingsHDRStruct {
-	float ToneMapping;
-	float ToneMappingBlur;
-	float ToneMappingColor;
-	float Linearization;
 };
 
 struct SettingsPOMStruct {
@@ -721,7 +713,6 @@ public:
 	float							DefaultFov;
 	SettingsMainStruct				SettingsMain;
 	SettingsGrassStruct				SettingsGrass;
-	SettingsHDRStruct				SettingsHDR;
 	SettingsPOMStruct				SettingsPOM;
 	SettingsTerrainStruct			SettingsTerrain;
 	SettingsSkinStruct				SettingsSkin;

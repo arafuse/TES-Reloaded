@@ -301,7 +301,6 @@ SettingManager::SettingManager() {
 
 	SettingsMain.Shaders.Water = GetPrivateProfileIntA("Shaders", "Water", 0, Filename);
 	SettingsMain.Shaders.Grass = GetPrivateProfileIntA("Shaders", "Grass", 0, Filename);
-	SettingsMain.Shaders.HDR = GetPrivateProfileIntA("Shaders", "HDR", 0, Filename);
 	SettingsMain.Shaders.POM = GetPrivateProfileIntA("Shaders", "POM", 0, Filename);
 	SettingsMain.Shaders.Skin = GetPrivateProfileIntA("Shaders", "Skin", 0, Filename);
 	SettingsMain.Shaders.Terrain = GetPrivateProfileIntA("Shaders", "Terrain", 0, Filename);
@@ -574,18 +573,6 @@ void SettingManager::LoadSettings() {
 	SettingsGrass.CollisionStrength = atof(value);
 	GetPrivateProfileStringA("Default", "CollisionFlattenStrength", "60.0", value, SettingStringBuffer, Filename);
 	SettingsGrass.CollisionFlattenStrength = atof(value);
-
-	strcpy(Filename, CurrentPath);
-	strcat(Filename, SettingsPath);
-	strcat(Filename, "HDR\\HDR.ini");
-	GetPrivateProfileStringA("Default", "ToneMapping", "1.0", value, SettingStringBuffer, Filename);
-	SettingsHDR.ToneMapping = atof(value);
-	GetPrivateProfileStringA("Default", "ToneMappingBlur", "0.2", value, SettingStringBuffer, Filename);
-	SettingsHDR.ToneMappingBlur = atof(value);
-	GetPrivateProfileStringA("Default", "ToneMappingColor", "1.0", value, SettingStringBuffer, Filename);
-	SettingsHDR.ToneMappingColor = atof(value);
-	GetPrivateProfileStringA("Default", "Linearization", "2.2", value, SettingStringBuffer, Filename);
-	SettingsHDR.Linearization = atof(value);
 
 	strcpy(Filename, CurrentPath);
 	strcat(Filename, SettingsPath);
@@ -1551,13 +1538,6 @@ void SettingManager::SaveSettings(const char* Item, const char* Definition, cons
 			WritePrivateProfileStringA("Default", "CollisionStrength", ToString(SettingsGrass.CollisionStrength).c_str(), Filename);
 			WritePrivateProfileStringA("Default", "CollisionFlattenStrength", ToString(SettingsGrass.CollisionFlattenStrength).c_str(), Filename);
 		}
-		else if (!strcmp(Definition, "HDR")) {
-			strcat(Filename, "HDR\\HDR.ini");
-			WritePrivateProfileStringA("Default", "ToneMapping", ToString(SettingsHDR.ToneMapping).c_str(), Filename);
-			WritePrivateProfileStringA("Default", "ToneMappingBlur", ToString(SettingsHDR.ToneMappingBlur).c_str(), Filename);
-			WritePrivateProfileStringA("Default", "ToneMappingColor", ToString(SettingsHDR.ToneMappingColor).c_str(), Filename);
-			WritePrivateProfileStringA("Default", "Linearization", ToString(SettingsHDR.Linearization).c_str(), Filename);
-		}
 		else if (!strcmp(Definition, "MotionBlur")) {
 			WritePrivateProfileStringA("Effects", "MotionBlur", ToString(SettingsMain.Effects.MotionBlur).c_str(), SettingsMain.Main.MainFile);
 			strcat(Filename, "MotionBlur\\MotionBlur.ini");
@@ -1833,7 +1813,6 @@ DefinitionsList SettingManager::GetMenuDefinitions(const char* Item) {
 		Definitions["KhajiitRays"] = "Khajiit Rays";
 #if defined(OBLIVION)
 		Definitions["Grass"] = "Grass";
-		Definitions["HDR"] = "High Dynamic Range";
 #endif
 		Definitions["MotionBlur"] = "Motion Blur";
 #if defined(OBLIVION)
@@ -2221,12 +2200,6 @@ SettingsList SettingManager::GetMenuSettings(const char* Item, const char* Defin
 			Settings["CollisionRadius"] = SettingsGrass.CollisionRadius;
 			Settings["CollisionStrength"] = SettingsGrass.CollisionStrength;
 			Settings["CollisionFlattenStrength"] = SettingsGrass.CollisionFlattenStrength;
-		}
-		else if (!strcmp(Definition, "HDR")) {
-			Settings["ToneMapping"] = SettingsHDR.ToneMapping;
-			Settings["ToneMappingBlur"] = SettingsHDR.ToneMappingBlur;
-			Settings["ToneMappingColor"] = SettingsHDR.ToneMappingColor;
-			Settings["Linearization"] = SettingsHDR.Linearization;
 		}
 		else if (!strcmp(Definition, "MotionBlur")) {
 			SettingsMotionBlurStruct* sms = GetSettingsMotionBlur(Section);
@@ -2951,16 +2924,6 @@ void SettingManager::SetMenuSetting(const char* Item, const char* Definition, co
 			else if (!strcmp(Setting, "CollisionFlattenStrength"))
 				SettingsGrass.CollisionFlattenStrength = Value;
 		}
-		else if (!strcmp(Definition, "HDR")) {
-			if (!strcmp(Setting, "ToneMapping"))
-				SettingsHDR.ToneMapping = Value;
-			else if (!strcmp(Setting, "ToneMappingBlur"))
-				SettingsHDR.ToneMappingBlur = Value;
-			else if (!strcmp(Setting, "ToneMappingColor"))
-				SettingsHDR.ToneMappingColor = Value;
-			else if (!strcmp(Setting, "Linearization"))
-				SettingsHDR.Linearization = Value;
-		}
 		else if (!strcmp(Definition, "MotionBlur")) {
 			SettingsMotionBlurStruct* sms = GetSettingsMotionBlur(Section);
 			if (!strcmp(Setting, "BlurCutOff"))
@@ -3475,8 +3438,6 @@ bool SettingManager::GetMenuShaderEnabled(const char* Name)
 		Value = SettingsMain.Effects.KhajiitRays;
 	else if (!strcmp(Name, "Grass"))
 		Value = SettingsMain.Shaders.Grass;
-	else if (!strcmp(Name, "HDR"))
-		Value = SettingsMain.Shaders.HDR;
 	else if (!strcmp(Name, "MotionBlur"))
 		Value = SettingsMain.Effects.MotionBlur;
 	else if (!strcmp(Name, "POM"))

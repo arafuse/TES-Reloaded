@@ -101,9 +101,6 @@ struct ShaderConstants {
 		D3DXVECTOR4		shallowColor;
 		D3DXVECTOR4		shorelineParams;
 	};
-	struct HDRStruct {
-		D3DXVECTOR4		ToneMapping;
-	};
 	struct GrassStruct {
 		D3DXVECTOR4		Scale;
 		D3DXVECTOR4		CollisionParams;
@@ -297,7 +294,6 @@ struct ShaderConstants {
 	ShadowMapStruct			ShadowMap;
 	PointLightStruct		PointLights;
 	WaterStruct				Water;
-	HDRStruct				HDR;
 	GrassStruct				Grass;
 	POMStruct				POM;
 	TerrainStruct			Terrain;
@@ -570,7 +566,6 @@ private:
 	static void UpdateWetWorld(ShaderConstants& ShaderConst, TESWeather* currentWeather, TESWeather* previousWeather, float weatherPercent);
 	static void UpdatePrecipitation(ShaderConstants& ShaderConst, TESWeather* currentWeather, TESWeather* previousWeather, float weatherPercent);
 	static void UpdateGrass(ShaderConstants& ShaderConst, GrassActorPos GrassCollisionActors[4], int& GrassCollisionActorCount);
-	static void UpdateHDR(ShaderConstants& ShaderConst);
 	static void UpdatePOM(ShaderConstants& ShaderConst);
 	static void UpdateTerrain(ShaderConstants& ShaderConst);
 	static void UpdateSkin(ShaderConstants& ShaderConst);

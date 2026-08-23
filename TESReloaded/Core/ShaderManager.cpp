@@ -276,8 +276,6 @@ bool ShaderProgram::SetConstantTableValue1(LPCSTR Name, UInt32 Index) {
 
 	if (!strcmp(Name, "TESR_Tick"))
 		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.Tick;
-	else if (!strcmp(Name, "TESR_ToneMapping"))
-		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.HDR.ToneMapping;
 	else if (!strcmp(Name, "TESR_ParallaxData"))
 		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.POM.ParallaxData;
 	else if (!strcmp(Name, "TESR_GrassScale"))
@@ -566,10 +564,6 @@ bool ShaderRecord::LoadShader(const char* Name, const char* DirPostFix) {
 	else if (!memcmp(Name, "GRASS", 5)) {
 		if (!TheSettingManager->SettingsMain.Shaders.Grass) return false;
 		strcat(FileName, "Grass");
-	}
-	else if (!memcmp(Name, "HDR", 3)) {
-		if (!TheSettingManager->SettingsMain.Shaders.HDR) return false;
-		strcat(FileName, "HDR");
 	}
 	else if (!memcmp(Name, "PART", 4)) {
 		strcat(FileName, "ExtraShaders");
@@ -1920,13 +1914,6 @@ void ShaderManager::UpdateGrass(ShaderConstants& ShaderConst, GrassActorPos Gras
 	}
 }
 
-void ShaderManager::UpdateHDR(ShaderConstants& ShaderConst) {
-	ShaderConst.HDR.ToneMapping.x = TheSettingManager->SettingsHDR.ToneMapping;
-	ShaderConst.HDR.ToneMapping.y = TheSettingManager->SettingsHDR.ToneMappingBlur;
-	ShaderConst.HDR.ToneMapping.z = TheSettingManager->SettingsHDR.ToneMappingColor;
-	ShaderConst.HDR.ToneMapping.w = TheSettingManager->SettingsHDR.Linearization;
-}
-
 void ShaderManager::UpdatePOM(ShaderConstants& ShaderConst) {
 	ShaderConst.POM.ParallaxData.x = TheSettingManager->SettingsPOM.HeightMapScale;
 	ShaderConst.POM.ParallaxData.y = TheSettingManager->SettingsPOM.SelfShadow != 0.0f ? TheSettingManager->SettingsPOM.SelfShadowStrength : 0.0f;
@@ -2393,7 +2380,6 @@ void ShaderManager::UpdateConstants() {
 			UpdateGrass(ShaderConst, GrassCollisionActors, GrassCollisionActorCount);
 	}
 
-	if (TheSettingManager->SettingsMain.Shaders.HDR)     UpdateHDR(ShaderConst);
 	if (TheSettingManager->SettingsMain.Shaders.POM)     UpdatePOM(ShaderConst);
 	if (TheSettingManager->SettingsMain.Shaders.Terrain) UpdateTerrain(ShaderConst);
 	if (TheSettingManager->SettingsMain.Shaders.Skin)    UpdateSkin(ShaderConst);
@@ -2504,11 +2490,6 @@ void ShaderManager::CreateShader(const char* Name) {
 	else if (!strcmp(Name, "Precipitations")) {
 		for (int i = 0; i < 4; i++) LoadShader(PrecipitationVertexShaders[i]);
 		for (int i = 0; i < 2; i++) LoadShader(PrecipitationPixelShaders[i]);
-	}
-	else if (!strcmp(Name, "HDR")) {
-		HDRShader* HS = (HDRShader*)GetShaderDefinition(8)->Shader;
-		for each (NiD3DVertexShader* VS in HS->Vertex) LoadShader(VS);
-		for each (NiD3DPixelShader* PS in HS->Pixel) LoadShader(PS);
 	}
 	else if (!strcmp(Name, "POM")) {
 		ParallaxShader* PRS = (ParallaxShader*)GetShaderDefinition(15)->Shader;
@@ -2760,21 +2741,6 @@ void ShaderManager::DisposeShader(const char* Name) {
 			}
 		}
 		for each (NiD3DPixelShaderEx* PS in TGS->Pixel2) {
-			if (PS->ShaderProg) {
-				PS->ShaderHandle = PS->ShaderHandleBackup;
-				delete PS->ShaderProg; PS->ShaderProg = NULL;
-			}
-		}
-	}
-	else if (!strcmp(Name, "HDR")) {
-		HDRShader* HS = (HDRShader*)GetShaderDefinition(8)->Shader;
-		for each (NiD3DVertexShaderEx* VS in HS->Vertex) {
-			if (VS->ShaderProg) {
-				VS->ShaderHandle = VS->ShaderHandleBackup;
-				delete VS->ShaderProg; VS->ShaderProg = NULL;
-			}
-		}
-		for each (NiD3DPixelShaderEx* PS in HS->Pixel) {
 			if (PS->ShaderProg) {
 				PS->ShaderHandle = PS->ShaderHandleBackup;
 				delete PS->ShaderProg; PS->ShaderProg = NULL;
@@ -3911,12 +3877,6 @@ void ShaderManager::SwitchShaderStatus(const char* Name) {
 		if (Value) {
 			CreateEffect(EffectRecordType_KhajiitRays);
 		}
-	}
-	else if (!strcmp(Name, "HDR")) {
-		Value = !Shaders->HDR;
-		Shaders->HDR = Value;
-		DisposeShader(Name);
-		if (Value) CreateShader(Name);
 	}
 	else if (!strcmp(Name, "MotionBlur")) {
 		Value = !Effects->MotionBlur;
