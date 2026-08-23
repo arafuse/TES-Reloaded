@@ -298,6 +298,8 @@ void RenderManager::SetupSceneCamera() {
 
 void RenderManager::SetSceneGraph() {
 
+	FrameProfiler::Scope ProfileScope(FrameProfiler::Buck_SetSceneGraph);
+
 	float FoV = TheSettingManager->SettingsMain.Main.FoV;
 	float DefaultFov = TheSettingManager->DefaultFov;
 

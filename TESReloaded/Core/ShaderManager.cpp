@@ -723,10 +723,15 @@ void ShaderRecord::CreateCT() {
 
 void ShaderRecord::SetCT() {
 	
+	FrameProfiler::Scope ProfileScope(FrameProfiler::Buck_HookSetCT);
+	FrameProfiler::Count(FrameProfiler::Cnt_SetCT);
+
 	ShaderValue* Value;
 
 	if (HasCT) {
 		if (HasRB && !TheShaderManager->RenderedBufferFilled) {
+			FrameProfiler::Scope ResolveScope(FrameProfiler::Buck_HookResolve);
+			FrameProfiler::Count(FrameProfiler::Cnt_RenderedBlits);
 			TheRenderManager->device->StretchRect(TheRenderManager->currentRTGroup->RenderTargets[0]->data->Surface, NULL, TheShaderManager->RenderedSurface, NULL, D3DTEXF_NONE);
 			TheShaderManager->RenderedBufferFilled = true;
 		}
@@ -749,6 +754,8 @@ void ShaderRecord::SetCT() {
 		// Gated on ShellActive so the shell-off path keeps vanilla's behaviour exactly.
 		if (HasDB && !TheShaderManager->DepthBufferFilled &&
 			(!RenderManager::ShellActive || TheShaderManager->InMainScenePass)) {
+			FrameProfiler::Scope ResolveScope(FrameProfiler::Buck_HookResolve);
+			FrameProfiler::Count(FrameProfiler::Cnt_DepthResolves);
 			TheRenderManager->ResolveDepthBuffer();
 			TheShaderManager->DepthBufferFilled = true;
 		}
@@ -773,6 +780,9 @@ void ShaderRecord::SetCT() {
 }
 
 void ShaderRecord::SetPerGeomCT() {
+
+	FrameProfiler::Scope ProfileScope(FrameProfiler::Buck_HookSetCT);
+	FrameProfiler::Count(FrameProfiler::Cnt_SetPerGeomCT);
 
 	ShaderValue* Value;
 
@@ -1199,6 +1209,8 @@ void ShaderManager::InitializeConstants() {
 }
 
 void ShaderManager::UpdateShaderStates() {
+
+	FrameProfiler::Scope ProfileScope(FrameProfiler::Buck_UpdateShaderStates);
 
 	if (Player->IsExteriorLike()) {
 		if (LocationState != CellLocation::Exterior) {
@@ -2314,6 +2326,8 @@ void ShaderManager::UpdateSpecular(ShaderConstants& ShaderConst) {
 
 void ShaderManager::UpdateConstants() {
 
+	FrameProfiler::Scope ProfileScope(FrameProfiler::Buck_UpdateConstants);
+
 	bool IsThirdPersonView;
 	Sky* WorldSky = Tes->sky;
 	NiNode* SunRoot = WorldSky->sun->RootNode;
@@ -2427,6 +2441,11 @@ void ShaderManager::SetVolumetricLightModifiers(SettingsVolumetricLightStruct* c
 }
 
 void ShaderManager::BeginScene() {
+
+	// Fires once per SCENE, not once per frame: the off-screen renders that follow
+	// the main pass (the water reflection map among them) each get their own.
+	FrameProfiler::Scope ProfileScope(FrameProfiler::Buck_BeginScene);
+	FrameProfiler::Count(FrameProfiler::Cnt_Scenes);
 
 	if (MenuManager->IsActive(Menu::MenuType::kMenuType_BigFour)) {
 		TheShaderManager->ShaderConst.Jitter.x = 0.0f;
@@ -3266,6 +3285,7 @@ void ShaderManager::RenderEffects(IDirect3DSurface9* RenderTarget) {
 }
 
 void ShaderManager::RenderEffectsPreHdr(IDirect3DSurface9* RenderTargetParam) {
+	FrameProfiler::Scope ProfileScope(FrameProfiler::Buck_EffectsPreHdr);
 	IDirect3DDevice9* Device = TheRenderManager->device;
 	NiDX9RenderState* RenderState = TheRenderManager->renderState;
 	int rs1 = RenderState->GetRenderState(D3DRS_ZENABLE); //1
@@ -3293,6 +3313,7 @@ void ShaderManager::RenderEffectsPreHdr(IDirect3DSurface9* RenderTargetParam) {
 }
 
 void ShaderManager::RenderEffectsPostHdr(IDirect3DSurface9* RenderTargetParam) {
+	FrameProfiler::Scope ProfileScope(FrameProfiler::Buck_EffectsPostHdr);
 	IDirect3DDevice9* Device = TheRenderManager->device;
 	TheRenderManager->SetupSceneCamera();
 	Device->SetStreamSource(0, EffectVertex, 0, sizeof(EffectQuad));
