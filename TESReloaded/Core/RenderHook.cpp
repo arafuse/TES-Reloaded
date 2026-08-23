@@ -2,6 +2,204 @@
 #include <intrin.h>
 #include "RenderHook.h"
 
+// --- Whole-frame plugin profiler (Develop.ProfileFrame) -----------------------
+// Definitions for FrameProfiler.h; see that header for the bucket model and for
+// why both clocks are measured. This TU is always compiled, so cross-file call
+// sites only need the header (pulled in via Managers.h).
+namespace FrameProfiler {
+
+	bool         Active = false;
+	unsigned int Counters[Cnt_COUNT] = {};
+
+	namespace {
+		const char* const BucketNames[Buck_COUNT] = {
+			"FrameTotal",
+			"UpdateShaderStates", "SetSceneGraph", "UpdateConstants", "ShadowMaps",
+			"Effects:PreHdr", "Effects:PostHdr", "BeginScene", "ShaderHook",
+			"Hook:Engine", "Hook:SetCT", "Hook:Resolve", "Hook:MidScene", "Hook:ShellWater"
+		};
+		const char* const CounterNames[Cnt_COUNT] = {
+			"Draws", "SetCT", "SetPerGeomCT", "DepthResolves", "RenderedBlits", "Scenes"
+		};
+		const int ReportFrames = 600;
+
+		double       gFrameMs[Buck_COUNT] = {};   // this frame only; reset by FrameBegin
+		double       gAccumMs[Buck_COUNT] = {};   // summed over the report window
+		double       gMaxMs[Buck_COUNT]   = {};   // worst single frame in the window
+		unsigned int gCalls[Buck_COUNT]   = {};
+		unsigned int gAccumCounters[Cnt_COUNT] = {};
+		unsigned int gMaxCounters[Cnt_COUNT]   = {};
+		LONGLONG     gQpcFreq = 0;
+		int          gFrames  = 0;
+
+		// --- GPU timing (D3D9 timestamp queries), double-buffered --------------
+		// Read one frame late so GetData never stalls the CPU, the same shape as
+		// the effect-chain profiler. A device reset invalidates these queries and
+		// timing then simply stops yielding samples until the game is restarted -
+		// acceptable for a dev-only knob, and the report says so explicitly rather
+		// than printing a wrong number.
+		struct GpuSlot {
+			IDirect3DQuery9* Disjoint = NULL;
+			IDirect3DQuery9* Freq     = NULL;
+			IDirect3DQuery9* Begin    = NULL;
+			IDirect3DQuery9* End      = NULL;
+			bool             Pending  = false;
+		};
+		GpuSlot      gSlot[2];
+		int          gActiveSlot     = -1;
+		bool         gGpuAvailable   = false;
+		bool         gGpuTried       = false;
+		double       gGpuMs          = 0.0;
+		double       gGpuMaxMs       = 0.0;
+		unsigned int gGpuSamples     = 0;
+		unsigned int gGpuRejNotReady = 0;
+		unsigned int gGpuRejDisjoint = 0;
+
+		void GpuEnsureQueries(IDirect3DDevice9* Device) {
+			if (gGpuTried) return;
+			gGpuTried = true;
+			bool ok = true;
+			for (int i = 0; i < 2 && ok; i++) {
+				GpuSlot& s = gSlot[i];
+				ok = ok && Device->CreateQuery(D3DQUERYTYPE_TIMESTAMPDISJOINT, &s.Disjoint) == D3D_OK;
+				ok = ok && Device->CreateQuery(D3DQUERYTYPE_TIMESTAMPFREQ,     &s.Freq)     == D3D_OK;
+				ok = ok && Device->CreateQuery(D3DQUERYTYPE_TIMESTAMP,         &s.Begin)    == D3D_OK;
+				ok = ok && Device->CreateQuery(D3DQUERYTYPE_TIMESTAMP,         &s.End)      == D3D_OK;
+			}
+			gGpuAvailable = ok;
+			Logger::Log(ok ? "[FrameProfile] GPU timestamp queries created OK."
+			               : "[FrameProfile] GPU timestamp queries unavailable (CreateQuery failed); reporting CPU only.");
+		}
+
+		// A slot that is not ready stays Pending and is retried next frame - it is
+		// NEVER re-issued while pending, which would corrupt it so it never signals.
+		void GpuTryCollect(GpuSlot& s) {
+			if (!s.Pending) return;
+			BOOL   disjoint = FALSE;
+			UINT64 freq = 0, t0 = 0, t1 = 0;
+			if (s.Disjoint->GetData(&disjoint, sizeof(disjoint), D3DGETDATA_FLUSH) != S_OK) { gGpuRejNotReady++; return; }
+			if (s.Freq->GetData(&freq, sizeof(freq), 0) != S_OK) { gGpuRejNotReady++; return; }
+			if (s.Begin->GetData(&t0, sizeof(t0), 0)    != S_OK) { gGpuRejNotReady++; return; }
+			if (s.End->GetData(&t1, sizeof(t1), 0)      != S_OK) { gGpuRejNotReady++; return; }
+			s.Pending = false;
+			if (disjoint || freq == 0 || t1 < t0) { gGpuRejDisjoint++; return; }
+			double ms = (double)(t1 - t0) * 1000.0 / (double)freq;
+			gGpuMs += ms;
+			if (ms > gGpuMaxMs) gGpuMaxMs = ms;
+			gGpuSamples++;
+		}
+
+		void Report() {
+			double inv    = 1.0 / gFrames;
+			double total  = gAccumMs[Buck_FrameTotal] * inv;
+			double pctInv = total > 0.0 ? 100.0 / total : 0.0;
+
+			Logger::Log("[FrameProfile] avg over %d frames (ms/frame; max = worst single frame):", gFrames);
+			Logger::Log("[FrameProfile]   %-18s %8.4f ms  (max %8.4f)   CPU submission envelope", "FrameTotal", total, gMaxMs[Buck_FrameTotal]);
+			if (gGpuSamples)
+				Logger::Log("[FrameProfile]   %-18s %8.4f ms  (max %8.4f)   %u samples", "FrameTotal GPU", gGpuMs / gGpuSamples, gGpuMaxMs, gGpuSamples);
+			else
+				Logger::Log("[FrameProfile]   %-18s (no samples: available=%d notReady=%u disjoint=%u)", "FrameTotal GPU", (int)gGpuAvailable, gGpuRejNotReady, gGpuRejDisjoint);
+
+			double sum = 0.0;
+			Logger::Log("[FrameProfile]   -- plugin buckets (disjoint; subtracted from the envelope) --");
+			for (int i = TopLevelBegin; i < TopLevelEnd; i++) {
+				double ms = gAccumMs[i] * inv;
+				sum += ms;
+				Logger::Log("[FrameProfile]   %-18s %8.4f ms  (max %8.4f) %6.2f %%  %9.1f calls/frame",
+					BucketNames[i], ms, gMaxMs[i], ms * pctInv, gCalls[i] * inv);
+			}
+			// A negative residual means two top-level buckets overlapped, i.e. the
+			// disjointness assumption is wrong - not that the game render is free.
+			Logger::Log("[FrameProfile]   %-18s %8.4f ms                       %6.2f %%  (game render + unhooked plugin work)",
+				"Other", total - sum, (total - sum) * pctInv);
+
+			Logger::Log("[FrameProfile]   -- ShaderHook detail (NESTED; not part of the sum above) --");
+			for (int i = TopLevelEnd; i < Buck_COUNT; i++) {
+				double ms = gAccumMs[i] * inv;
+				Logger::Log("[FrameProfile]   %-18s %8.4f ms  (max %8.4f) %6.2f %%  %9.1f calls/frame",
+					BucketNames[i], ms, gMaxMs[i], ms * pctInv, gCalls[i] * inv);
+			}
+
+			// The per-draw scopes are not free when armed: ShaderHook, Hook:Engine and
+			// Hook:SetCT put roughly six QueryPerformanceCounter calls on every draw,
+			// which at ~25 ns each lands ~0.15 us per draw inside ShaderHook. Multiply
+			// by the Draws counter below before reading ShaderHook as a regression.
+			Logger::Log("[FrameProfile]   -- counters (per frame; ShaderHook carries ~0.15 us/draw of profiler overhead) --");
+			for (int i = 0; i < Cnt_COUNT; i++)
+				Logger::Log("[FrameProfile]   %-18s %9.1f  (max %u)", CounterNames[i], gAccumCounters[i] * inv, gMaxCounters[i]);
+		}
+
+		// Each report window stands alone, so two builds can be compared by reading
+		// one window from each rather than by differencing running totals.
+		void ResetWindow() {
+			for (int i = 0; i < Buck_COUNT; i++) { gAccumMs[i] = 0.0; gMaxMs[i] = 0.0; gCalls[i] = 0; }
+			for (int i = 0; i < Cnt_COUNT; i++)  { gAccumCounters[i] = 0; gMaxCounters[i] = 0; }
+			gGpuMs = 0.0; gGpuMaxMs = 0.0; gGpuSamples = 0;
+			gGpuRejNotReady = 0; gGpuRejDisjoint = 0;
+			gFrames = 0;
+		}
+	}
+
+	void Accumulate(int bucket, LONGLONG start) {
+		gFrameMs[bucket] += (double)(QpcNow() - start) * 1000.0 / (double)gQpcFreq;
+		gCalls[bucket]++;
+	}
+
+	void FrameBegin() {
+		Active = TheSettingManager && TheSettingManager->SettingsMain.Develop.ProfileFrame != 0;
+		if (!Active) return;
+		if (gQpcFreq == 0) { LARGE_INTEGER f; QueryPerformanceFrequency(&f); gQpcFreq = f.QuadPart; }
+		for (int i = 0; i < Buck_COUNT; i++) gFrameMs[i] = 0.0;
+		for (int i = 0; i < Cnt_COUNT; i++)  Counters[i] = 0;
+
+		gActiveSlot = -1;
+		IDirect3DDevice9* Device = TheRenderManager ? TheRenderManager->device : NULL;
+		if (!Device) return;
+		GpuEnsureQueries(Device);
+		if (!gGpuAvailable) return;
+		// Only start a measurement on a slot whose previous result has been
+		// collected; if both are still pending, skip GPU timing this frame.
+		for (int i = 0; i < 2; i++) if (!gSlot[i].Pending) { gActiveSlot = i; break; }
+		if (gActiveSlot >= 0) {
+			GpuSlot& s = gSlot[gActiveSlot];
+			s.Disjoint->Issue(D3DISSUE_BEGIN);
+			s.Begin->Issue(D3DISSUE_END);
+		}
+	}
+
+	void FrameEnd() {
+		if (!Active) return;
+		Active = false; // disarm first: nothing below should record into this frame
+
+		if (gGpuAvailable) {
+			if (gActiveSlot >= 0) {
+				GpuSlot& s = gSlot[gActiveSlot];
+				s.End->Issue(D3DISSUE_END);
+				s.Freq->Issue(D3DISSUE_END);
+				s.Disjoint->Issue(D3DISSUE_END);
+				s.Pending = true;
+			}
+			// Collect any slot pending from a previous frame (not the one just issued).
+			for (int i = 0; i < 2; i++) if (i != gActiveSlot) GpuTryCollect(gSlot[i]);
+			gActiveSlot = -1;
+		}
+
+		for (int i = 0; i < Buck_COUNT; i++) {
+			gAccumMs[i] += gFrameMs[i];
+			if (gFrameMs[i] > gMaxMs[i]) gMaxMs[i] = gFrameMs[i];
+		}
+		for (int i = 0; i < Cnt_COUNT; i++) {
+			gAccumCounters[i] += Counters[i];
+			if (Counters[i] > gMaxCounters[i]) gMaxCounters[i] = Counters[i];
+		}
+		if (++gFrames < ReportFrames) return;
+		Report();
+		ResetWindow();
+	}
+}
+
+
 #if defined(NEWVEGAS)
 #define kRender 0x008706B0
 #define kProcessImageSpaceShaders 0x00B55AC0
@@ -265,6 +463,9 @@ float MultiBoundWaterHeightFix() {
 void (__thiscall RenderHook::* Render)(BSRenderedTexture*);
 void (__thiscall RenderHook::* TrackRender)(BSRenderedTexture*);
 void RenderHook::TrackRender(BSRenderedTexture* RenderedTexture) {
+	FrameProfiler::FrameBegin();
+	FrameProfiler::Scope FrameScope(FrameProfiler::Buck_FrameTotal);
+
 	TheShaderManager->UpdateShaderStates();
 	TheRenderManager->SetSceneGraph();
 	TheShaderManager->UpdateConstants();
@@ -278,6 +479,11 @@ void RenderHook::TrackRender(BSRenderedTexture* RenderedTexture) {
 	if (TheSettingManager->SettingsMain.Develop.LogShaders && TheKeyboardManager->OnKeyPressed(TheSettingManager->SettingsMain.Develop.LogShaders)) Logger::Log("START FRAME LOG");
 	(this->*Render)(RenderedTexture);
 
+	// Close the envelope before FrameEnd, so the residual FrameEnd computes covers
+	// everything the engine's nested Render() did and the report is not timed into
+	// the frame it is reporting on.
+	FrameScope.Close();
+	FrameProfiler::FrameEnd();
 }
 
 bool (__thiscall RenderHook::* EndTargetGroup)(NiCamera*, NiRenderTargetGroup*);
@@ -401,6 +607,9 @@ static void GrassOrderLogTrace(const char* Tag, void* Ra, NiPropertyState* Prope
 UInt32 (__thiscall RenderHook::* SetupShaderPrograms)(NiGeometry*, NiSkinInstance*, NiSkinPartition::Partition*, NiGeometryBufferData*, NiPropertyState*, NiDynamicEffectState*, NiTransform*, UInt32);
 UInt32 (__thiscall RenderHook::* TrackSetupShaderPrograms)(NiGeometry*, NiSkinInstance*, NiSkinPartition::Partition*, NiGeometryBufferData*, NiPropertyState*, NiDynamicEffectState*, NiTransform*, UInt32);
 UInt32 RenderHook::TrackSetupShaderPrograms(NiGeometry* Geometry, NiSkinInstance* SkinInstance, NiSkinPartition::Partition* SkinPartition, NiGeometryBufferData* GeometryBufferData, NiPropertyState* PropertyState, NiDynamicEffectState* EffectState, NiTransform* WorldTransform, UInt32 WorldBound) {
+
+	FrameProfiler::Scope HookScope(FrameProfiler::Buck_ShaderHook);
+	FrameProfiler::Count(FrameProfiler::Cnt_Draws);
 
 	D3DMATRIX* Proj = &TheRenderManager->projMatrix;
 
@@ -580,6 +789,7 @@ UInt32 RenderHook::TrackSetupShaderPrograms(NiGeometry* Geometry, NiSkinInstance
 		// reflection map — camera-tracking caster silhouettes floating in the water.
 		if (TheShaderManager->InMainScenePass && !TheShaderManager->PreWaterDepthBufferFilled && !memcmp(PixelShader->ShaderName, "WATER", 5) && PixelShader->ShaderName[5] >= '0' && PixelShader->ShaderName[5] <= '9') {
 			if (atoi(PixelShader->ShaderName + 5) < 12) {
+				FrameProfiler::Scope MidSceneScope(FrameProfiler::Buck_HookMidScene);
 				TheRenderManager->ResolvePreWaterDepthBuffer();
 				TheShaderManager->RenderShadowsMidScene();
 				TheShaderManager->PreWaterDepthBufferFilled = true;
@@ -636,6 +846,7 @@ UInt32 RenderHook::TrackSetupShaderPrograms(NiGeometry* Geometry, NiSkinInstance
 			PixelShader->ShaderName && !memcmp(PixelShader->ShaderName, "WATER", 5) &&
 			PixelShader->ShaderName[5] >= '0' && PixelShader->ShaderName[5] <= '9' && atoi(PixelShader->ShaderName + 5) < 12) {
 			ShellNearWaterPrepDone = true;
+			FrameProfiler::Scope ShellWaterScope(FrameProfiler::Buck_HookShellWater);
 			bool MaskResolved = TheShaderManager->CaptureShellRenderedBuffer();
 			bool Captured = MaskResolved;
 			if (!Captured && TheRenderManager->currentRTGroup && TheShaderManager->RenderedSurface) {
@@ -718,7 +929,11 @@ UInt32 RenderHook::TrackSetupShaderPrograms(NiGeometry* Geometry, NiSkinInstance
 		}
 	}
 
-	UInt32 result = (this->*SetupShaderPrograms)(Geometry, SkinInstance, SkinPartition, GeometryBufferData, PropertyState, EffectState, WorldTransform, WorldBound);
+	UInt32 result;
+	{
+		FrameProfiler::Scope EngineScope(FrameProfiler::Buck_HookEngine);
+		result = (this->*SetupShaderPrograms)(Geometry, SkinInstance, SkinPartition, GeometryBufferData, PropertyState, EffectState, WorldTransform, WorldBound);
+	}
 
 	if (VertexShader && VertexShader->ShaderProg && VertexShader->isGrass) {
 		float cx = WorldTransform->pos.x;

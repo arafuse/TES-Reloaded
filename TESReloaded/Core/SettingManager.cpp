@@ -427,6 +427,7 @@ SettingManager::SettingManager() {
 	SettingsMain.Develop.LogShaders = GetPrivateProfileIntA("Develop", "LogShaders", 0, Filename);
 	SettingsMain.Develop.ProfileShadows = GetPrivateProfileIntA("Develop", "ProfileShadows", 0, Filename);
 	SettingsMain.Develop.ProfileEffects = GetPrivateProfileIntA("Develop", "ProfileEffects", 0, Filename);
+	SettingsMain.Develop.ProfileFrame = GetPrivateProfileIntA("Develop", "ProfileFrame", 0, Filename);
 	SettingsMain.Develop.NearShellDebug = GetPrivateProfileIntA("Develop", "NearShellDebug", 0, Filename);
 
 	GameLoading = false;

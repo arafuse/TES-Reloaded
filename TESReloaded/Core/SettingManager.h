@@ -273,6 +273,7 @@ struct SettingsMainStruct {
 		UInt8	LogShaders;
 		UInt8	ProfileShadows;
 		UInt8	ProfileEffects;
+		UInt8	ProfileFrame;
 		UInt8	NearShellDebug;
 	};
 

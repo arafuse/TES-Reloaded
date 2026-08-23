@@ -1933,6 +1933,8 @@ void ShadowManager::RenderPointShadows() {
 void ShadowManager::RenderShadowMaps() {
 	Global->RenderShadowMaps(); //Window reflections seem to be rendered here
 
+	FrameProfiler::Scope ProfileScope(FrameProfiler::Buck_ShadowMaps);
+
 	IDirect3DDevice9* Device = TheRenderManager->device;
 	IDirect3DSurface9* DepthSurface = NULL;
 

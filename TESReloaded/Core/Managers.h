@@ -12,6 +12,7 @@
 #include "GameMenuManager.h"
 #include "KeyboardManager.h"
 #include "ShadowManager.h"
+#include "FrameProfiler.h"
 
 extern SettingManager*		TheSettingManager;
 extern CommandManager*		TheCommandManager;
