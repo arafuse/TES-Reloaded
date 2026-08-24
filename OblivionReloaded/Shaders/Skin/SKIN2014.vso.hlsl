@@ -16,7 +16,6 @@ float4 ShadowProjTransform : register(c33);
 row_major float4x4 TESR_ShadowCameraToLightTransform[2] : register(c34);
 row_major float4x4 TESR_InvViewProjectionTransform : register(c97);
 row_major float4x4 TESR_ShadowCameraToLightTransformSkin : register(c101);
-float4 TESR_ShadowBiasForward : register(c221);
 //
 //
 // Registers:

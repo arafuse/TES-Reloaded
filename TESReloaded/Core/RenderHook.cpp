@@ -786,13 +786,11 @@ UInt32 RenderHook::TrackSetupShaderPrograms(NiGeometry* Geometry, NiSkinInstance
 		// (ShaderManager::BeginScene). Numbered water shaders DO bind during the reflection render
 		// ([ReflDbg] log, 2026-07-17), so without this guard the apply fired again INTO the
 		// reflection map — camera-tracking caster silhouettes floating in the water.
-		if (TheShaderManager->InMainScenePass && !TheShaderManager->PreWaterDepthBufferFilled && !memcmp(PixelShader->ShaderName, "WATER", 5) && PixelShader->ShaderName[5] >= '0' && PixelShader->ShaderName[5] <= '9') {
-			if (atoi(PixelShader->ShaderName + 5) < 12) {
-				FrameProfiler::Scope MidSceneScope(FrameProfiler::Buck_HookMidScene);
-				TheRenderManager->ResolvePreWaterDepthBuffer();
-				TheShaderManager->RenderShadowsMidScene();
-				TheShaderManager->PreWaterDepthBufferFilled = true;
-			}
+		if (TheShaderManager->InMainScenePass && !TheShaderManager->PreWaterDepthBufferFilled && PixelShader->isNearWater) {
+			FrameProfiler::Scope MidSceneScope(FrameProfiler::Buck_HookMidScene);
+			TheRenderManager->ResolvePreWaterDepthBuffer();
+			TheShaderManager->RenderShadowsMidScene();
+			TheShaderManager->PreWaterDepthBufferFilled = true;
 		}
 
 		// Shell counterpart of the capture above, and the one point in the frame where the shell's own
@@ -841,9 +839,7 @@ UInt32 RenderHook::TrackSetupShaderPrograms(NiGeometry* Geometry, NiSkinInstance
 		// one full-resolution StretchRect, one depth resolve and one full-screen quad in exactly the
 		// frames that exhibit the defects and nothing at all otherwise. PassNear implies ShellActive,
 		// so this is inert with the near shell off and the far pass is left byte-identical.
-		if (RenderManager::CurrentPass == RenderManager::PassNear && !ShellNearWaterPrepDone &&
-			PixelShader->ShaderName && !memcmp(PixelShader->ShaderName, "WATER", 5) &&
-			PixelShader->ShaderName[5] >= '0' && PixelShader->ShaderName[5] <= '9' && atoi(PixelShader->ShaderName + 5) < 12) {
+		if (RenderManager::CurrentPass == RenderManager::PassNear && !ShellNearWaterPrepDone && PixelShader->isNearWater) {
 			ShellNearWaterPrepDone = true;
 			FrameProfiler::Scope ShellWaterScope(FrameProfiler::Buck_HookShellWater);
 			bool MaskResolved = TheShaderManager->CaptureShellRenderedBuffer();

@@ -10,9 +10,6 @@ float4 AmbientColor : register(c1);
 float4 PSLightColor[4] : register(c2);
 float4 EmittanceColor : register(c6);
 float4 Toggles : register(c7);
-float4 TESR_ShadowData : register(c8);
-float4 TESR_ShadowLightPosition[12] : register(c9);
-
 sampler2D BaseMap : register(s0);
 sampler2D NormalMap : register(s1);
 sampler2D GlowMap : register(s4);

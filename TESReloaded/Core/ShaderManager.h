@@ -386,6 +386,10 @@ public:
 	void						Render(IDirect3DDevice9* Device, IDirect3DSurface9* RenderTarget, IDirect3DSurface9* RenderedSurface, bool ClearRenderTarget);
 
 	bool						Enabled;
+	// True when the effect declares TESR_SourceBuffer, i.e. it actually reads the pre-chain image.
+	// Latched in CreateCT the way ShaderRecord latches HasRB/HasDB, so the caller can skip the
+	// full-screen scene->SourceSurface blit for effects that never sample it.
+	bool						HasSB;
 	char*	 					Source;
 	ID3DXBuffer*				Errors;
 	ID3DXEffect*				Effect;

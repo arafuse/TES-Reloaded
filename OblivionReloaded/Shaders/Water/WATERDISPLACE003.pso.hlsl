@@ -16,9 +16,6 @@ float4 fDamp : register(c3);
 float4 RainVars : register(c4);
 float4 WadingVars : register(c5);
 float4 TESR_ReciprocalResolutionWater : register(c6);
-float4 TESR_Tick : register(c7);
-float4 TESR_WaveParams : register(c8);
-
 sampler2D HeightMap : register(s0);
 sampler2D HeightMap2 : register(s1);
 

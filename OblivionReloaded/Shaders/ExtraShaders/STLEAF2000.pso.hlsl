@@ -7,8 +7,6 @@
 // Parameters:
 //
 sampler2D DiffuseMap : register(s0);
-float4 TESR_ShadowData : register(c5);
-float4 TESR_ShadowLightPosition[12] : register(c6);
 sampler2D TESR_ShadowMapBufferNear : register(s4) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
 sampler2D TESR_ShadowMapBufferFar : register(s5) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
 row_major float4x4 TESR_InvViewProjectionTransform : register(c20);

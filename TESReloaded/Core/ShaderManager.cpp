@@ -774,6 +774,7 @@ void ShaderRecord::SetPerGeomCT() {
 EffectRecord::EffectRecord() {
 
 	Enabled = false;
+	HasSB = false;
 	Source = NULL;
 	Effect = NULL;
 	Errors = NULL;
@@ -947,6 +948,7 @@ void EffectRecord::CreateCT() {
 					break;
 				case D3DXPC_OBJECT:
 					if (ConstantDesc.Class == D3DXPC_OBJECT && ConstantDesc.Type >= D3DXPT_SAMPLER && ConstantDesc.Type <= D3DXPT_SAMPLERCUBE) {
+						if (!strcmp(ConstantDesc.Name, WordSourceBuffer)) HasSB = true;
 						TextureShaderValues[TextureIndex].Texture = TheTextureManager->LoadTexture(Source, TextureIndex);
 						TextureShaderValues[TextureIndex].RegisterIndex = TextureIndex;
 						TextureShaderValues[TextureIndex].RegisterCount = 1;
@@ -3185,7 +3187,10 @@ void ShaderManager::RenderEffects(IDirect3DSurface9* RenderTarget) {
 	if (Effects->Extra) {
 		for (ExtraEffectsList::iterator iter = ExtraEffects.begin(); iter != ExtraEffects.end(); ++iter) {
 			if (iter->second->Enabled) {
-				ProfileBlitToSource(RenderTarget);
+				// Every built-in effect above has its blit matched to a real TESR_SourceBuffer
+				// declaration (see the VolumetricFog note for the last one that did not). Extras were
+				// the one path still paying a full-screen FP16 copy unconditionally.
+				if (iter->second->HasSB) ProfileBlitToSource(RenderTarget);
 				iter->second->SetCT();
 				iter->second->Render(Device, RenderTarget, RenderedSurface, false);
 			}

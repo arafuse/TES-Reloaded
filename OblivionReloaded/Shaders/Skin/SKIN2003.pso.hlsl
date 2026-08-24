@@ -11,10 +11,6 @@ float4 PSLightColor[4] : register(c2);
 float4 Toggles : register(c7);
 float4 TESR_SkinData : register(c8);
 float4 TESR_SkinColor : register(c9);
-float4 TESR_ShadowData : register(c10);
-float4 TESR_ShadowLightPosition[12] : register(c11);
-float4 TESR_ShadowSkinData : register(c24);
-
 sampler2D BaseMap : register(s0);
 sampler2D NormalMap : register(s1);
 sampler2D FaceGenMap0 : register(s2);

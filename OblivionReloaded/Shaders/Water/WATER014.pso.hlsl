@@ -19,23 +19,11 @@ float4 FogParam : register(c9);
 float4 FogColor : register(c10);
 float4 FresnelRI : register(c11);
 float4 BlendRadius : register(c12);
-float4 TESR_SunColor : register(c13);
-float4 TESR_WaterCoefficients : register(c14);
-float4 TESR_WaveParams : register(c15);
-float4 TESR_WaterVolume : register(c16);
-float4 TESR_WaterSettings : register(c17);
-float4 TESR_ReciprocalResolution : register(c18);
-float4 TESR_Tick : register(c19);
-float4x4 TESR_ViewTransform : register(c20);
-float4x4 TESR_ProjectionTransform : register(c24);
-
 sampler2D ReflectionMap : register(s0);
 sampler2D NormalMap : register(s1);
 sampler2D DetailMap : register(s2);
 sampler2D DepthMap : register(s3);
 sampler2D DisplacementMap : register(s4);
-sampler2D TESR_RenderedBuffer : register(s5) = sampler_state { };
-sampler2D TESR_DepthBuffer : register(s6) = sampler_state { };
 //
 //
 // Registers:
