@@ -11,6 +11,5 @@ public:
 	double			Time;
 	double			LastTime;
 	double			ElapsedTime;
-	double			SmartControlMPF;
 	double			LastPerformance;
 };

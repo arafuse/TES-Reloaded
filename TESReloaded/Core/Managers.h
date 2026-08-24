@@ -8,7 +8,6 @@
 #include "ShaderManager.h"
 #include "RenderManager.h"
 #include "FrameRateManager.h"
-#include "GameEventManager.h"
 #include "GameMenuManager.h"
 #include "KeyboardManager.h"
 #include "ShadowManager.h"

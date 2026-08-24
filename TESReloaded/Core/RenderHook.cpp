@@ -614,7 +614,6 @@ UInt32 RenderHook::TrackSetupShaderPrograms(NiGeometry* Geometry, NiSkinInstance
 	D3DMATRIX* Proj = &TheRenderManager->projMatrix;
 
 	if (!TheShaderManager->jitterSet) {
-		D3DMATRIX ProjV = TheRenderManager->projMatrix;		
 		TheShaderManager->jitterProjectionX = Proj->_31 + TheShaderManager->ShaderConst.Jitter.x;
 		TheShaderManager->jitterProjectionY = Proj->_32 + TheShaderManager->ShaderConst.Jitter.y;
 		TheShaderManager->jitterSet = true;

@@ -1096,6 +1096,8 @@ ShaderManager::ShaderManager() {
 	ShellFlattenPixelShader = NULL;
 	ShellCopyPixelShader = NULL;
 	ShellFlattenFailed = false;
+	CachedStateBlock = NULL;
+	CachedStateBlockDevice = NULL;
 	UnderwaterEffect = NULL;
 	WaterLensEffect = NULL;
 	GodRaysEffect = NULL;
@@ -3289,6 +3291,39 @@ void ShaderManager::RenderEffectsPostHdr(IDirect3DSurface9* RenderTargetParam) {
 	TheShaderManager->PrevWorldViewProjMatrix = TheRenderManager->WorldViewProjMatrix;
 }
 
+// Snapshots the whole device state into CachedStateBlock, so a mid-scene pass can restore it exactly.
+// Replaces a per-call CreateStateBlock(D3DSBT_ALL): that allocates a block AND captures, and only the
+// capture is wanted after the first time. The state SET a block records is fixed when it is created,
+// and D3DSBT_ALL is every state there is, so the one block serves all three callers regardless of
+// which of them built it. False means no block is available and the caller must bail out rather than
+// run a pass it cannot undo.
+//
+// The three callers are sequential top-level calls from the render hook and never nest, so there is
+// never more than one live capture - if that ever changes, this has to go back to per-call blocks.
+bool ShaderManager::CaptureDeviceState() {
+
+	IDirect3DDevice9* Device = TheRenderManager->device;
+	if (!Device) return false;
+
+	// Every other D3D resource this manager caches assumes a device that outlives the plugin, and the
+	// game never resets one. This costs a compare to not silently depend on that.
+	if (CachedStateBlock && CachedStateBlockDevice != Device) {
+		CachedStateBlock->Release();
+		CachedStateBlock = NULL;
+		CachedStateBlockDevice = NULL;
+	}
+	if (!CachedStateBlock) {
+		if (FAILED(Device->CreateStateBlock(D3DSBT_ALL, &CachedStateBlock))) {
+			CachedStateBlock = NULL;
+			return false;
+		}
+		CachedStateBlockDevice = Device;
+		return true; // CreateStateBlock captures the current state as it builds the block
+	}
+	return SUCCEEDED(CachedStateBlock->Capture());
+
+}
+
 // Shadow apply, run MID-SCENE: invoked from the render hook right before the first near-water
 // surface draw of the main pass (grass and LOD water are already drawn), or at the end of the
 // WorldSceneGraph render when no near water binds this frame. Rendering the darkening quad before
@@ -3312,11 +3347,10 @@ void ShaderManager::RenderShadowsMidScene() {
 
 	IDirect3DDevice9* Device = TheRenderManager->device;
 	IDirect3DSurface9* SceneRT = NULL;
-	IDirect3DStateBlock9* StateBlock = NULL;
 
 	if (!RenderedSurface || !EffectVertex) return;
 	if (FAILED(Device->GetRenderTarget(0, &SceneRT)) || !SceneRT) return;
-	if (FAILED(Device->CreateStateBlock(D3DSBT_ALL, &StateBlock))) { SceneRT->Release(); return; }
+	if (!CaptureDeviceState()) { SceneRT->Release(); return; }
 
 	TheRenderManager->SetupSceneCamera(); // CPU-side matrices only; refreshes WorldViewProj/InvViewProj for SetCT
 	Device->SetRenderState(D3DRS_ZENABLE, FALSE);
@@ -3340,8 +3374,7 @@ void ShaderManager::RenderShadowsMidScene() {
 		ShadowsPointEffect->Render(Device, SceneRT, RenderedSurface, false);
 	}
 
-	StateBlock->Apply();
-	StateBlock->Release();
+	CachedStateBlock->Apply();
 	SceneRT->Release();
 
 }
@@ -3528,7 +3561,6 @@ bool ShaderManager::CaptureShellRenderedBuffer() {
 	IDirect3DSurface9* SceneRT = TheRenderManager->currentRTGroup->RenderTargets[0]->data->Surface;
 	IDirect3DSurface9* PrevRenderTarget = NULL;
 	IDirect3DSurface9* PrevDepthSurface = NULL;
-	IDirect3DStateBlock9* StateBlock = NULL;
 
 	if (!SceneRT) return false;
 
@@ -3542,7 +3574,7 @@ bool ShaderManager::CaptureShellRenderedBuffer() {
 
 	if (FAILED(Device->GetRenderTarget(0, &PrevRenderTarget)) || !PrevRenderTarget) return false;
 	if (FAILED(Device->GetDepthStencilSurface(&PrevDepthSurface))) { PrevRenderTarget->Release(); return false; }
-	if (FAILED(Device->CreateStateBlock(D3DSBT_ALL, &StateBlock))) {
+	if (!CaptureDeviceState()) {
 		PrevRenderTarget->Release();
 		if (PrevDepthSurface) PrevDepthSurface->Release();
 		return false;
@@ -3557,8 +3589,7 @@ bool ShaderManager::CaptureShellRenderedBuffer() {
 	// scene target is, and D3D9 will not pair that with the non-multisampled RenderedSurface.
 	if (FAILED(Device->SetRenderTarget(0, RenderedSurface))) {
 		Device->SetRenderTarget(0, PrevRenderTarget);
-		StateBlock->Apply();
-		StateBlock->Release();
+		CachedStateBlock->Apply();
 		PrevRenderTarget->Release();
 		if (PrevDepthSurface) PrevDepthSurface->Release();
 		return false;
@@ -3602,8 +3633,7 @@ bool ShaderManager::CaptureShellRenderedBuffer() {
 	Device->SetTexture(1, NULL);
 	Device->SetRenderTarget(0, PrevRenderTarget);
 	Device->SetDepthStencilSurface(PrevDepthSurface);
-	StateBlock->Apply();
-	StateBlock->Release();
+	CachedStateBlock->Apply();
 	PrevRenderTarget->Release();
 	if (PrevDepthSurface) PrevDepthSurface->Release();
 	return true;
@@ -3663,7 +3693,6 @@ void ShaderManager::FlattenShellDepthInto(IDirect3DTexture9* Target, IDirect3DSu
 	IDirect3DDevice9* Device = TheRenderManager->device;
 	IDirect3DSurface9* PrevRenderTarget = NULL;
 	IDirect3DSurface9* PrevDepthSurface = NULL;
-	IDirect3DStateBlock9* StateBlock = NULL;
 
 	// Snapshot the shell's depth buffer. Must precede the target switch below, which takes the
 	// depth-stencil surface this reads out from under the device. Skipped only when the masked
@@ -3672,7 +3701,7 @@ void ShaderManager::FlattenShellDepthInto(IDirect3DTexture9* Target, IDirect3DSu
 
 	if (FAILED(Device->GetRenderTarget(0, &PrevRenderTarget)) || !PrevRenderTarget) return;
 	if (FAILED(Device->GetDepthStencilSurface(&PrevDepthSurface))) { PrevRenderTarget->Release(); return; }
-	if (FAILED(Device->CreateStateBlock(D3DSBT_ALL, &StateBlock))) {
+	if (!CaptureDeviceState()) {
 		PrevRenderTarget->Release();
 		if (PrevDepthSurface) PrevDepthSurface->Release();
 		return;
@@ -3704,8 +3733,7 @@ void ShaderManager::FlattenShellDepthInto(IDirect3DTexture9* Target, IDirect3DSu
 		ShellFlattenFailed = true;
 		Device->SetRenderTarget(0, PrevRenderTarget);
 		Device->SetDepthStencilSurface(PrevDepthSurface);
-		StateBlock->Apply();
-		StateBlock->Release();
+		CachedStateBlock->Apply();
 		PrevRenderTarget->Release();
 		if (PrevDepthSurface) PrevDepthSurface->Release();
 		return;
@@ -3739,8 +3767,7 @@ void ShaderManager::FlattenShellDepthInto(IDirect3DTexture9* Target, IDirect3DSu
 	Device->SetTexture(0, NULL);
 	Device->SetRenderTarget(0, PrevRenderTarget);
 	Device->SetDepthStencilSurface(PrevDepthSurface);
-	StateBlock->Apply();
-	StateBlock->Release();
+	CachedStateBlock->Apply();
 	PrevRenderTarget->Release();
 	if (PrevDepthSurface) PrevDepthSurface->Release();
 

@@ -442,6 +442,7 @@ public:
 	bool					CreateShellQuadVertexShader(); // ShellFlatten.vso, likewise shared
 	bool					CreateShellFlatten(IDirect3DTexture9* Target, IDirect3DSurface9** TargetSurface); // lazily builds what the flatten needs; false = feature stays off
 	bool					CreateShellCopy();		 // lazily builds what the masked capture needs; false = caller falls back to a blind blit
+	bool					CaptureDeviceState();	 // snapshot the full device state into CachedStateBlock; false = unavailable, caller must bail
 	void					ProfileBlitToSource(IDirect3DSurface9* RenderTarget); // counted scene->SourceSurface copy
 	void					SwitchShaderStatus(const char* Name);
 	void					SetCustomConstant(const char* Name, D3DXVECTOR4 Value);
@@ -526,6 +527,14 @@ public:
 	IDirect3DPixelShader9*	ShellCopyPixelShader;		// masked TESR_RenderedBuffer capture (CaptureShellRenderedBuffer)
 	bool					ShellFlattenFailed;			// latched on the first failure so it is not retried per frame;
 														// SHARED by both flatten targets - see CreateShellFlatten for why
+	// Shared by every mid-scene pass that has to hand the engine back the exact device state its own
+	// state caches believe is current. Built on first use and kept: CreateStateBlock(D3DSBT_ALL) both
+	// allocates the block AND snapshots the whole device state vector, which is among the most
+	// expensive calls in D3D9, and these sites fire up to three times a frame. Capture() re-snapshots
+	// into the existing block, which is the only half of that they actually need. The captured state
+	// SET is fixed at creation, so a block made by one site restores correctly for all of them.
+	IDirect3DStateBlock9*	CachedStateBlock;
+	IDirect3DDevice9*		CachedStateBlockDevice;		// the device it was built against; a change forces a rebuild
 	EffectRecord*			UnderwaterEffect;
 	EffectRecord*			WaterLensEffect;
 	EffectRecord*			GodRaysEffect;
