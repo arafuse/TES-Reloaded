@@ -97,8 +97,6 @@ struct ShaderConstants {
 		D3DXVECTOR4		waveParams;
 		D3DXVECTOR4		waterVolume;
 		D3DXVECTOR4		waterSettings;
-		D3DXVECTOR4		deepColor;
-		D3DXVECTOR4		shallowColor;
 		D3DXVECTOR4		shorelineParams;
 	};
 	struct GrassStruct {
@@ -256,7 +254,6 @@ struct ShaderConstants {
 	D3DXVECTOR4				DirectionalLight; //currently only used for moon lighting
 	bool					OverrideVanillaDirectionalLight;
 	DayPhase				DayPhase;
-	D3DXVECTOR4				ReflectionLightDir;
 	D3DXVECTOR4				SunDir;
 	D3DXVECTOR4				SunTiming;
 	D3DXVECTOR4				SunAmount;

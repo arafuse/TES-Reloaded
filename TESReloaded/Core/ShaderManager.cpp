@@ -10,26 +10,10 @@
 
 #if defined(NEWVEGAS)
 #define CurrentBlend 0.0f
-#define DeepColorR properties.deepColorR
-#define DeepColorG properties.deepColorG
-#define DeepColorB properties.deepColorB
-#define DeepColorA properties.deepColorA
-#define ShallowColorR properties.shallowColorR
-#define ShallowColorG properties.shallowColorG
-#define ShallowColorB properties.shallowColorB
-#define ShallowColorA properties.shallowColorA
 #define TerrainShaders ""
 #define BloodShaders ""
 #elif defined(OBLIVION)
 #define CurrentBlend *WaterBlend
-#define DeepColorR deepColorR
-#define DeepColorG deepColorG
-#define DeepColorB deepColorB
-#define DeepColorA deepColorA
-#define ShallowColorR shallowColorR
-#define ShallowColorG shallowColorG
-#define ShallowColorB shallowColorB
-#define ShallowColorA shallowColorA
 #define TerrainShaders "SLS2001.vso SLS2001.pso SLS2064.vso SLS2068.pso SLS2042.vso SLS2048.pso SLS2043.vso SLS2049.pso"
 #define ExteriorPom "PAR2022.pso"
 #define ExteriorExtraShaders "SM3LL003.pso SM3002.vso"
@@ -41,14 +25,6 @@
 #define windSpeed general.windSpeed
 #define weatherType general.weatherType
 #define CurrentBlend 0.0f
-#define DeepColorR properties.deepColorR
-#define DeepColorG properties.deepColorG
-#define DeepColorB properties.deepColorB
-#define DeepColorA properties.deepColorA
-#define ShallowColorR properties.shallowColorR
-#define ShallowColorG properties.shallowColorG
-#define ShallowColorB properties.shallowColorB
-#define ShallowColorA properties.shallowColorA
 #define TerrainShaders ""
 #define BloodShaders ""
 #endif
@@ -371,12 +347,8 @@ bool ShaderProgram::SetConstantTableValue1(LPCSTR Name, UInt32 Index) {
 		FloatShaderValues[Index].Value = &TheRenderManager->CameraPosition;
 	else if (!strcmp(Name, "TESR_SunDirection"))
 		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.SunDir;
-	else if (!strcmp(Name, "TESR_ReflectionLightDir"))
-		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.ReflectionLightDir;
 	else if (!strcmp(Name, "TESR_ShadowLightDir"))
 		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.ShadowMap.ShadowLightDir;
-	else if (!strcmp(Name, "TESR_SunTiming"))
-		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.SunTiming;
 	else if (!strcmp(Name, "TESR_SunAmount"))
 		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.SunAmount;
 	else if (!strcmp(Name, "TESR_MasserDirection"))
@@ -403,10 +375,6 @@ bool ShaderProgram::SetConstantTableValue1(LPCSTR Name, UInt32 Index) {
 		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.Water.waterVolume;
 	else if (!strcmp(Name, "TESR_WaterSettings"))
 		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.Water.waterSettings;
-	else if (!strcmp(Name, "TESR_WaterDeepColor"))
-		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.Water.deepColor;
-	else if (!strcmp(Name, "TESR_WaterShallowColor"))
-		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.Water.shallowColor;
 	else if (!strcmp(Name, "TESR_WaterShorelineParams"))
 		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.Water.shorelineParams;
 	else if (!strcmp(Name, "TESR_FogColor"))
@@ -499,8 +467,6 @@ bool ShaderProgram::SetConstantTableValue2(LPCSTR Name, UInt32 Index) {
 		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.Specular.SpecularData;
 	else if (!strcmp(Name, "TESR_TAAData"))
 		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.TAA.Data;
-	else if (!strcmp(Name, "TESR_Jitter"))
-		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.Jitter;
 	else if (!strcmp(Name, "TESR_PrevWorldViewProjectionTransform"))
 		FloatShaderValues[Index].Value = (D3DXVECTOR4*)&TheShaderManager->PrevWorldViewProjMatrix;
 	else {
@@ -753,21 +719,34 @@ void ShaderRecord::SetCT() {
 			TheRenderManager->ResolveDepthBuffer();
 			TheShaderManager->DepthBufferFilled = true;
 		}
+		IDirect3DDevice9* Device = TheRenderManager->device;
 		for (UInt32 c = 0; c < TextureShaderValuesCount; c++) {
 			Value = &TextureShaderValues[c];
-			if (Value->Texture->Texture) TheRenderManager->device->SetTexture(Value->RegisterIndex, Value->Texture->Texture);
-			if (Value->Texture->SamplerStates[0]) {
-				for (int t = 1; t < SamplerStatesMax; t++) {
-					if (Value->Texture->SamplerStates[t]) TheRenderManager->SetSamplerState(Value->RegisterIndex, (D3DSAMPLERSTATETYPE)t, Value->Texture->SamplerStates[t]);
-				}
+			TextureRecord* Tex = Value->Texture;
+			if (Tex->Texture) Device->SetTexture(Value->RegisterIndex, Tex->Texture);
+			// Compacted at load time by TextureRecord::PackSamplerStates rather than rescanning all 12
+			// sparse slots on every bind. Same states, same order, same skip of zero-valued entries -
+			// see PackSamplerStates for why that skip is preserved rather than fixed.
+			for (UInt32 s = 0; s < Tex->PackedStateCount; s++) {
+				TheRenderManager->SetSamplerState(Value->RegisterIndex, Tex->PackedStates[s].Type, Tex->PackedStates[s].Value);
 			}
 		}
-		for (UInt32 c = 0; c < FloatShaderValuesCount; c++) {
-			Value = &FloatShaderValues[c];
-			if (Type == ShaderType_Vertex)
-				TheRenderManager->device->SetVertexShaderConstantF(Value->RegisterIndex, (const float *)Value->Value, Value->RegisterCount);
-			else
-				TheRenderManager->device->SetPixelShaderConstantF(Value->RegisterIndex, (const float *)Value->Value, Value->RegisterCount);
+		// Type is fixed for the life of the record, so the test is hoisted out rather than re-run per
+		// constant. Coalescing adjacent constants into single multi-register uploads was measured and
+		// rejected: a merge needs consecutive REGISTERS and contiguous storage in ShaderConst at the
+		// same time, and those two orderings are set independently - fxc's declaration order on one
+		// side, the header's grouping on the other. Across every raw shader here they never coincide.
+		if (Type == ShaderType_Vertex) {
+			for (UInt32 c = 0; c < FloatShaderValuesCount; c++) {
+				Value = &FloatShaderValues[c];
+				Device->SetVertexShaderConstantF(Value->RegisterIndex, (const float *)Value->Value, Value->RegisterCount);
+			}
+		}
+		else {
+			for (UInt32 c = 0; c < FloatShaderValuesCount; c++) {
+				Value = &FloatShaderValues[c];
+				Device->SetPixelShaderConstantF(Value->RegisterIndex, (const float *)Value->Value, Value->RegisterCount);
+			}
 		}
 	}
 
@@ -1698,20 +1677,6 @@ void ShaderManager::UpdateInteriorLighting(ShaderConstants& ShaderConst, TESObje
 }
 
 void ShaderManager::UpdateWater(ShaderConstants& ShaderConst, TESObjectCELL* currentCell, SettingsWaterStruct* sws) {
-	TESWaterForm* currentWater = currentCell->GetWaterForm();
-
-	if (currentWater) {
-		ShaderConst.Water.deepColor.x = currentWater->DeepColorR / 255.0f;
-		ShaderConst.Water.deepColor.y = currentWater->DeepColorG / 255.0f;
-		ShaderConst.Water.deepColor.z = currentWater->DeepColorB / 255.0f;
-		ShaderConst.Water.deepColor.w = currentWater->DeepColorA / 255.0f;
-
-		ShaderConst.Water.shallowColor.x = currentWater->ShallowColorR / 255.0f;
-		ShaderConst.Water.shallowColor.y = currentWater->ShallowColorG / 255.0f;
-		ShaderConst.Water.shallowColor.z = currentWater->ShallowColorB / 255.0f;
-		ShaderConst.Water.shallowColor.w = currentWater->ShallowColorA / 255.0f;
-	}
-
 	ShaderConst.Water.waterCoefficients.x = sws->inExtCoeff_R;
 	ShaderConst.Water.waterCoefficients.y = sws->inExtCoeff_G;
 	ShaderConst.Water.waterCoefficients.z = sws->inExtCoeff_B;

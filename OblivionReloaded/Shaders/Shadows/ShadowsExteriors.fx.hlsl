@@ -9,39 +9,7 @@ float4x4 TESR_ShadowCameraToLightTransformSkin;
 float4x4 TESR_ShadowCameraToLightTransformNearPrev;
 float4x4 TESR_ShadowCameraToLightTransformFarPrev;
 float4 TESR_CameraPosition;
-float4 TESR_WaterSettings;
 float4 TESR_ShadowData;
-float4 TESR_ShadowLightPosition0;
-float4 TESR_ShadowLightPosition1;
-float4 TESR_ShadowLightPosition2;
-float4 TESR_ShadowLightPosition3;
-float4 TESR_ShadowLightPosition4;
-float4 TESR_ShadowLightPosition5;
-float4 TESR_ShadowLightPosition6;
-float4 TESR_ShadowLightPosition7;
-float4 TESR_ShadowLightPosition8;
-float4 TESR_ShadowLightPosition9;
-float4 TESR_ShadowLightPosition10;
-float4 TESR_ShadowLightPosition11;
-float4 TESR_ShadowCullLightPosition0;
-float4 TESR_ShadowCullLightPosition1;
-float4 TESR_ShadowCullLightPosition2;
-float4 TESR_ShadowCullLightPosition3;
-float4 TESR_ShadowCullLightPosition4;
-float4 TESR_ShadowCullLightPosition5;
-float4 TESR_ShadowCullLightPosition6;
-float4 TESR_ShadowCullLightPosition7;
-float4 TESR_ShadowCullLightPosition8;
-float4 TESR_ShadowCullLightPosition9;
-float4 TESR_ShadowCullLightPosition10;
-float4 TESR_ShadowCullLightPosition11;
-float4 TESR_ShadowCullLightPosition12;
-float4 TESR_ShadowCullLightPosition13;
-float4 TESR_ShadowCullLightPosition14;
-float4 TESR_ShadowCullLightPosition15;
-float4 TESR_ShadowCullLightPosition16;
-float4 TESR_ShadowCullLightPosition17;
-float4 TESR_SunAmount;
 float4 TESR_ShadowLightDir;
 float4 TESR_ReciprocalResolution;
 float4 TESR_ShadowBiasDeferred;
@@ -56,6 +24,14 @@ float4 TESR_ShadowBiasAdaptive; // x = terminator width, y = max slope clamp, z 
 float4 TESR_ShadowFadeData;
 float4 TESR_FogData;
 
+// TESR_DepthBuffer (s1) and TESR_SourceBuffer (s4) are NOT sampled by this effect any more -- the
+// sky guard reads TESR_DepthBufferPreWater instead. They stay declared regardless, because for an
+// EFFECT the runtime binds textures by ORDINAL, not by the declared register: EffectRecord::CreateCT
+// passes the Nth TESR_ sampler parameter's index to TextureManager::LoadTexture, which then matches
+// it against the register(sN) it parses out of this source. Deleting a sampler from the middle
+// renumbers every ordinal after it while the registers here stay put, and every later sampler binds
+// the wrong texture. Removing these two means renumbering the whole block contiguously; until that
+// is done and tested they cost two SetTexture calls a frame and nothing else.
 sampler2D TESR_RenderedBuffer : register(s0) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
 sampler2D TESR_DepthBuffer : register(s1) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
 sampler2D TESR_ShadowMapBufferNear : register(s2) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };

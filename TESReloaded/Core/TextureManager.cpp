@@ -12,6 +12,7 @@ TextureRecord::TextureRecord() {
 
 	Texture = NULL;
 	for (int i = 0; i < SamplerStatesMax; i++) SamplerStates[i] = 0;
+	PackedStateCount = 0;
 
 }
 
@@ -91,6 +92,26 @@ void TextureRecord::SetSamplerState(D3DSAMPLERSTATETYPE SamplerType, DWORD Value
 
 	SamplerStates[0] = 1;
 	SamplerStates[SamplerType] = Value;
+
+}
+
+// Compacts SamplerStates into PackedStates for the per-bind loop.
+//
+// Zero-VALUED states are skipped, which preserves the existing behaviour exactly rather than tidying
+// it: SamplerStates uses 0 for "not set", so a shader declaring MIPFILTER = NONE (D3DTEXF_NONE == 0)
+// or SRGBTEXTURE = FALSE has never actually had that state applied. Packing those in would start
+// applying them and change how those shaders sample. That may well be a real bug, but it is a
+// rendering change and not this one's to make.
+void TextureRecord::PackSamplerStates() {
+
+	PackedStateCount = 0;
+	if (!SamplerStates[0]) return;	// slot 0 is the "any states at all" flag, not a sampler state
+	for (int t = 1; t < SamplerStatesMax; t++) {
+		if (!SamplerStates[t]) continue;
+		PackedStates[PackedStateCount].Type = (D3DSAMPLERSTATETYPE)t;
+		PackedStates[PackedStateCount].Value = SamplerStates[t];
+		PackedStateCount++;
+	}
 
 }
 
@@ -333,6 +354,7 @@ TextureRecord* TextureManager::LoadTexture(const char* ShaderSource, UInt32 Regi
 			Logger::Log("Texture linked: %s", Path);
 		}
 	}
+	NewTextureRecord->PackSamplerStates();
 	return NewTextureRecord;
 
 }
