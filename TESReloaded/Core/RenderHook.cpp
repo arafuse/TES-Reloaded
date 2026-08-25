@@ -930,10 +930,24 @@ UInt32 RenderHook::TrackSetupShaderPrograms(NiGeometry* Geometry, NiSkinInstance
 		result = (this->*SetupShaderPrograms)(Geometry, SkinInstance, SkinPartition, GeometryBufferData, PropertyState, EffectState, WorldTransform, WorldBound);
 	}
 
+	// Only c254/c255 belong here: they carry the collision actors made relative to THIS instance's
+	// world position, so they genuinely change per draw.
+	//
+	// c253 (TESR_GrassCollisionParams) used to be re-uploaded here too and no longer is. The grass
+	// vertex shaders declare it at register(c253), it is mapped in SetConstantTableValue1, and it
+	// survives into their compiled constant table - so ShaderRecord::SetCT already uploads it, from
+	// the same ShaderConst.Grass.CollisionParams, at every grass shader bind. UpdateGrass writes that
+	// value once a frame, so the per-draw copy was writing identical bytes over themselves.
+	//
+	// The reason this is safe rather than merely redundant-looking: SetCT runs BEFORE the engine's
+	// SetupShaderPrograms call, so it would only be insufficient if the engine clobbered c253 while
+	// setting up the draw. It does not touch that band. TESR_GrassScale (c248) and
+	// TESR_ShadowCameraToLightTransformNear (c249-c252) sit in the same high registers, have no
+	// post-engine re-upload at all, and work - grass scaling and grass shadows would both be broken
+	// if the engine wrote there.
 	if (VertexShader && VertexShader->ShaderProg && VertexShader->isGrass) {
 		float cx = WorldTransform->pos.x;
 		float cy = WorldTransform->pos.y;
-		TheRenderManager->device->SetVertexShaderConstantF(253, (const float*)&TheShaderManager->ShaderConst.Grass.CollisionParams, 1);
 		D3DXVECTOR4 xy0(
 			TheShaderManager->GrassCollisionActors[0].x - cx,
 			TheShaderManager->GrassCollisionActors[0].y - cy,
