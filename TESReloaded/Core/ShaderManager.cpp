@@ -775,6 +775,9 @@ EffectRecord::EffectRecord() {
 
 	Enabled = false;
 	HasSB = false;
+	HasRB = false;
+	SBRegister = 0;
+	RBRegister = 0;
 	Source = NULL;
 	Effect = NULL;
 	Errors = NULL;
@@ -948,7 +951,8 @@ void EffectRecord::CreateCT() {
 					break;
 				case D3DXPC_OBJECT:
 					if (ConstantDesc.Class == D3DXPC_OBJECT && ConstantDesc.Type >= D3DXPT_SAMPLER && ConstantDesc.Type <= D3DXPT_SAMPLERCUBE) {
-						if (!strcmp(ConstantDesc.Name, WordSourceBuffer)) HasSB = true;
+						if (!strcmp(ConstantDesc.Name, WordSourceBuffer)) { HasSB = true; SBRegister = TextureIndex; }
+						if (!strcmp(ConstantDesc.Name, WordRenderedBuffer)) { HasRB = true; RBRegister = TextureIndex; }
 						TextureShaderValues[TextureIndex].Texture = TheTextureManager->LoadTexture(Source, TextureIndex);
 						TextureShaderValues[TextureIndex].RegisterIndex = TextureIndex;
 						TextureShaderValues[TextureIndex].RegisterCount = 1;
@@ -987,10 +991,24 @@ void EffectRecord::Render(IDirect3DDevice9* Device, IDirect3DSurface9* RenderTar
 	EffMark(ProfileName.c_str()); // open this effect's GPU-time interval (per-effect breakdown)
 	Effect->Begin(&Passes, NULL);
 
-	// Original per-pass-copy path for single-pass effects (nothing to ping-pong) and
-	// for clear-based effects (SMAA): SMAA's passes read dedicated intermediate textures
-	// rather than the previous pass via TESR_RenderedBuffer, so the ping-pong assumption
-	// below does not hold for it.
+	// Original per-pass-copy path: single-pass effects (nothing to ping-pong) and clear-based
+	// effects (SMAA).
+	//
+	// CORRECTED 2026-08-24. This comment used to say SMAA was excluded because "SMAA's passes read
+	// dedicated intermediate textures rather than the previous pass via TESR_RenderedBuffer". That is
+	// false, and dangerously so: SMAA chains through TESR_RenderedBuffer exactly like everything else
+	// - pass 0 (edge detection) reads it, pass 1 (blending weights) reads it, pass 2 (neighborhood
+	// blending) reads it alongside TESR_SourceBuffer (SMAA.fx.hlsl:285, 297, 309). The per-pass
+	// StretchRect below is what delivers each pass's output to the next one and is LOAD BEARING for
+	// SMAA; anyone who trusts the old comment and elides it will silently break antialiasing.
+	//
+	// The two real reasons SMAA cannot take the ping-pong path:
+	//   1. It needs the render target CLEARED before every pass. The ping-pong path never clears.
+	//   2. The ping-pong path hardcodes Device->SetTexture(0, srcTex), i.e. it assumes
+	//      TESR_RenderedBuffer sits at sampler 0. SMAA puts TESR_SourceBuffer at s0 and
+	//      TESR_RenderedBuffer at s1 (SMAA.fx.hlsl:215-216), so that rebind would feed the wrong
+	//      texture. Any future attempt to widen ping-ponging must read the register out of the
+	//      effect's own parameter table instead of assuming s0.
 	if (Passes <= 1 || ClearRenderTarget) {
 		for (UINT p = 0; p < Passes; p++) {
 			if (ClearRenderTarget) Device->Clear(0L, NULL, D3DCLEAR_TARGET, D3DCOLOR_ARGB(0, 0, 0, 0), 1.0f, 0L);
@@ -1044,6 +1062,108 @@ void EffectRecord::Render(IDirect3DDevice9* Device, IDirect3DSurface9* RenderTar
 
 }
 
+// Chain-rotation render. Reads TheShaderManager->ChainTex[ChainCur] and writes only the two scratch
+// buffers, so the current buffer survives the whole effect and can serve TESR_SourceBuffer without a
+// copy. On return ChainCur names whichever scratch holds the result. No StretchRect is issued.
+//
+// The pass walk mirrors Render()'s in-effect ping-pong, with one difference that matters: the source
+// texture is rebound at RBRegister rather than sampler 0. Render() may assume s0 because it never
+// runs for the one effect that breaks that assumption (SMAA, s1); this path runs for everything.
+void EffectRecord::RenderChained(IDirect3DDevice9* Device, bool ClearRenderTarget) {
+
+	UINT Passes;
+	ShaderManager* SM = TheShaderManager;
+
+	EffCountEffect();
+	EffMark(ProfileName.c_str());
+	Effect->Begin(&Passes, NULL);
+	if (!Passes) { Effect->End(); return; }
+
+	// The two buffers that are not currently live. Writing only these is the invariant the whole
+	// design rests on - it is what keeps the source image intact across a multi-pass effect.
+	const int Cur = SM->ChainCur;
+	const int A = (Cur + 1) % 3;
+	const int B = (Cur + 2) % 3;
+
+	for (UINT p = 0; p < Passes; p++) {
+		int Dst = (p & 1) ? B : A;
+		IDirect3DTexture9* Src = (p == 0) ? SM->ChainTex[Cur] : SM->ChainTex[(p & 1) ? A : B];
+		// Both bindings are refreshed every pass rather than set once outside the loop: Begin() was
+		// called with flags 0, so D3DX saves and restores device state around the technique and may
+		// put a sampler back between passes. The in-effect ping-pong in Render() rebinds per pass for
+		// the same reason.
+		//
+		// The source bind is required, not an optimization: SetCT pointed this sampler at
+		// SourceTexture, which the rotation never fills.
+		if (HasSB) Device->SetTexture(SBRegister, SM->ChainTex[Cur]);
+		if (HasRB) Device->SetTexture(RBRegister, Src);
+		Device->SetRenderTarget(0, SM->ChainSurf[Dst]);
+		// Per-pass clear (SMAA): the legacy path cleared the shared render target, this clears the
+		// scratch the pass is about to write. Same guarantee, no shared surface involved.
+		if (ClearRenderTarget) Device->Clear(0L, NULL, D3DCLEAR_TARGET, D3DCOLOR_ARGB(0, 0, 0, 0), 1.0f, 0L);
+		Effect->BeginPass(p);
+		Device->DrawPrimitive(D3DPT_TRIANGLESTRIP, 0, 2);
+		Effect->EndPass();
+		EffCountPass();
+	}
+	Effect->End();
+
+	SM->ChainCur = ((Passes - 1) & 1) ? B : A;
+
+}
+
+// Adopt RenderedTexture as the live buffer. The callers of RenderEffects already blit the scene into
+// RenderedSurface before the chain runs, so the rotation starts with no copy of its own.
+void ShaderManager::ChainBegin() {
+
+	ChainTex[0]  = RenderedTexture;  ChainSurf[0] = RenderedSurface;
+	ChainTex[1]  = PingTexture;      ChainSurf[1] = PingSurface;
+	ChainTex[2]  = EffectTexture;    ChainSurf[2] = EffectSurface;
+	ChainCur = 0;
+	ChainActive = true;
+
+}
+
+// The chain's single remaining copy: put the result where the caller expects it, and restore the
+// device bindings the legacy path leaves behind (render target, sampler 0 = RenderedTexture) so
+// nothing downstream can tell which path ran.
+void ShaderManager::ChainEnd(IDirect3DSurface9* RenderTarget) {
+
+	IDirect3DDevice9* Device = TheRenderManager->device;
+	// In the pre-HDR chain the render target IS EffectSurface, so when the rotation happens to end
+	// there the copy would be a surface onto itself - skip it rather than ask the driver.
+	if (ChainSurf[ChainCur] != RenderTarget) {
+		Device->StretchRect(ChainSurf[ChainCur], NULL, RenderTarget, NULL, D3DTEXF_NONE);
+		EffCountBlit();
+	}
+	// Effects downstream of the chain (and the next frame's seed) still expect RenderedSurface to
+	// hold the finished image.
+	if (ChainCur != 0) {
+		Device->StretchRect(ChainSurf[ChainCur], NULL, RenderedSurface, NULL, D3DTEXF_NONE);
+		EffCountBlit();
+	}
+	Device->SetRenderTarget(0, RenderTarget);
+	Device->SetTexture(0, RenderedTexture);
+	ChainActive = false;
+
+}
+
+// One entry point for every effect in the chain, so the legacy and rotation paths cannot drift.
+// BlitSource carries the call site's existing decision about TESR_SourceBuffer and is honoured
+// exactly in legacy mode; the rotation needs no blit because it binds the live buffer instead.
+void ShaderManager::RunEffect(EffectRecord* Effect, IDirect3DDevice9* Device, IDirect3DSurface9* RenderTarget, bool BlitSource, bool ClearRenderTarget) {
+
+	if (ChainActive) {
+		Effect->SetCT();
+		Effect->RenderChained(Device, ClearRenderTarget);
+		return;
+	}
+	if (BlitSource) ProfileBlitToSource(RenderTarget);
+	Effect->SetCT();
+	Effect->Render(Device, RenderTarget, RenderedSurface, ClearRenderTarget);
+
+}
+
 ShaderManager::ShaderManager() {
 
 	Logger::Log("Starting the shaders manager...");
@@ -1079,6 +1199,9 @@ ShaderManager::ShaderManager() {
 	ShellFlattenFailed = false;
 	CachedStateBlock = NULL;
 	CachedStateBlockDevice = NULL;
+	ChainActive = false;
+	ChainCur = 0;
+	for (int i = 0; i < 3; i++) { ChainTex[i] = NULL; ChainSurf[i] = NULL; }
 	UnderwaterEffect = NULL;
 	WaterLensEffect = NULL;
 	GodRaysEffect = NULL;
@@ -3076,30 +3199,29 @@ void ShaderManager::RenderEffects(IDirect3DSurface9* RenderTarget) {
 
 	EffectProfileChainBegin(Device);
 
+	// Opt-in buffer rotation (Develop.EffectChainPingPong). Decided per chain rather than latched at
+	// startup so the INI can be reloaded mid-session and the next chain simply picks the other path;
+	// with it off, every call site below behaves exactly as it did before this existed.
+	if (TheSettingManager->SettingsMain.Develop.EffectChainPingPong && RenderedTexture && PingTexture && EffectTexture)
+		ChainBegin();
+
 	if (Effects->WetWorld && isExteriorLike && ShaderConst.WetWorld.Data.x > 0.0f) {
-		ProfileBlitToSource(RenderTarget);
-		WetWorldEffect->SetCT();
-		WetWorldEffect->Render(Device, RenderTarget, RenderedSurface, false);
+		RunEffect(WetWorldEffect, Device, RenderTarget, true, false);
 	}
 	else if (Effects->SnowAccumulation && isExteriorLike && ShaderConst.SnowAccumulation.Params.w > 0.0f) {
-		ProfileBlitToSource(RenderTarget);
-		SnowAccumulationEffect->SetCT();
-		SnowAccumulationEffect->Render(Device, RenderTarget, RenderedSurface, false);
+		RunEffect(SnowAccumulationEffect, Device, RenderTarget, true, false);
 	}
 	// Shadows are not part of this post chain — both the exterior sun apply and the point-light
 	// apply run MID-SCENE via RenderShadowsMidScene() (before the first near-water draw) so water
 	// and the Underwater effect composite over the shadows instead of being painted over by them.
 	if (Effects->Bloom) {
-		ProfileBlitToSource(RenderTarget);
-		BloomEffect->SetCT();
-		BloomEffect->Render(Device, RenderTarget, RenderedSurface, false);
+		RunEffect(BloomEffect, Device, RenderTarget, true, false);
 	}
 	if (Effects->Underwater && ShaderConst.HasWater && TheRenderManager->CameraPosition.z < ShaderConst.Water.waterSettings.x + 3.0f) { //  + 20.0f araf Bad offset with Enhanced Camera
 		if (TheRenderManager->CameraPosition.z < ShaderConst.Water.waterSettings.x) {
 			if (ShaderConst.WaterLens.Percent > -2.0f) ShaderConst.WaterLens.Percent = ShaderConst.WaterLens.Percent - 1.0f;
 		}
-		UnderwaterEffect->SetCT();
-		UnderwaterEffect->Render(Device, RenderTarget, RenderedSurface, false);
+		RunEffect(UnderwaterEffect, Device, RenderTarget, false, false);
 	}
 	else {
 		if (ShaderConst.WaterLens.Percent <= -2.0f)
@@ -3109,80 +3231,71 @@ void ShaderManager::RenderEffects(IDirect3DSurface9* RenderTarget) {
 
 		if (Effects->Precipitations && isExteriorLike) {
 			if (ShaderConst.Precipitations.RainData.x > 0.0f) {
-				RainEffect->SetCT();
-				RainEffect->Render(Device, RenderTarget, RenderedSurface, false);
+				RunEffect(RainEffect, Device, RenderTarget, false, false);
 			}
 			if (ShaderConst.Precipitations.SnowData.x > 0.0f) {
-				SnowEffect->SetCT();
-				SnowEffect->Render(Device, RenderTarget, RenderedSurface, false);
+				RunEffect(SnowEffect, Device, RenderTarget, false, false);
 			}
 		}
 		if (Effects->AmbientOcclusion && ShaderConst.AmbientOcclusion.Enabled) {
-			ProfileBlitToSource(RenderTarget);
-			AmbientOcclusionEffect->SetCT();
-			AmbientOcclusionEffect->Render(Device, RenderTarget, RenderedSurface, false);
+			RunEffect(AmbientOcclusionEffect, Device, RenderTarget, true, false);
 		}
 		if (Effects->GodRays && isExteriorLike && (ShaderConst.SunAmount.x >= 0.4 || ShaderConst.SunAmount.y > 0 || ShaderConst.SunAmount.z >= 0.3)) {
-			ProfileBlitToSource(RenderTarget);
-			GodRaysEffect->SetCT();
-			GodRaysEffect->Render(Device, RenderTarget, RenderedSurface, false);
+			RunEffect(GodRaysEffect, Device, RenderTarget, true, false);
 		}
 		else if (ShaderConst.MoonsExist && Effects->KhajiitRays && isExteriorLike && (ShaderConst.SunAmount.x < 0.4 || ShaderConst.SunAmount.z < 0.3)) {
-			ProfileBlitToSource(RenderTarget);
-			SecundaRaysEffect->SetCT();
-			SecundaRaysEffect->Render(Device, RenderTarget, RenderedSurface, false);
-			ProfileBlitToSource(RenderTarget);
-			MasserRaysEffect->SetCT();
-			MasserRaysEffect->Render(Device, RenderTarget, RenderedSurface, false);
+			RunEffect(SecundaRaysEffect, Device, RenderTarget, true, false);
+			RunEffect(MasserRaysEffect, Device, RenderTarget, true, false);
 		}
 		if (Effects->VolumetricFog && isExteriorLike && ShaderConst.VolumetricFog.Data.w) {
 			// VolumetricFog samples only TESR_RenderedBuffer/TESR_DepthBuffer, never
 			// TESR_SourceBuffer -- so the scene->SourceSurface blit was wasted work.
-			VolumetricFogEffect->SetCT();
-			VolumetricFogEffect->Render(Device, RenderTarget, RenderedSurface, false);
+			RunEffect(VolumetricFogEffect, Device, RenderTarget, false, false);
 		}
 	}
 	if (Effects->VolumetricLight && isExteriorLike) {
-		ProfileBlitToSource(RenderTarget);
-		VolumetricLightEffect->SetCT();
-		VolumetricLightEffect->Render(Device, RenderTarget, RenderedSurface, false);
+		RunEffect(VolumetricLightEffect, Device, RenderTarget, true, false);
 	}
 	if (Effects->SMAA) {
-		ProfileBlitToSource(RenderTarget);
-		Device->SetRenderTarget(0, RenderSurfaceSMAA);
-		SMAAEffect->SetCT();
-		SMAAEffect->Render(Device, RenderSurfaceSMAA, RenderedSurface, true);
-		Device->StretchRect(RenderSurfaceSMAA, NULL, RenderTarget, NULL, D3DTEXF_NONE);
-		EffCountBlit();
-		Device->SetRenderTarget(0, RenderTarget);
+		if (ChainActive) {
+			// The rotation gives SMAA exactly what RenderSurfaceSMAA plus the per-pass copies were
+			// emulating: every pass clears and writes its own scratch buffer, and the next pass reads
+			// that buffer directly. The dedicated surface and all five of SMAA's blits fall away.
+			// Its TESR_RenderedBuffer is at s1, not s0 - RenderChained binds by RBRegister, which is
+			// the whole reason that lookup exists.
+			RunEffect(SMAAEffect, Device, RenderTarget, true, true);
+		}
+		else {
+			ProfileBlitToSource(RenderTarget);
+			Device->SetRenderTarget(0, RenderSurfaceSMAA);
+			SMAAEffect->SetCT();
+			SMAAEffect->Render(Device, RenderSurfaceSMAA, RenderedSurface, true);
+			Device->StretchRect(RenderSurfaceSMAA, NULL, RenderTarget, NULL, D3DTEXF_NONE);
+			EffCountBlit();
+			Device->SetRenderTarget(0, RenderTarget);
+		}
 	}
 	if (Effects->TAA) {
-		ProfileBlitToSource(RenderTarget);
-		TAAEffect->SetCT();
-		TAAEffect->Render(Device, RenderTarget, RenderedSurface, false);
-		Device->StretchRect(RenderedSurface, NULL, TAASurface, NULL, D3DTEXF_NONE);
+		RunEffect(TAAEffect, Device, RenderTarget, true, false);
+		// TAA's history buffer. Under the rotation the finished frame sits in whichever scratch the
+		// last pass wrote, not necessarily RenderedSurface, so take it from the live buffer.
+		Device->StretchRect(ChainActive ? ChainSurf[ChainCur] : RenderedSurface, NULL, TAASurface, NULL, D3DTEXF_NONE);
 		EffCountBlit();
 	}
 	if (Effects->DepthOfField && ShaderConst.DepthOfField.Enabled) {
-		ProfileBlitToSource(RenderTarget);
-		DepthOfFieldEffect->SetCT();
-		DepthOfFieldEffect->Render(Device, RenderTarget, RenderedSurface, false);
+		RunEffect(DepthOfFieldEffect, Device, RenderTarget, true, false);
 	}
 	if (Effects->WaterLens && ShaderConst.WaterLens.Percent > 0.0f) {
-		WaterLensEffect->SetCT();
-		WaterLensEffect->Render(Device, RenderTarget, RenderedSurface, false);
+		RunEffect(WaterLensEffect, Device, RenderTarget, false, false);
 	}
 	if (Effects->MotionBlur && (ShaderConst.MotionBlur.Data.x || ShaderConst.MotionBlur.Data.y)) {
-		MotionBlurEffect->SetCT();
-		MotionBlurEffect->Render(Device, RenderTarget, RenderedSurface, false);
+		RunEffect(MotionBlurEffect, Device, RenderTarget, false, false);
 	}
 	if (Effects->Sharpening) {
-		SharpeningEffect->SetCT();
-		SharpeningEffect->Render(Device, RenderTarget, RenderedSurface, false);
+		RunEffect(SharpeningEffect, Device, RenderTarget, false, false);
 	}
 	if (Effects->Coloring) {
-		ColoringEffect->SetCT();
-		ColoringEffect->Render(Device, RenderTarget, RenderedSurface, false);
+		RunEffect(ColoringEffect, Device, RenderTarget, false, false);
 	}
 	if (Effects->Extra) {
 		for (ExtraEffectsList::iterator iter = ExtraEffects.begin(); iter != ExtraEffects.end(); ++iter) {
@@ -3190,16 +3303,17 @@ void ShaderManager::RenderEffects(IDirect3DSurface9* RenderTarget) {
 				// Every built-in effect above has its blit matched to a real TESR_SourceBuffer
 				// declaration (see the VolumetricFog note for the last one that did not). Extras were
 				// the one path still paying a full-screen FP16 copy unconditionally.
-				if (iter->second->HasSB) ProfileBlitToSource(RenderTarget);
-				iter->second->SetCT();
-				iter->second->Render(Device, RenderTarget, RenderedSurface, false);
+				RunEffect(iter->second, Device, RenderTarget, iter->second->HasSB, false);
 			}
 		}
 	}
 	if (Effects->Cinema && (ShaderConst.Cinema.Data.x != 0.0f || ShaderConst.Cinema.Data.y != 0.0f)) {
-		CinemaEffect->SetCT();
-		CinemaEffect->Render(Device, RenderTarget, RenderedSurface, false);
+		RunEffect(CinemaEffect, Device, RenderTarget, false, false);
 	}
+
+	// Materialise the rotation before the profiler closes, so its one remaining copy is counted in
+	// the chain's numbers rather than disappearing between them.
+	if (ChainActive) ChainEnd(RenderTarget);
 
 	EffectProfileChainEnd(); // exclude the (rare) screenshot save below from timing
 

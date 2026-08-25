@@ -428,6 +428,7 @@ SettingManager::SettingManager() {
 	SettingsMain.Develop.ProfileEffects = GetPrivateProfileIntA("Develop", "ProfileEffects", 0, Filename);
 	SettingsMain.Develop.ProfileFrame = GetPrivateProfileIntA("Develop", "ProfileFrame", 0, Filename);
 	SettingsMain.Develop.NearShellDebug = GetPrivateProfileIntA("Develop", "NearShellDebug", 0, Filename);
+	SettingsMain.Develop.EffectChainPingPong = GetPrivateProfileIntA("Develop", "EffectChainPingPong", 0, Filename);
 
 	GameLoading = false;
 

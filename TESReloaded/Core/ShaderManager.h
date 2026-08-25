@@ -384,12 +384,25 @@ public:
 	void						CreateCT();
 	void						SetCT();
 	void						Render(IDirect3DDevice9* Device, IDirect3DSurface9* RenderTarget, IDirect3DSurface9* RenderedSurface, bool ClearRenderTarget);
+	// Chain-rotation variant of Render (Develop.EffectChainPingPong). Reads the chain's current
+	// buffer and writes into the two scratch buffers, leaving the result in one of them; the caller
+	// then adopts it as the new current. Issues NO StretchRect at all.
+	void						RenderChained(IDirect3DDevice9* Device, bool ClearRenderTarget);
 
 	bool						Enabled;
 	// True when the effect declares TESR_SourceBuffer, i.e. it actually reads the pre-chain image.
 	// Latched in CreateCT the way ShaderRecord latches HasRB/HasDB, so the caller can skip the
 	// full-screen scene->SourceSurface blit for effects that never sample it.
 	bool						HasSB;
+	// Sampler ORDINALS of TESR_SourceBuffer / TESR_RenderedBuffer, latched in CreateCT. Ordinals,
+	// not declared registers: EffectRecord::CreateCT numbers TESR_ samplers in parameter order and
+	// SetCT binds with SetTexture(ordinal), so this is the same index space it uses.
+	//
+	// RBRegister is why the chain rotation cannot simply assume sampler 0 the way the in-effect
+	// ping-pong in Render() does. SMAA puts TESR_SourceBuffer at s0 and TESR_RenderedBuffer at s1.
+	bool						HasRB;
+	UInt32						SBRegister;
+	UInt32						RBRegister;
 	char*	 					Source;
 	ID3DXBuffer*				Errors;
 	ID3DXEffect*				Effect;
@@ -445,6 +458,26 @@ public:
 	bool					CreateShellCopy();		 // lazily builds what the masked capture needs; false = caller falls back to a blind blit
 	bool					CaptureDeviceState();	 // snapshot the full device state into CachedStateBlock; false = unavailable, caller must bail
 	void					ProfileBlitToSource(IDirect3DSurface9* RenderTarget); // counted scene->SourceSurface copy
+	// --- Post chain, opt-in rotation (Develop.EffectChainPingPong) --------------------------------
+	// The legacy chain hands the image between effects through the render target: every effect ends
+	// by copying it back into RenderedSurface, and every effect that reads TESR_SourceBuffer takes a
+	// second full-screen copy first. That is ~11 full-screen FP16 StretchRects a frame in a typical
+	// exterior, measured at roughly 0.2 ms each.
+	//
+	// The rotation instead keeps the live image in one of three interchangeable full-screen textures
+	// (Rendered / Ping / Effect - all created identically) and never copies between effects at all.
+	// Each effect reads the current one, ping-pongs its passes across the other two, and the chain
+	// simply relabels which buffer is current. TESR_SourceBuffer binds to the current buffer, which
+	// is guaranteed untouched for the duration of the effect precisely because the passes write only
+	// the other two - that is what makes the source copy unnecessary rather than merely skipped.
+	// One copy remains, at the very end, to put the result in the caller's render target.
+	bool					ChainActive;	// rotation in use for the chain currently running
+	int						ChainCur;		// index into ChainTex/ChainSurf of the live image
+	IDirect3DTexture9*		ChainTex[3];
+	IDirect3DSurface9*		ChainSurf[3];
+	void					ChainBegin();							// adopt RenderedTexture as current
+	void					ChainEnd(IDirect3DSurface9* RenderTarget);	// materialise into the render target
+	void					RunEffect(EffectRecord* Effect, IDirect3DDevice9* Device, IDirect3DSurface9* RenderTarget, bool BlitSource, bool ClearRenderTarget);
 	void					SwitchShaderStatus(const char* Name);
 	void					SetCustomConstant(const char* Name, D3DXVECTOR4 Value);
 	void					SetExtraEffectEnabled(const char* Name, bool Value);

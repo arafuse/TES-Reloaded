@@ -274,6 +274,10 @@ struct SettingsMainStruct {
 		UInt8	ProfileEffects;
 		UInt8	ProfileFrame;
 		UInt8	NearShellDebug;
+		// Opt-in: run the post chain as a 3-buffer rotation instead of copying through the render
+		// target between effects. Removes nearly every full-screen FP16 StretchRect in the chain.
+		// Default OFF - the legacy path is left byte-identical so this can be A/B'd in game.
+		UInt8	EffectChainPingPong;
 	};
 
 	MainStruct					Main;
