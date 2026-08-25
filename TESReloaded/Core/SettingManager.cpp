@@ -90,6 +90,11 @@ SettingManager::SettingManager() {
 	SettingsMain.Main.NearShellEnabled = GetPrivateProfileIntA("Main", "NearShellEnabled", 1, Filename);
 	GetPrivateProfileStringA("Main", "NearShellBoundary", "15.0", value, SettingStringBuffer, Filename);
 	SettingsMain.Main.NearShellBoundary = atof(value);
+	// Fraction of each screen axis the volumetric-light ray-march covers. 0.5 (the default, and
+	// what the shader used to hardcode) marches a quarter of the pixels; 0.25 a sixteenth. Clamped
+	// because 0 would clip the ray-march away entirely and > 1 would run it off the buffer.
+	GetPrivateProfileStringA("Main", "VolumetricLightResolution", "0.5", value, SettingStringBuffer, Filename);
+	SettingsMain.Main.VolumetricLightResolution = max(0.05f, min(1.0f, (float)atof(value)));
 	GetPrivateProfileStringA("Main", "ScreenshotPath", CurrentPath, value, SettingStringBuffer, Filename);
 	if (value[0] == '\\') {
 		strcpy(SettingsMain.Main.ScreenshotPath, CurrentPath);

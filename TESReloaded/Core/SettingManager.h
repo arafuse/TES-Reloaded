@@ -101,6 +101,7 @@ struct SettingsMainStruct {
 		float	FoV;
 		bool	NearShellEnabled;
 		float	NearShellBoundary;
+		float	VolumetricLightResolution;
 	};
 	
 	struct CameraModeStruct {

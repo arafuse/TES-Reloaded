@@ -2377,6 +2377,7 @@ void ShaderManager::UpdateVolumetricLight(ShaderConstants& ShaderConst, TESWeath
 	ShaderConst.VolumetricLight.data3.w = std::lerp(TheShaderManager->previousFogHeight, TheShaderManager->currentFogHeight, weatherPercent);
 
 	ShaderConst.VolumetricLight.data4.y = std::lerp(previousSettings->animatedFogToggle, currentSettings->animatedFogToggle, weatherPercent);
+	ShaderConst.VolumetricLight.data4.x = TheSettingManager->SettingsMain.Main.VolumetricLightResolution;
 	ShaderConst.VolumetricLight.data4.z = TheRenderManager->width;
 	ShaderConst.VolumetricLight.data4.w = TheRenderManager->height;
 

@@ -221,7 +221,7 @@ struct ShaderConstants {
 		//w = Accum height Cutoff
 
 		D3DXVECTOR4 data4;
-		//x = UNUSED
+		//x = Ray-march resolution scale ([Main] VolumetricLightResolution)
 		//y = Animated fog toggle
 		//z = Screen Res X
 		//w = Screen Res Y 

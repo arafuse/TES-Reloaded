@@ -44,7 +44,7 @@ float4 TESR_VolumetricLightData3;
 //w = Accum height Cutoff
 
 float4 TESR_VolumetricLightData4;
-//x = Unused
+//x = Ray-march resolution scale
 //y = Animated fog toggle
 //z = Screen Res X
 //w = Screen Res Y 
@@ -103,7 +103,10 @@ sampler2D TESR_ShadowMapBufferFar : register(s4) = sampler_state
 };
 
 static const float4x4 DITHER_PATTERN = { 0.0f, 0.5f, 0.125f, 0.625f, 0.75f, 0.22f, 0.875f, 0.375f, 0.1875f, 0.6875f, 0.0625f, 0.5625f, 0.9375f, 0.4375f, 0.8125f, 0.3125f };
-static const float resPercent = 0.5f;
+// Fraction of each screen axis the ray-march covers ([Main] VolumetricLightResolution, default
+// 0.5 = quarter of the pixels). It is a uniform, so every use below folds to a CPU preshader and
+// costs nothing per pixel.
+static const float resPercent = TESR_VolumetricLightData4.x;
 
 static const float nearZ = TESR_ProjectionTransform._43 / TESR_ProjectionTransform._33;
 static const float farZ = (TESR_ProjectionTransform._33 * nearZ) / (TESR_ProjectionTransform._33 - 1.0f);
@@ -256,12 +259,17 @@ float LookupFar(float4 ShadowPos, float2 OffSet)
     return 1.0f;
 }
 
+// Perf: the six-compare bounds test folds to one max-of-abs. |x| > 1 is exactly x < -1 || x > 1,
+// and |2z - 1| > 1 is exactly z < 0 || z > 1; abs is a free source modifier in ps_3_0.
+bool OutsideShadowMap(float3 ShadowPos)
+{
+    return max(max(abs(ShadowPos.x), abs(ShadowPos.y)), abs(ShadowPos.z * 2.0f - 1.0f)) > 1.0f;
+}
+
 float GetLightAmountFar(float4 ShadowPos)
 {
     ShadowPos.xyz /= ShadowPos.w;
-    if (ShadowPos.x < -1.0f || ShadowPos.x > 1.0f ||
-		ShadowPos.y < -1.0f || ShadowPos.y > 1.0f ||
-		ShadowPos.z < 0.0f || ShadowPos.z > 1.0f)
+    if (OutsideShadowMap(ShadowPos.xyz))
         return 1.0f;
 
     ShadowPos.x = ShadowPos.x * 0.5f + 0.5f;
@@ -283,9 +291,7 @@ float GetLightAmount(float4 ShadowPos, float4 ShadowPosFar)
 
     float Shadow = 0.0f;
     ShadowPos.xyz /= ShadowPos.w;
-    if (ShadowPos.x < -1.0f || ShadowPos.x > 1.0f ||
-		ShadowPos.y < -1.0f || ShadowPos.y > 1.0f ||
-		ShadowPos.z < 0.0f || ShadowPos.z > 1.0f)
+    if (OutsideShadowMap(ShadowPos.xyz))
         return GetLightAmountFar(ShadowPosFar);
 
     ShadowPos.x = ShadowPos.x * 0.5f + 0.5f;
@@ -311,22 +317,22 @@ float ComputeScatteringSky(float lightDotView)
     return result;
 }
 
-float ComputeScatteringSkyInt(float lightDotView, float media)
+// Sky and ground scattering differed only in how far the media term may raise the
+// Henyey-Greenstein parameter, so they are one function taking that ceiling. The ray-march
+// picks the ceiling once outside the loop; previously fxc flattened the if(isSky) and
+// evaluated BOTH variants (two rsq + two rcp) on every step to discard one.
+float ComputeScatteringClamped(float lightDotView, float media, float ceiling)
 {
-    float scatter = min(SCATTERING + media, 1.0f);
+    float scatter = min(SCATTERING + media, ceiling);
     float result = 1.0f - scatter * scatter;
     float g = 1.0f + scatter * scatter - (2.0f * scatter) * lightDotView; // >= 0
-    result /= (4.0f * PI * (g * sqrt(g))); // Perf: pow(g,1.5) -> g*sqrt(g)
+    result /= (4.0f * PI * (g * sqrt(g))); // Perf: pow(g,1.5) -> g*sqrt(g); fxc doesn't fold pow 1.5
     return result;
 }
 
 float ComputeScattering(float lightDotView, float media)
 {
-    float scatter = min(SCATTERING + media, 0.5f);
-    float result = 1.0f - scatter * scatter;
-    float g = 1.0f + scatter * scatter - (2.0f * scatter) * lightDotView; // >= 0
-    result /= (4.0f * PI * (g * sqrt(g))); // Perf: pow(g,1.5) -> g*sqrt(g)
-    return result;
+    return ComputeScatteringClamped(lightDotView, media, 0.5f);
 }
 
 float4 VolumetricLightBaseSky(VSOUT IN) : COLOR0
@@ -341,7 +347,11 @@ float4 VolumetricLightBaseSky(VSOUT IN) : COLOR0
     float sunIntensity = TESR_VolumetricLightData4.y - 1;
 
     float2 uv = IN.UVCoord.xy;
-    float3 color = tex2D(TESR_RenderedBuffer, uv).rgb;
+    // Upsample the ray-march quadrant here rather than in a pass of its own. Clamp to the last
+    // texel centre the ray-march wrote: without it the bilinear tap of the final column and row
+    // straddles the quadrant edge and pulls in a quarter of whatever the shared buffer still
+    // holds outside it, drawing a 1px border of stale data.
+    float3 color = tex2D(TESR_RenderedBuffer, min(uv * resPercent, resPercent - 0.5f * TESR_ReciprocalResolution.xy)).rgb;
     float depth = readDepth(uv);
     float shadowDepth = readDepthShadow(uv);
     float3 shadowCameraVector = toWorld(uv) * shadowDepth;
@@ -447,7 +457,16 @@ float4 VolumetricLight(VSOUT IN) : COLOR0
     noiseCurrentPosition += noiseStep * DITHER_PATTERN[int(abs(uv.x) * (TESR_VolumetricLightData4.z * resPercent)) % 4][int(abs(uv.y) * (TESR_VolumetricLightData4.w * resPercent)) % 4];
     float3 accumLight = 0.0f.xxx;
     fogDirection *= (TESR_Tick.y / 10000.0f).xxx;
-   
+
+    // Perf: every one of these is loop-invariant (rayDirection and the light are fixed for the
+    // ray), so they are computed once instead of MARCH_NUM times. shadowedScatter is the whole
+    // shadowed-step phase term - its media argument is the constant 0, so only the distance
+    // falloff it gets multiplied by inside the loop actually varies.
+    float lightDotView = dot(rayDirection, TESR_ShadowLightDir.xyz);
+    float3 lightColor = accumLightColor * TESR_ShadowLightDir.w;
+    float scatterCeiling = isSky ? 1.0f : 0.5f;
+    float3 shadowedScatter = ComputeScatteringClamped(lightDotView, 0.0f, 0.5f).xxx * lightColor;
+
     for (int i = 0; i < MARCH_NUM; i++)
     {
         // Perf: collapse pos=mul(cp,WVP) + two muls into two preshader-combined muls.
@@ -472,18 +491,11 @@ float4 VolumetricLight(VSOUT IN) : COLOR0
 
         if (Shadow >= 1.0f)
         {
-            if (isSky)
-            {
-                accumLight += ((ComputeScatteringSkyInt(dot(rayDirection, TESR_ShadowLightDir), scatterFog.x).xxx * (accumLightColor * TESR_ShadowLightDir.w)) + fog) * heightTransition;
-            }
-            else
-            {
-                accumLight += ((ComputeScattering(dot(rayDirection, TESR_ShadowLightDir), scatterFog.x).xxx * (accumLightColor * TESR_ShadowLightDir.w)) + fog) * heightTransition;
-            }
+            accumLight += ((ComputeScatteringClamped(lightDotView, scatterFog.x, scatterCeiling).xxx * lightColor) + fog) * heightTransition;
         }
         else
         {
-            accumLight += (((ComputeScattering(dot(rayDirection, TESR_ShadowLightDir), 0.0f).xxx * ((accumLightColor) * TESR_ShadowLightDir.w)) * (1 - saturate(accumLightDistanceCutoff / distance(cpos, TESR_CameraPosition.xyz)))) + fog) * heightTransition;
+            accumLight += ((shadowedScatter * (1 - saturate(accumLightDistanceCutoff / distance(cpos, TESR_CameraPosition.xyz)))) + fog) * heightTransition;
         }
         
         currentPosition += step;
@@ -544,15 +556,6 @@ float4 VolumetricLight(VSOUT IN) : COLOR0
     return float4(accumLight, 1.0f);
 }
 
-float4 Expand(VSOUT IN) : COLOR0
-{
-    // Clamp to the last texel centre of the quadrant the half-res pass wrote. Without it the
-    // bilinear tap of the final column and row straddles the quadrant edge and pulls in a quarter
-    // of whatever the shared buffer still holds outside it, drawing a 1px border of stale data.
-    float2 coord = min(IN.UVCoord * resPercent, resPercent - 0.5f * TESR_ReciprocalResolution.xy);
-    return tex2D(TESR_RenderedBuffer, coord);
-}
-
 float4 CombineLight(VSOUT IN) : COLOR0
 {
     float3 Color = tex2D(TESR_SourceBuffer, IN.UVCoord).rgb;
@@ -566,11 +569,6 @@ technique
     {
         VertexShader = compile vs_3_0 FrameVS();
         PixelShader = compile ps_3_0 VolumetricLight();
-    }
-    pass
-    {
-        VertexShader = compile vs_3_0 FrameVS();
-        PixelShader = compile ps_3_0 Expand();
     }
     pass
     {
