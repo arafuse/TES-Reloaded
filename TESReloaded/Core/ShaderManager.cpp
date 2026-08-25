@@ -3311,9 +3311,17 @@ void ShaderManager::RenderEffects(IDirect3DSurface9* RenderTarget) {
 		RunEffect(CinemaEffect, Device, RenderTarget, false, false);
 	}
 
-	// Materialise the rotation before the profiler closes, so its one remaining copy is counted in
-	// the chain's numbers rather than disappearing between them.
-	if (ChainActive) ChainEnd(RenderTarget);
+	// Materialise the rotation before the profiler closes, so its remaining copies are counted in the
+	// chain's numbers rather than disappearing between them.
+	//
+	// Marked as its own bucket first. EffMark labels the interval that FOLLOWS it, so without this
+	// these two blits land in the last effect's bucket and read as that effect getting slower - which
+	// is exactly how the first measurement of this feature looked, with DepthOfField apparently
+	// rising 0.20 ms while every other effect fell.
+	if (ChainActive) {
+		EffMark("(chain end)");
+		ChainEnd(RenderTarget);
+	}
 
 	EffectProfileChainEnd(); // exclude the (rare) screenshot save below from timing
 
