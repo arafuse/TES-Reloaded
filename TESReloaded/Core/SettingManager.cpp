@@ -107,7 +107,7 @@ SettingManager::SettingManager() {
 	SettingsMain.Main.ScreenshotType = GetPrivateProfileIntA("Main", "ScreenshotType", 1, Filename);
 	SettingsMain.Main.ScreenshotKey = GetPrivateProfileIntA("Main", "ScreenshotKey", 87, Filename);
 	SettingsMain.Main.FPSOverlay = GetPrivateProfileIntA("Main", "FPSOverlay", 0, Filename);
-	SettingsMain.Main.DirectionalLightOverride = GetPrivateProfileIntA("Main", "DirectionalLightOverride", 0, Filename);
+	SettingsMain.Main.DirectionalLightOverride = GetPrivateProfileIntA("Main", "DirectionalLightOverride", 1, Filename);
 	SettingsMain.Main.RenderEffectsBeforeHdr = GetPrivateProfileIntA("Main", "RenderEffectsBeforeHdr", 0, Filename);
 	SettingsMain.Main.EffectChainPingPong = GetPrivateProfileIntA("Main", "EffectChainPingPong", 1, Filename);
 	GetPrivateProfileStringA("Main", "MoonPhaseLumNew", "0.0", value, SettingStringBuffer, Filename);
