@@ -109,7 +109,7 @@ SettingManager::SettingManager() {
 	SettingsMain.Main.FPSOverlay = GetPrivateProfileIntA("Main", "FPSOverlay", 0, Filename);
 	SettingsMain.Main.DirectionalLightOverride = GetPrivateProfileIntA("Main", "DirectionalLightOverride", 0, Filename);
 	SettingsMain.Main.RenderEffectsBeforeHdr = GetPrivateProfileIntA("Main", "RenderEffectsBeforeHdr", 0, Filename);
-	SettingsMain.Main.EffectChainPingPong = GetPrivateProfileIntA("Main", "EffectChainPingPong", 0, Filename);
+	SettingsMain.Main.EffectChainPingPong = GetPrivateProfileIntA("Main", "EffectChainPingPong", 1, Filename);
 	GetPrivateProfileStringA("Main", "MoonPhaseLumNew", "0.0", value, SettingStringBuffer, Filename);
 	SettingsMain.Main.MoonPhaseLumNew = atof(value);
 	GetPrivateProfileStringA("Main", "MoonPhaseLumQtr", "0.25", value, SettingStringBuffer, Filename);

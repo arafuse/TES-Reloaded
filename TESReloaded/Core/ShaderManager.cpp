@@ -3200,8 +3200,8 @@ void ShaderManager::RenderEffects(IDirect3DSurface9* RenderTarget) {
 
 	EffectProfileChainBegin(Device);
 
-	// Opt-in buffer rotation (Main.EffectChainPingPong). Decided per chain rather than latched at
-	// startup so the INI can be reloaded mid-session and the next chain simply picks the other path;
+	// Buffer rotation (Main.EffectChainPingPong), on by default. Decided per chain rather than latched
+	// at startup so the INI can be reloaded mid-session and the next chain simply picks the other path;
 	// with it off, every call site below behaves exactly as it did before this existed.
 	if (TheSettingManager->SettingsMain.Main.EffectChainPingPong && RenderedTexture && PingTexture && EffectTexture)
 		ChainBegin();
