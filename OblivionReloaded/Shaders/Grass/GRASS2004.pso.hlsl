@@ -7,8 +7,6 @@
 // Parameters:
 //
 float4 AlphaTestRef : register(c3);
-float4 TESR_ShadowData : register(c5);
-float4 TESR_ShadowLightPosition[12] : register(c6);
 sampler2D DiffuseMap : register(s0);
 sampler2D ShadowMap : register(s1);
 sampler2D ShadowMaskMap : register(s2);

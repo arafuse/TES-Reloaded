@@ -10,26 +10,10 @@
 
 #if defined(NEWVEGAS)
 #define CurrentBlend 0.0f
-#define DeepColorR properties.deepColorR
-#define DeepColorG properties.deepColorG
-#define DeepColorB properties.deepColorB
-#define DeepColorA properties.deepColorA
-#define ShallowColorR properties.shallowColorR
-#define ShallowColorG properties.shallowColorG
-#define ShallowColorB properties.shallowColorB
-#define ShallowColorA properties.shallowColorA
 #define TerrainShaders ""
 #define BloodShaders ""
 #elif defined(OBLIVION)
 #define CurrentBlend *WaterBlend
-#define DeepColorR deepColorR
-#define DeepColorG deepColorG
-#define DeepColorB deepColorB
-#define DeepColorA deepColorA
-#define ShallowColorR shallowColorR
-#define ShallowColorG shallowColorG
-#define ShallowColorB shallowColorB
-#define ShallowColorA shallowColorA
 #define TerrainShaders "SLS2001.vso SLS2001.pso SLS2064.vso SLS2068.pso SLS2042.vso SLS2048.pso SLS2043.vso SLS2049.pso"
 #define ExteriorPom "PAR2022.pso"
 #define ExteriorExtraShaders "SM3LL003.pso SM3002.vso"
@@ -41,14 +25,6 @@
 #define windSpeed general.windSpeed
 #define weatherType general.weatherType
 #define CurrentBlend 0.0f
-#define DeepColorR properties.deepColorR
-#define DeepColorG properties.deepColorG
-#define DeepColorB properties.deepColorB
-#define DeepColorA properties.deepColorA
-#define ShallowColorR properties.shallowColorR
-#define ShallowColorG properties.shallowColorG
-#define ShallowColorB properties.shallowColorB
-#define ShallowColorA properties.shallowColorA
 #define TerrainShaders ""
 #define BloodShaders ""
 #endif
@@ -276,8 +252,6 @@ bool ShaderProgram::SetConstantTableValue1(LPCSTR Name, UInt32 Index) {
 
 	if (!strcmp(Name, "TESR_Tick"))
 		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.Tick;
-	else if (!strcmp(Name, "TESR_ToneMapping"))
-		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.HDR.ToneMapping;
 	else if (!strcmp(Name, "TESR_ParallaxData"))
 		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.POM.ParallaxData;
 	else if (!strcmp(Name, "TESR_GrassScale"))
@@ -373,12 +347,8 @@ bool ShaderProgram::SetConstantTableValue1(LPCSTR Name, UInt32 Index) {
 		FloatShaderValues[Index].Value = &TheRenderManager->CameraPosition;
 	else if (!strcmp(Name, "TESR_SunDirection"))
 		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.SunDir;
-	else if (!strcmp(Name, "TESR_ReflectionLightDir"))
-		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.ReflectionLightDir;
 	else if (!strcmp(Name, "TESR_ShadowLightDir"))
 		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.ShadowMap.ShadowLightDir;
-	else if (!strcmp(Name, "TESR_SunTiming"))
-		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.SunTiming;
 	else if (!strcmp(Name, "TESR_SunAmount"))
 		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.SunAmount;
 	else if (!strcmp(Name, "TESR_MasserDirection"))
@@ -405,10 +375,6 @@ bool ShaderProgram::SetConstantTableValue1(LPCSTR Name, UInt32 Index) {
 		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.Water.waterVolume;
 	else if (!strcmp(Name, "TESR_WaterSettings"))
 		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.Water.waterSettings;
-	else if (!strcmp(Name, "TESR_WaterDeepColor"))
-		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.Water.deepColor;
-	else if (!strcmp(Name, "TESR_WaterShallowColor"))
-		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.Water.shallowColor;
 	else if (!strcmp(Name, "TESR_WaterShorelineParams"))
 		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.Water.shorelineParams;
 	else if (!strcmp(Name, "TESR_FogColor"))
@@ -501,8 +467,6 @@ bool ShaderProgram::SetConstantTableValue2(LPCSTR Name, UInt32 Index) {
 		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.Specular.SpecularData;
 	else if (!strcmp(Name, "TESR_TAAData"))
 		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.TAA.Data;
-	else if (!strcmp(Name, "TESR_Jitter"))
-		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.Jitter;
 	else if (!strcmp(Name, "TESR_PrevWorldViewProjectionTransform"))
 		FloatShaderValues[Index].Value = (D3DXVECTOR4*)&TheShaderManager->PrevWorldViewProjMatrix;
 	else {
@@ -566,10 +530,6 @@ bool ShaderRecord::LoadShader(const char* Name, const char* DirPostFix) {
 	else if (!memcmp(Name, "GRASS", 5)) {
 		if (!TheSettingManager->SettingsMain.Shaders.Grass) return false;
 		strcat(FileName, "Grass");
-	}
-	else if (!memcmp(Name, "HDR", 3)) {
-		if (!TheSettingManager->SettingsMain.Shaders.HDR) return false;
-		strcat(FileName, "HDR");
 	}
 	else if (!memcmp(Name, "PART", 4)) {
 		strcat(FileName, "ExtraShaders");
@@ -759,21 +719,34 @@ void ShaderRecord::SetCT() {
 			TheRenderManager->ResolveDepthBuffer();
 			TheShaderManager->DepthBufferFilled = true;
 		}
+		IDirect3DDevice9* Device = TheRenderManager->device;
 		for (UInt32 c = 0; c < TextureShaderValuesCount; c++) {
 			Value = &TextureShaderValues[c];
-			if (Value->Texture->Texture) TheRenderManager->device->SetTexture(Value->RegisterIndex, Value->Texture->Texture);
-			if (Value->Texture->SamplerStates[0]) {
-				for (int t = 1; t < SamplerStatesMax; t++) {
-					if (Value->Texture->SamplerStates[t]) TheRenderManager->SetSamplerState(Value->RegisterIndex, (D3DSAMPLERSTATETYPE)t, Value->Texture->SamplerStates[t]);
-				}
+			TextureRecord* Tex = Value->Texture;
+			if (Tex->Texture) Device->SetTexture(Value->RegisterIndex, Tex->Texture);
+			// Compacted at load time by TextureRecord::PackSamplerStates rather than rescanning all 12
+			// sparse slots on every bind. Same states, same order, same skip of zero-valued entries -
+			// see PackSamplerStates for why that skip is preserved rather than fixed.
+			for (UInt32 s = 0; s < Tex->PackedStateCount; s++) {
+				TheRenderManager->SetSamplerState(Value->RegisterIndex, Tex->PackedStates[s].Type, Tex->PackedStates[s].Value);
 			}
 		}
-		for (UInt32 c = 0; c < FloatShaderValuesCount; c++) {
-			Value = &FloatShaderValues[c];
-			if (Type == ShaderType_Vertex)
-				TheRenderManager->device->SetVertexShaderConstantF(Value->RegisterIndex, (const float *)Value->Value, Value->RegisterCount);
-			else
-				TheRenderManager->device->SetPixelShaderConstantF(Value->RegisterIndex, (const float *)Value->Value, Value->RegisterCount);
+		// Type is fixed for the life of the record, so the test is hoisted out rather than re-run per
+		// constant. Coalescing adjacent constants into single multi-register uploads was measured and
+		// rejected: a merge needs consecutive REGISTERS and contiguous storage in ShaderConst at the
+		// same time, and those two orderings are set independently - fxc's declaration order on one
+		// side, the header's grouping on the other. Across every raw shader here they never coincide.
+		if (Type == ShaderType_Vertex) {
+			for (UInt32 c = 0; c < FloatShaderValuesCount; c++) {
+				Value = &FloatShaderValues[c];
+				Device->SetVertexShaderConstantF(Value->RegisterIndex, (const float *)Value->Value, Value->RegisterCount);
+			}
+		}
+		else {
+			for (UInt32 c = 0; c < FloatShaderValuesCount; c++) {
+				Value = &FloatShaderValues[c];
+				Device->SetPixelShaderConstantF(Value->RegisterIndex, (const float *)Value->Value, Value->RegisterCount);
+			}
 		}
 	}
 
@@ -801,6 +774,10 @@ void ShaderRecord::SetPerGeomCT() {
 EffectRecord::EffectRecord() {
 
 	Enabled = false;
+	HasSB = false;
+	HasRB = false;
+	SBRegister = 0;
+	RBRegister = 0;
 	Source = NULL;
 	Effect = NULL;
 	Errors = NULL;
@@ -974,6 +951,8 @@ void EffectRecord::CreateCT() {
 					break;
 				case D3DXPC_OBJECT:
 					if (ConstantDesc.Class == D3DXPC_OBJECT && ConstantDesc.Type >= D3DXPT_SAMPLER && ConstantDesc.Type <= D3DXPT_SAMPLERCUBE) {
+						if (!strcmp(ConstantDesc.Name, WordSourceBuffer)) { HasSB = true; SBRegister = TextureIndex; }
+						if (!strcmp(ConstantDesc.Name, WordRenderedBuffer)) { HasRB = true; RBRegister = TextureIndex; }
 						TextureShaderValues[TextureIndex].Texture = TheTextureManager->LoadTexture(Source, TextureIndex);
 						TextureShaderValues[TextureIndex].RegisterIndex = TextureIndex;
 						TextureShaderValues[TextureIndex].RegisterCount = 1;
@@ -1012,10 +991,24 @@ void EffectRecord::Render(IDirect3DDevice9* Device, IDirect3DSurface9* RenderTar
 	EffMark(ProfileName.c_str()); // open this effect's GPU-time interval (per-effect breakdown)
 	Effect->Begin(&Passes, NULL);
 
-	// Original per-pass-copy path for single-pass effects (nothing to ping-pong) and
-	// for clear-based effects (SMAA): SMAA's passes read dedicated intermediate textures
-	// rather than the previous pass via TESR_RenderedBuffer, so the ping-pong assumption
-	// below does not hold for it.
+	// Original per-pass-copy path: single-pass effects (nothing to ping-pong) and clear-based
+	// effects (SMAA).
+	//
+	// CORRECTED 2026-08-24. This comment used to say SMAA was excluded because "SMAA's passes read
+	// dedicated intermediate textures rather than the previous pass via TESR_RenderedBuffer". That is
+	// false, and dangerously so: SMAA chains through TESR_RenderedBuffer exactly like everything else
+	// - pass 0 (edge detection) reads it, pass 1 (blending weights) reads it, pass 2 (neighborhood
+	// blending) reads it alongside TESR_SourceBuffer (SMAA.fx.hlsl:285, 297, 309). The per-pass
+	// StretchRect below is what delivers each pass's output to the next one and is LOAD BEARING for
+	// SMAA; anyone who trusts the old comment and elides it will silently break antialiasing.
+	//
+	// The two real reasons SMAA cannot take the ping-pong path:
+	//   1. It needs the render target CLEARED before every pass. The ping-pong path never clears.
+	//   2. The ping-pong path hardcodes Device->SetTexture(0, srcTex), i.e. it assumes
+	//      TESR_RenderedBuffer sits at sampler 0. SMAA puts TESR_SourceBuffer at s0 and
+	//      TESR_RenderedBuffer at s1 (SMAA.fx.hlsl:215-216), so that rebind would feed the wrong
+	//      texture. Any future attempt to widen ping-ponging must read the register out of the
+	//      effect's own parameter table instead of assuming s0.
 	if (Passes <= 1 || ClearRenderTarget) {
 		for (UINT p = 0; p < Passes; p++) {
 			if (ClearRenderTarget) Device->Clear(0L, NULL, D3DCLEAR_TARGET, D3DCOLOR_ARGB(0, 0, 0, 0), 1.0f, 0L);
@@ -1069,6 +1062,108 @@ void EffectRecord::Render(IDirect3DDevice9* Device, IDirect3DSurface9* RenderTar
 
 }
 
+// Chain-rotation render. Reads TheShaderManager->ChainTex[ChainCur] and writes only the two scratch
+// buffers, so the current buffer survives the whole effect and can serve TESR_SourceBuffer without a
+// copy. On return ChainCur names whichever scratch holds the result. No StretchRect is issued.
+//
+// The pass walk mirrors Render()'s in-effect ping-pong, with one difference that matters: the source
+// texture is rebound at RBRegister rather than sampler 0. Render() may assume s0 because it never
+// runs for the one effect that breaks that assumption (SMAA, s1); this path runs for everything.
+void EffectRecord::RenderChained(IDirect3DDevice9* Device, bool ClearRenderTarget) {
+
+	UINT Passes;
+	ShaderManager* SM = TheShaderManager;
+
+	EffCountEffect();
+	EffMark(ProfileName.c_str());
+	Effect->Begin(&Passes, NULL);
+	if (!Passes) { Effect->End(); return; }
+
+	// The two buffers that are not currently live. Writing only these is the invariant the whole
+	// design rests on - it is what keeps the source image intact across a multi-pass effect.
+	const int Cur = SM->ChainCur;
+	const int A = (Cur + 1) % 3;
+	const int B = (Cur + 2) % 3;
+
+	for (UINT p = 0; p < Passes; p++) {
+		int Dst = (p & 1) ? B : A;
+		IDirect3DTexture9* Src = (p == 0) ? SM->ChainTex[Cur] : SM->ChainTex[(p & 1) ? A : B];
+		// Both bindings are refreshed every pass rather than set once outside the loop: Begin() was
+		// called with flags 0, so D3DX saves and restores device state around the technique and may
+		// put a sampler back between passes. The in-effect ping-pong in Render() rebinds per pass for
+		// the same reason.
+		//
+		// The source bind is required, not an optimization: SetCT pointed this sampler at
+		// SourceTexture, which the rotation never fills.
+		if (HasSB) Device->SetTexture(SBRegister, SM->ChainTex[Cur]);
+		if (HasRB) Device->SetTexture(RBRegister, Src);
+		Device->SetRenderTarget(0, SM->ChainSurf[Dst]);
+		// Per-pass clear (SMAA): the legacy path cleared the shared render target, this clears the
+		// scratch the pass is about to write. Same guarantee, no shared surface involved.
+		if (ClearRenderTarget) Device->Clear(0L, NULL, D3DCLEAR_TARGET, D3DCOLOR_ARGB(0, 0, 0, 0), 1.0f, 0L);
+		Effect->BeginPass(p);
+		Device->DrawPrimitive(D3DPT_TRIANGLESTRIP, 0, 2);
+		Effect->EndPass();
+		EffCountPass();
+	}
+	Effect->End();
+
+	SM->ChainCur = ((Passes - 1) & 1) ? B : A;
+
+}
+
+// Adopt RenderedTexture as the live buffer. The callers of RenderEffects already blit the scene into
+// RenderedSurface before the chain runs, so the rotation starts with no copy of its own.
+void ShaderManager::ChainBegin() {
+
+	ChainTex[0]  = RenderedTexture;  ChainSurf[0] = RenderedSurface;
+	ChainTex[1]  = PingTexture;      ChainSurf[1] = PingSurface;
+	ChainTex[2]  = EffectTexture;    ChainSurf[2] = EffectSurface;
+	ChainCur = 0;
+	ChainActive = true;
+
+}
+
+// The chain's single remaining copy: put the result where the caller expects it, and restore the
+// device bindings the legacy path leaves behind (render target, sampler 0 = RenderedTexture) so
+// nothing downstream can tell which path ran.
+void ShaderManager::ChainEnd(IDirect3DSurface9* RenderTarget) {
+
+	IDirect3DDevice9* Device = TheRenderManager->device;
+	// In the pre-HDR chain the render target IS EffectSurface, so when the rotation happens to end
+	// there the copy would be a surface onto itself - skip it rather than ask the driver.
+	if (ChainSurf[ChainCur] != RenderTarget) {
+		Device->StretchRect(ChainSurf[ChainCur], NULL, RenderTarget, NULL, D3DTEXF_NONE);
+		EffCountBlit();
+	}
+	// Effects downstream of the chain (and the next frame's seed) still expect RenderedSurface to
+	// hold the finished image.
+	if (ChainCur != 0) {
+		Device->StretchRect(ChainSurf[ChainCur], NULL, RenderedSurface, NULL, D3DTEXF_NONE);
+		EffCountBlit();
+	}
+	Device->SetRenderTarget(0, RenderTarget);
+	Device->SetTexture(0, RenderedTexture);
+	ChainActive = false;
+
+}
+
+// One entry point for every effect in the chain, so the legacy and rotation paths cannot drift.
+// BlitSource carries the call site's existing decision about TESR_SourceBuffer and is honoured
+// exactly in legacy mode; the rotation needs no blit because it binds the live buffer instead.
+void ShaderManager::RunEffect(EffectRecord* Effect, IDirect3DDevice9* Device, IDirect3DSurface9* RenderTarget, bool BlitSource, bool ClearRenderTarget) {
+
+	if (ChainActive) {
+		Effect->SetCT();
+		Effect->RenderChained(Device, ClearRenderTarget);
+		return;
+	}
+	if (BlitSource) ProfileBlitToSource(RenderTarget);
+	Effect->SetCT();
+	Effect->Render(Device, RenderTarget, RenderedSurface, ClearRenderTarget);
+
+}
+
 ShaderManager::ShaderManager() {
 
 	Logger::Log("Starting the shaders manager...");
@@ -1102,6 +1197,11 @@ ShaderManager::ShaderManager() {
 	ShellFlattenPixelShader = NULL;
 	ShellCopyPixelShader = NULL;
 	ShellFlattenFailed = false;
+	CachedStateBlock = NULL;
+	CachedStateBlockDevice = NULL;
+	ChainActive = false;
+	ChainCur = 0;
+	for (int i = 0; i < 3; i++) { ChainTex[i] = NULL; ChainSurf[i] = NULL; }
 	UnderwaterEffect = NULL;
 	WaterLensEffect = NULL;
 	GodRaysEffect = NULL;
@@ -1702,20 +1802,6 @@ void ShaderManager::UpdateInteriorLighting(ShaderConstants& ShaderConst, TESObje
 }
 
 void ShaderManager::UpdateWater(ShaderConstants& ShaderConst, TESObjectCELL* currentCell, SettingsWaterStruct* sws) {
-	TESWaterForm* currentWater = currentCell->GetWaterForm();
-
-	if (currentWater) {
-		ShaderConst.Water.deepColor.x = currentWater->DeepColorR / 255.0f;
-		ShaderConst.Water.deepColor.y = currentWater->DeepColorG / 255.0f;
-		ShaderConst.Water.deepColor.z = currentWater->DeepColorB / 255.0f;
-		ShaderConst.Water.deepColor.w = currentWater->DeepColorA / 255.0f;
-
-		ShaderConst.Water.shallowColor.x = currentWater->ShallowColorR / 255.0f;
-		ShaderConst.Water.shallowColor.y = currentWater->ShallowColorG / 255.0f;
-		ShaderConst.Water.shallowColor.z = currentWater->ShallowColorB / 255.0f;
-		ShaderConst.Water.shallowColor.w = currentWater->ShallowColorA / 255.0f;
-	}
-
 	ShaderConst.Water.waterCoefficients.x = sws->inExtCoeff_R;
 	ShaderConst.Water.waterCoefficients.y = sws->inExtCoeff_G;
 	ShaderConst.Water.waterCoefficients.z = sws->inExtCoeff_B;
@@ -1918,13 +2004,6 @@ void ShaderManager::UpdateGrass(ShaderConstants& ShaderConst, GrassActorPos Gras
 		GrassCollisionActors[i].x = nearest[i].x;
 		GrassCollisionActors[i].y = nearest[i].y;
 	}
-}
-
-void ShaderManager::UpdateHDR(ShaderConstants& ShaderConst) {
-	ShaderConst.HDR.ToneMapping.x = TheSettingManager->SettingsHDR.ToneMapping;
-	ShaderConst.HDR.ToneMapping.y = TheSettingManager->SettingsHDR.ToneMappingBlur;
-	ShaderConst.HDR.ToneMapping.z = TheSettingManager->SettingsHDR.ToneMappingColor;
-	ShaderConst.HDR.ToneMapping.w = TheSettingManager->SettingsHDR.Linearization;
 }
 
 void ShaderManager::UpdatePOM(ShaderConstants& ShaderConst) {
@@ -2298,6 +2377,7 @@ void ShaderManager::UpdateVolumetricLight(ShaderConstants& ShaderConst, TESWeath
 	ShaderConst.VolumetricLight.data3.w = std::lerp(TheShaderManager->previousFogHeight, TheShaderManager->currentFogHeight, weatherPercent);
 
 	ShaderConst.VolumetricLight.data4.y = std::lerp(previousSettings->animatedFogToggle, currentSettings->animatedFogToggle, weatherPercent);
+	ShaderConst.VolumetricLight.data4.x = TheSettingManager->SettingsMain.Main.VolumetricLightResolution;
 	ShaderConst.VolumetricLight.data4.z = TheRenderManager->width;
 	ShaderConst.VolumetricLight.data4.w = TheRenderManager->height;
 
@@ -2393,7 +2473,6 @@ void ShaderManager::UpdateConstants() {
 			UpdateGrass(ShaderConst, GrassCollisionActors, GrassCollisionActorCount);
 	}
 
-	if (TheSettingManager->SettingsMain.Shaders.HDR)     UpdateHDR(ShaderConst);
 	if (TheSettingManager->SettingsMain.Shaders.POM)     UpdatePOM(ShaderConst);
 	if (TheSettingManager->SettingsMain.Shaders.Terrain) UpdateTerrain(ShaderConst);
 	if (TheSettingManager->SettingsMain.Shaders.Skin)    UpdateSkin(ShaderConst);
@@ -2504,11 +2583,6 @@ void ShaderManager::CreateShader(const char* Name) {
 	else if (!strcmp(Name, "Precipitations")) {
 		for (int i = 0; i < 4; i++) LoadShader(PrecipitationVertexShaders[i]);
 		for (int i = 0; i < 2; i++) LoadShader(PrecipitationPixelShaders[i]);
-	}
-	else if (!strcmp(Name, "HDR")) {
-		HDRShader* HS = (HDRShader*)GetShaderDefinition(8)->Shader;
-		for each (NiD3DVertexShader* VS in HS->Vertex) LoadShader(VS);
-		for each (NiD3DPixelShader* PS in HS->Pixel) LoadShader(PS);
 	}
 	else if (!strcmp(Name, "POM")) {
 		ParallaxShader* PRS = (ParallaxShader*)GetShaderDefinition(15)->Shader;
@@ -2760,21 +2834,6 @@ void ShaderManager::DisposeShader(const char* Name) {
 			}
 		}
 		for each (NiD3DPixelShaderEx* PS in TGS->Pixel2) {
-			if (PS->ShaderProg) {
-				PS->ShaderHandle = PS->ShaderHandleBackup;
-				delete PS->ShaderProg; PS->ShaderProg = NULL;
-			}
-		}
-	}
-	else if (!strcmp(Name, "HDR")) {
-		HDRShader* HS = (HDRShader*)GetShaderDefinition(8)->Shader;
-		for each (NiD3DVertexShaderEx* VS in HS->Vertex) {
-			if (VS->ShaderProg) {
-				VS->ShaderHandle = VS->ShaderHandleBackup;
-				delete VS->ShaderProg; VS->ShaderProg = NULL;
-			}
-		}
-		for each (NiD3DPixelShaderEx* PS in HS->Pixel) {
 			if (PS->ShaderProg) {
 				PS->ShaderHandle = PS->ShaderHandleBackup;
 				delete PS->ShaderProg; PS->ShaderProg = NULL;
@@ -3141,30 +3200,29 @@ void ShaderManager::RenderEffects(IDirect3DSurface9* RenderTarget) {
 
 	EffectProfileChainBegin(Device);
 
+	// Buffer rotation (Main.EffectChainPingPong), on by default. Decided per chain rather than latched
+	// at startup so the INI can be reloaded mid-session and the next chain simply picks the other path;
+	// with it off, every call site below behaves exactly as it did before this existed.
+	if (TheSettingManager->SettingsMain.Main.EffectChainPingPong && RenderedTexture && PingTexture && EffectTexture)
+		ChainBegin();
+
 	if (Effects->WetWorld && isExteriorLike && ShaderConst.WetWorld.Data.x > 0.0f) {
-		ProfileBlitToSource(RenderTarget);
-		WetWorldEffect->SetCT();
-		WetWorldEffect->Render(Device, RenderTarget, RenderedSurface, false);
+		RunEffect(WetWorldEffect, Device, RenderTarget, true, false);
 	}
 	else if (Effects->SnowAccumulation && isExteriorLike && ShaderConst.SnowAccumulation.Params.w > 0.0f) {
-		ProfileBlitToSource(RenderTarget);
-		SnowAccumulationEffect->SetCT();
-		SnowAccumulationEffect->Render(Device, RenderTarget, RenderedSurface, false);
+		RunEffect(SnowAccumulationEffect, Device, RenderTarget, true, false);
 	}
 	// Shadows are not part of this post chain — both the exterior sun apply and the point-light
 	// apply run MID-SCENE via RenderShadowsMidScene() (before the first near-water draw) so water
 	// and the Underwater effect composite over the shadows instead of being painted over by them.
 	if (Effects->Bloom) {
-		ProfileBlitToSource(RenderTarget);
-		BloomEffect->SetCT();
-		BloomEffect->Render(Device, RenderTarget, RenderedSurface, false);
+		RunEffect(BloomEffect, Device, RenderTarget, true, false);
 	}
 	if (Effects->Underwater && ShaderConst.HasWater && TheRenderManager->CameraPosition.z < ShaderConst.Water.waterSettings.x + 3.0f) { //  + 20.0f araf Bad offset with Enhanced Camera
 		if (TheRenderManager->CameraPosition.z < ShaderConst.Water.waterSettings.x) {
 			if (ShaderConst.WaterLens.Percent > -2.0f) ShaderConst.WaterLens.Percent = ShaderConst.WaterLens.Percent - 1.0f;
 		}
-		UnderwaterEffect->SetCT();
-		UnderwaterEffect->Render(Device, RenderTarget, RenderedSurface, false);
+		RunEffect(UnderwaterEffect, Device, RenderTarget, false, false);
 	}
 	else {
 		if (ShaderConst.WaterLens.Percent <= -2.0f)
@@ -3174,93 +3232,96 @@ void ShaderManager::RenderEffects(IDirect3DSurface9* RenderTarget) {
 
 		if (Effects->Precipitations && isExteriorLike) {
 			if (ShaderConst.Precipitations.RainData.x > 0.0f) {
-				RainEffect->SetCT();
-				RainEffect->Render(Device, RenderTarget, RenderedSurface, false);
+				RunEffect(RainEffect, Device, RenderTarget, false, false);
 			}
 			if (ShaderConst.Precipitations.SnowData.x > 0.0f) {
-				SnowEffect->SetCT();
-				SnowEffect->Render(Device, RenderTarget, RenderedSurface, false);
+				RunEffect(SnowEffect, Device, RenderTarget, false, false);
 			}
 		}
 		if (Effects->AmbientOcclusion && ShaderConst.AmbientOcclusion.Enabled) {
-			ProfileBlitToSource(RenderTarget);
-			AmbientOcclusionEffect->SetCT();
-			AmbientOcclusionEffect->Render(Device, RenderTarget, RenderedSurface, false);
+			RunEffect(AmbientOcclusionEffect, Device, RenderTarget, true, false);
 		}
 		if (Effects->GodRays && isExteriorLike && (ShaderConst.SunAmount.x >= 0.4 || ShaderConst.SunAmount.y > 0 || ShaderConst.SunAmount.z >= 0.3)) {
-			ProfileBlitToSource(RenderTarget);
-			GodRaysEffect->SetCT();
-			GodRaysEffect->Render(Device, RenderTarget, RenderedSurface, false);
+			RunEffect(GodRaysEffect, Device, RenderTarget, true, false);
 		}
 		else if (ShaderConst.MoonsExist && Effects->KhajiitRays && isExteriorLike && (ShaderConst.SunAmount.x < 0.4 || ShaderConst.SunAmount.z < 0.3)) {
-			ProfileBlitToSource(RenderTarget);
-			SecundaRaysEffect->SetCT();
-			SecundaRaysEffect->Render(Device, RenderTarget, RenderedSurface, false);
-			ProfileBlitToSource(RenderTarget);
-			MasserRaysEffect->SetCT();
-			MasserRaysEffect->Render(Device, RenderTarget, RenderedSurface, false);
+			RunEffect(SecundaRaysEffect, Device, RenderTarget, true, false);
+			RunEffect(MasserRaysEffect, Device, RenderTarget, true, false);
 		}
 		if (Effects->VolumetricFog && isExteriorLike && ShaderConst.VolumetricFog.Data.w) {
 			// VolumetricFog samples only TESR_RenderedBuffer/TESR_DepthBuffer, never
 			// TESR_SourceBuffer -- so the scene->SourceSurface blit was wasted work.
-			VolumetricFogEffect->SetCT();
-			VolumetricFogEffect->Render(Device, RenderTarget, RenderedSurface, false);
+			RunEffect(VolumetricFogEffect, Device, RenderTarget, false, false);
 		}
 	}
 	if (Effects->VolumetricLight && isExteriorLike) {
-		ProfileBlitToSource(RenderTarget);
-		VolumetricLightEffect->SetCT();
-		VolumetricLightEffect->Render(Device, RenderTarget, RenderedSurface, false);
+		RunEffect(VolumetricLightEffect, Device, RenderTarget, true, false);
 	}
 	if (Effects->SMAA) {
-		ProfileBlitToSource(RenderTarget);
-		Device->SetRenderTarget(0, RenderSurfaceSMAA);
-		SMAAEffect->SetCT();
-		SMAAEffect->Render(Device, RenderSurfaceSMAA, RenderedSurface, true);
-		Device->StretchRect(RenderSurfaceSMAA, NULL, RenderTarget, NULL, D3DTEXF_NONE);
-		EffCountBlit();
-		Device->SetRenderTarget(0, RenderTarget);
+		if (ChainActive) {
+			// The rotation gives SMAA exactly what RenderSurfaceSMAA plus the per-pass copies were
+			// emulating: every pass clears and writes its own scratch buffer, and the next pass reads
+			// that buffer directly. The dedicated surface and all five of SMAA's blits fall away.
+			// Its TESR_RenderedBuffer is at s1, not s0 - RenderChained binds by RBRegister, which is
+			// the whole reason that lookup exists.
+			RunEffect(SMAAEffect, Device, RenderTarget, true, true);
+		}
+		else {
+			ProfileBlitToSource(RenderTarget);
+			Device->SetRenderTarget(0, RenderSurfaceSMAA);
+			SMAAEffect->SetCT();
+			SMAAEffect->Render(Device, RenderSurfaceSMAA, RenderedSurface, true);
+			Device->StretchRect(RenderSurfaceSMAA, NULL, RenderTarget, NULL, D3DTEXF_NONE);
+			EffCountBlit();
+			Device->SetRenderTarget(0, RenderTarget);
+		}
 	}
 	if (Effects->TAA) {
-		ProfileBlitToSource(RenderTarget);
-		TAAEffect->SetCT();
-		TAAEffect->Render(Device, RenderTarget, RenderedSurface, false);
-		Device->StretchRect(RenderedSurface, NULL, TAASurface, NULL, D3DTEXF_NONE);
+		RunEffect(TAAEffect, Device, RenderTarget, true, false);
+		// TAA's history buffer. Under the rotation the finished frame sits in whichever scratch the
+		// last pass wrote, not necessarily RenderedSurface, so take it from the live buffer.
+		Device->StretchRect(ChainActive ? ChainSurf[ChainCur] : RenderedSurface, NULL, TAASurface, NULL, D3DTEXF_NONE);
 		EffCountBlit();
 	}
 	if (Effects->DepthOfField && ShaderConst.DepthOfField.Enabled) {
-		ProfileBlitToSource(RenderTarget);
-		DepthOfFieldEffect->SetCT();
-		DepthOfFieldEffect->Render(Device, RenderTarget, RenderedSurface, false);
+		RunEffect(DepthOfFieldEffect, Device, RenderTarget, true, false);
 	}
 	if (Effects->WaterLens && ShaderConst.WaterLens.Percent > 0.0f) {
-		WaterLensEffect->SetCT();
-		WaterLensEffect->Render(Device, RenderTarget, RenderedSurface, false);
+		RunEffect(WaterLensEffect, Device, RenderTarget, false, false);
 	}
 	if (Effects->MotionBlur && (ShaderConst.MotionBlur.Data.x || ShaderConst.MotionBlur.Data.y)) {
-		MotionBlurEffect->SetCT();
-		MotionBlurEffect->Render(Device, RenderTarget, RenderedSurface, false);
+		RunEffect(MotionBlurEffect, Device, RenderTarget, false, false);
 	}
 	if (Effects->Sharpening) {
-		SharpeningEffect->SetCT();
-		SharpeningEffect->Render(Device, RenderTarget, RenderedSurface, false);
+		RunEffect(SharpeningEffect, Device, RenderTarget, false, false);
 	}
 	if (Effects->Coloring) {
-		ColoringEffect->SetCT();
-		ColoringEffect->Render(Device, RenderTarget, RenderedSurface, false);
+		RunEffect(ColoringEffect, Device, RenderTarget, false, false);
 	}
 	if (Effects->Extra) {
 		for (ExtraEffectsList::iterator iter = ExtraEffects.begin(); iter != ExtraEffects.end(); ++iter) {
 			if (iter->second->Enabled) {
-				ProfileBlitToSource(RenderTarget);
-				iter->second->SetCT();
-				iter->second->Render(Device, RenderTarget, RenderedSurface, false);
+				// Every built-in effect above has its blit matched to a real TESR_SourceBuffer
+				// declaration (see the VolumetricFog note for the last one that did not). Extras were
+				// the one path still paying a full-screen FP16 copy unconditionally.
+				RunEffect(iter->second, Device, RenderTarget, iter->second->HasSB, false);
 			}
 		}
 	}
 	if (Effects->Cinema && (ShaderConst.Cinema.Data.x != 0.0f || ShaderConst.Cinema.Data.y != 0.0f)) {
-		CinemaEffect->SetCT();
-		CinemaEffect->Render(Device, RenderTarget, RenderedSurface, false);
+		RunEffect(CinemaEffect, Device, RenderTarget, false, false);
+	}
+
+	// Materialise the rotation before the profiler closes, so its remaining copies are counted in the
+	// chain's numbers rather than disappearing between them.
+	//
+	// Marked as its own bucket first. EffMark labels the interval that FOLLOWS it, so without this
+	// these two blits land in the last effect's bucket and read as that effect getting slower - which
+	// is exactly how the first measurement of this feature looked, with DepthOfField apparently
+	// rising 0.20 ms while every other effect fell.
+	if (ChainActive) {
+		EffMark("(chain end)");
+		ChainEnd(RenderTarget);
 	}
 
 	EffectProfileChainEnd(); // exclude the (rare) screenshot save below from timing
@@ -3323,6 +3384,39 @@ void ShaderManager::RenderEffectsPostHdr(IDirect3DSurface9* RenderTargetParam) {
 	TheShaderManager->PrevWorldViewProjMatrix = TheRenderManager->WorldViewProjMatrix;
 }
 
+// Snapshots the whole device state into CachedStateBlock, so a mid-scene pass can restore it exactly.
+// Replaces a per-call CreateStateBlock(D3DSBT_ALL): that allocates a block AND captures, and only the
+// capture is wanted after the first time. The state SET a block records is fixed when it is created,
+// and D3DSBT_ALL is every state there is, so the one block serves all three callers regardless of
+// which of them built it. False means no block is available and the caller must bail out rather than
+// run a pass it cannot undo.
+//
+// The three callers are sequential top-level calls from the render hook and never nest, so there is
+// never more than one live capture - if that ever changes, this has to go back to per-call blocks.
+bool ShaderManager::CaptureDeviceState() {
+
+	IDirect3DDevice9* Device = TheRenderManager->device;
+	if (!Device) return false;
+
+	// Every other D3D resource this manager caches assumes a device that outlives the plugin, and the
+	// game never resets one. This costs a compare to not silently depend on that.
+	if (CachedStateBlock && CachedStateBlockDevice != Device) {
+		CachedStateBlock->Release();
+		CachedStateBlock = NULL;
+		CachedStateBlockDevice = NULL;
+	}
+	if (!CachedStateBlock) {
+		if (FAILED(Device->CreateStateBlock(D3DSBT_ALL, &CachedStateBlock))) {
+			CachedStateBlock = NULL;
+			return false;
+		}
+		CachedStateBlockDevice = Device;
+		return true; // CreateStateBlock captures the current state as it builds the block
+	}
+	return SUCCEEDED(CachedStateBlock->Capture());
+
+}
+
 // Shadow apply, run MID-SCENE: invoked from the render hook right before the first near-water
 // surface draw of the main pass (grass and LOD water are already drawn), or at the end of the
 // WorldSceneGraph render when no near water binds this frame. Rendering the darkening quad before
@@ -3346,11 +3440,10 @@ void ShaderManager::RenderShadowsMidScene() {
 
 	IDirect3DDevice9* Device = TheRenderManager->device;
 	IDirect3DSurface9* SceneRT = NULL;
-	IDirect3DStateBlock9* StateBlock = NULL;
 
 	if (!RenderedSurface || !EffectVertex) return;
 	if (FAILED(Device->GetRenderTarget(0, &SceneRT)) || !SceneRT) return;
-	if (FAILED(Device->CreateStateBlock(D3DSBT_ALL, &StateBlock))) { SceneRT->Release(); return; }
+	if (!CaptureDeviceState()) { SceneRT->Release(); return; }
 
 	TheRenderManager->SetupSceneCamera(); // CPU-side matrices only; refreshes WorldViewProj/InvViewProj for SetCT
 	Device->SetRenderState(D3DRS_ZENABLE, FALSE);
@@ -3374,8 +3467,7 @@ void ShaderManager::RenderShadowsMidScene() {
 		ShadowsPointEffect->Render(Device, SceneRT, RenderedSurface, false);
 	}
 
-	StateBlock->Apply();
-	StateBlock->Release();
+	CachedStateBlock->Apply();
 	SceneRT->Release();
 
 }
@@ -3562,7 +3654,6 @@ bool ShaderManager::CaptureShellRenderedBuffer() {
 	IDirect3DSurface9* SceneRT = TheRenderManager->currentRTGroup->RenderTargets[0]->data->Surface;
 	IDirect3DSurface9* PrevRenderTarget = NULL;
 	IDirect3DSurface9* PrevDepthSurface = NULL;
-	IDirect3DStateBlock9* StateBlock = NULL;
 
 	if (!SceneRT) return false;
 
@@ -3576,7 +3667,7 @@ bool ShaderManager::CaptureShellRenderedBuffer() {
 
 	if (FAILED(Device->GetRenderTarget(0, &PrevRenderTarget)) || !PrevRenderTarget) return false;
 	if (FAILED(Device->GetDepthStencilSurface(&PrevDepthSurface))) { PrevRenderTarget->Release(); return false; }
-	if (FAILED(Device->CreateStateBlock(D3DSBT_ALL, &StateBlock))) {
+	if (!CaptureDeviceState()) {
 		PrevRenderTarget->Release();
 		if (PrevDepthSurface) PrevDepthSurface->Release();
 		return false;
@@ -3591,8 +3682,7 @@ bool ShaderManager::CaptureShellRenderedBuffer() {
 	// scene target is, and D3D9 will not pair that with the non-multisampled RenderedSurface.
 	if (FAILED(Device->SetRenderTarget(0, RenderedSurface))) {
 		Device->SetRenderTarget(0, PrevRenderTarget);
-		StateBlock->Apply();
-		StateBlock->Release();
+		CachedStateBlock->Apply();
 		PrevRenderTarget->Release();
 		if (PrevDepthSurface) PrevDepthSurface->Release();
 		return false;
@@ -3636,8 +3726,7 @@ bool ShaderManager::CaptureShellRenderedBuffer() {
 	Device->SetTexture(1, NULL);
 	Device->SetRenderTarget(0, PrevRenderTarget);
 	Device->SetDepthStencilSurface(PrevDepthSurface);
-	StateBlock->Apply();
-	StateBlock->Release();
+	CachedStateBlock->Apply();
 	PrevRenderTarget->Release();
 	if (PrevDepthSurface) PrevDepthSurface->Release();
 	return true;
@@ -3697,7 +3786,6 @@ void ShaderManager::FlattenShellDepthInto(IDirect3DTexture9* Target, IDirect3DSu
 	IDirect3DDevice9* Device = TheRenderManager->device;
 	IDirect3DSurface9* PrevRenderTarget = NULL;
 	IDirect3DSurface9* PrevDepthSurface = NULL;
-	IDirect3DStateBlock9* StateBlock = NULL;
 
 	// Snapshot the shell's depth buffer. Must precede the target switch below, which takes the
 	// depth-stencil surface this reads out from under the device. Skipped only when the masked
@@ -3706,7 +3794,7 @@ void ShaderManager::FlattenShellDepthInto(IDirect3DTexture9* Target, IDirect3DSu
 
 	if (FAILED(Device->GetRenderTarget(0, &PrevRenderTarget)) || !PrevRenderTarget) return;
 	if (FAILED(Device->GetDepthStencilSurface(&PrevDepthSurface))) { PrevRenderTarget->Release(); return; }
-	if (FAILED(Device->CreateStateBlock(D3DSBT_ALL, &StateBlock))) {
+	if (!CaptureDeviceState()) {
 		PrevRenderTarget->Release();
 		if (PrevDepthSurface) PrevDepthSurface->Release();
 		return;
@@ -3738,8 +3826,7 @@ void ShaderManager::FlattenShellDepthInto(IDirect3DTexture9* Target, IDirect3DSu
 		ShellFlattenFailed = true;
 		Device->SetRenderTarget(0, PrevRenderTarget);
 		Device->SetDepthStencilSurface(PrevDepthSurface);
-		StateBlock->Apply();
-		StateBlock->Release();
+		CachedStateBlock->Apply();
 		PrevRenderTarget->Release();
 		if (PrevDepthSurface) PrevDepthSurface->Release();
 		return;
@@ -3773,8 +3860,7 @@ void ShaderManager::FlattenShellDepthInto(IDirect3DTexture9* Target, IDirect3DSu
 	Device->SetTexture(0, NULL);
 	Device->SetRenderTarget(0, PrevRenderTarget);
 	Device->SetDepthStencilSurface(PrevDepthSurface);
-	StateBlock->Apply();
-	StateBlock->Release();
+	CachedStateBlock->Apply();
 	PrevRenderTarget->Release();
 	if (PrevDepthSurface) PrevDepthSurface->Release();
 
@@ -3911,12 +3997,6 @@ void ShaderManager::SwitchShaderStatus(const char* Name) {
 		if (Value) {
 			CreateEffect(EffectRecordType_KhajiitRays);
 		}
-	}
-	else if (!strcmp(Name, "HDR")) {
-		Value = !Shaders->HDR;
-		Shaders->HDR = Value;
-		DisposeShader(Name);
-		if (Value) CreateShader(Name);
 	}
 	else if (!strcmp(Name, "MotionBlur")) {
 		Value = !Effects->MotionBlur;

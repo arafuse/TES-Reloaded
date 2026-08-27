@@ -614,7 +614,6 @@ UInt32 RenderHook::TrackSetupShaderPrograms(NiGeometry* Geometry, NiSkinInstance
 	D3DMATRIX* Proj = &TheRenderManager->projMatrix;
 
 	if (!TheShaderManager->jitterSet) {
-		D3DMATRIX ProjV = TheRenderManager->projMatrix;		
 		TheShaderManager->jitterProjectionX = Proj->_31 + TheShaderManager->ShaderConst.Jitter.x;
 		TheShaderManager->jitterProjectionY = Proj->_32 + TheShaderManager->ShaderConst.Jitter.y;
 		TheShaderManager->jitterSet = true;
@@ -787,13 +786,11 @@ UInt32 RenderHook::TrackSetupShaderPrograms(NiGeometry* Geometry, NiSkinInstance
 		// (ShaderManager::BeginScene). Numbered water shaders DO bind during the reflection render
 		// ([ReflDbg] log, 2026-07-17), so without this guard the apply fired again INTO the
 		// reflection map — camera-tracking caster silhouettes floating in the water.
-		if (TheShaderManager->InMainScenePass && !TheShaderManager->PreWaterDepthBufferFilled && !memcmp(PixelShader->ShaderName, "WATER", 5) && PixelShader->ShaderName[5] >= '0' && PixelShader->ShaderName[5] <= '9') {
-			if (atoi(PixelShader->ShaderName + 5) < 12) {
-				FrameProfiler::Scope MidSceneScope(FrameProfiler::Buck_HookMidScene);
-				TheRenderManager->ResolvePreWaterDepthBuffer();
-				TheShaderManager->RenderShadowsMidScene();
-				TheShaderManager->PreWaterDepthBufferFilled = true;
-			}
+		if (TheShaderManager->InMainScenePass && !TheShaderManager->PreWaterDepthBufferFilled && PixelShader->isNearWater) {
+			FrameProfiler::Scope MidSceneScope(FrameProfiler::Buck_HookMidScene);
+			TheRenderManager->ResolvePreWaterDepthBuffer();
+			TheShaderManager->RenderShadowsMidScene();
+			TheShaderManager->PreWaterDepthBufferFilled = true;
 		}
 
 		// Shell counterpart of the capture above, and the one point in the frame where the shell's own
@@ -842,9 +839,7 @@ UInt32 RenderHook::TrackSetupShaderPrograms(NiGeometry* Geometry, NiSkinInstance
 		// one full-resolution StretchRect, one depth resolve and one full-screen quad in exactly the
 		// frames that exhibit the defects and nothing at all otherwise. PassNear implies ShellActive,
 		// so this is inert with the near shell off and the far pass is left byte-identical.
-		if (RenderManager::CurrentPass == RenderManager::PassNear && !ShellNearWaterPrepDone &&
-			PixelShader->ShaderName && !memcmp(PixelShader->ShaderName, "WATER", 5) &&
-			PixelShader->ShaderName[5] >= '0' && PixelShader->ShaderName[5] <= '9' && atoi(PixelShader->ShaderName + 5) < 12) {
+		if (RenderManager::CurrentPass == RenderManager::PassNear && !ShellNearWaterPrepDone && PixelShader->isNearWater) {
 			ShellNearWaterPrepDone = true;
 			FrameProfiler::Scope ShellWaterScope(FrameProfiler::Buck_HookShellWater);
 			bool MaskResolved = TheShaderManager->CaptureShellRenderedBuffer();
@@ -935,10 +930,24 @@ UInt32 RenderHook::TrackSetupShaderPrograms(NiGeometry* Geometry, NiSkinInstance
 		result = (this->*SetupShaderPrograms)(Geometry, SkinInstance, SkinPartition, GeometryBufferData, PropertyState, EffectState, WorldTransform, WorldBound);
 	}
 
+	// Only c254/c255 belong here: they carry the collision actors made relative to THIS instance's
+	// world position, so they genuinely change per draw.
+	//
+	// c253 (TESR_GrassCollisionParams) used to be re-uploaded here too and no longer is. The grass
+	// vertex shaders declare it at register(c253), it is mapped in SetConstantTableValue1, and it
+	// survives into their compiled constant table - so ShaderRecord::SetCT already uploads it, from
+	// the same ShaderConst.Grass.CollisionParams, at every grass shader bind. UpdateGrass writes that
+	// value once a frame, so the per-draw copy was writing identical bytes over themselves.
+	//
+	// The reason this is safe rather than merely redundant-looking: SetCT runs BEFORE the engine's
+	// SetupShaderPrograms call, so it would only be insufficient if the engine clobbered c253 while
+	// setting up the draw. It does not touch that band. TESR_GrassScale (c248) and
+	// TESR_ShadowCameraToLightTransformNear (c249-c252) sit in the same high registers, have no
+	// post-engine re-upload at all, and work - grass scaling and grass shadows would both be broken
+	// if the engine wrote there.
 	if (VertexShader && VertexShader->ShaderProg && VertexShader->isGrass) {
 		float cx = WorldTransform->pos.x;
 		float cy = WorldTransform->pos.y;
-		TheRenderManager->device->SetVertexShaderConstantF(253, (const float*)&TheShaderManager->ShaderConst.Grass.CollisionParams, 1);
 		D3DXVECTOR4 xy0(
 			TheShaderManager->GrassCollisionActors[0].x - cx,
 			TheShaderManager->GrassCollisionActors[0].y - cy,

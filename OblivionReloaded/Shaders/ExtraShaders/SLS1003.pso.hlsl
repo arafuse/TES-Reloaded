@@ -7,11 +7,6 @@
 // Parameters:
 //
 sampler2D DiffuseMap : register(s0);
-float4 TESR_ShadowCubeData : register(c0);
-float4 TESR_ShadowLightPosition[12] : register(c4);
-float4 TESR_ShadowCubeMapBlend : register(c1);
-float4 TESR_ShadowCubeMapBlend2 : register(c2);
-float4 TESR_ShadowCubeMapBlend3 : register(c3);
 samplerCUBE TESR_ShadowCubeMapBuffer0 : register(s3) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; ADDRESSW = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
 samplerCUBE TESR_ShadowCubeMapBuffer1 : register(s4) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; ADDRESSW = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
 samplerCUBE TESR_ShadowCubeMapBuffer2 : register(s6) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; ADDRESSW = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };

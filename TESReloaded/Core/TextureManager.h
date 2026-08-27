@@ -39,6 +39,12 @@ enum TextureRecordType {
 	TextureRecordType_Max,
 };
 
+// One sampler state the shader source asked for, in the form the per-bind loop wants it.
+struct SamplerStateEntry {
+	D3DSAMPLERSTATETYPE		Type;
+	DWORD					Value;
+};
+
 class TextureRecord
 {
 public:
@@ -46,9 +52,16 @@ public:
 
 	bool					LoadTexture(TextureRecordType Type, const char* Filename);
 	void					SetSamplerState(D3DSAMPLERSTATETYPE SamplerType, DWORD Value);
+	void					PackSamplerStates();	// rebuild PackedStates from SamplerStates; call once after parsing
 
 	IDirect3DBaseTexture9*	Texture;
 	DWORD					SamplerStates[SamplerStatesMax];
+	// The same states, compacted. ShaderRecord::SetCT runs on every shader-handle change and used to
+	// scan all 12 sparse slots per texture to find the two or three that are set; it now walks this
+	// instead. Rebuilt from the sparse array rather than appended to as states are parsed, so a state
+	// the parser writes twice cannot land here twice.
+	SamplerStateEntry		PackedStates[SamplerStatesMax];
+	UInt32					PackedStateCount;
 
 };
 

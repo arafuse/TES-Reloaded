@@ -282,7 +282,6 @@ public:
 		float                  Radius;           // world-bound radius
 		bool                   BaseInstanceable; // instanceable ignoring the per-pass AlphaEnabled
 		bool                   HasAlphaMask;     // alpha blend/test present (blocks instancing when AlphaEnabled)
-		bool                   PassesWater;      // skinInstance || !HasWater || center.z > 0
 		bool                   IsActor;          // ref is an actor/creature => dynamic caster (Stage 2 split)
 	};
 	// Pooled across frames; only the *Count fields reset each frame so capacity is retained.

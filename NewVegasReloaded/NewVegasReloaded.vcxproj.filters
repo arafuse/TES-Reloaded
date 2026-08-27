@@ -44,9 +44,6 @@
     <ClInclude Include="..\TESReloaded\Core\FrameRateManager.h">
       <Filter>Core</Filter>
     </ClInclude>
-    <ClInclude Include="..\TESReloaded\Core\GameEventManager.h">
-      <Filter>Core</Filter>
-    </ClInclude>
     <ClInclude Include="..\TESReloaded\Core\GameMenuManager.h">
       <Filter>Core</Filter>
     </ClInclude>
@@ -158,9 +155,6 @@
       <Filter>Core</Filter>
     </ClCompile>
     <ClCompile Include="..\TESReloaded\Core\FrameRateManager.cpp">
-      <Filter>Core</Filter>
-    </ClCompile>
-    <ClCompile Include="..\TESReloaded\Core\GameEventManager.cpp">
       <Filter>Core</Filter>
     </ClCompile>
     <ClCompile Include="..\TESReloaded\Core\GameMenuManager.cpp">

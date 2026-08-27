@@ -15,8 +15,6 @@ sampler2D ShadowMap : register(s2);
 sampler2D ShadowMask : register(s3);
 float4 ToggleADTS : register(c5);
 float4 ToggleNumLights : register(c6);
-float4 TESR_ShadowData : register(c17);
-float4 TESR_ShadowLightPosition[12] : register(c18);
 sampler2D TESR_ShadowMapBufferNear : register(s8) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
 sampler2D TESR_ShadowMapBufferFar : register(s9) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
 //

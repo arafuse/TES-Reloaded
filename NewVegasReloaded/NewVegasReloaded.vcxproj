@@ -129,7 +129,6 @@
     <ClInclude Include="..\TESReloaded\Framework\Plugin.h" />
     <ClInclude Include="..\TESReloaded\Framework\SafeWrite.h" />
     <ClInclude Include="..\TESReloaded\Framework\Types.h" />
-    <ClInclude Include="..\TESReloaded\Core\GameEventManager.h" />
     <ClInclude Include="..\TESReloaded\Core\GameMenuManager.h" />
     <ClInclude Include="..\TESReloaded\Core\KeyboardManager.h" />
     <ClInclude Include="..\TESReloaded\Core\Managers.h" />
@@ -165,7 +164,6 @@
     <ClCompile Include="..\TESReloaded\Framework\Game.cpp" />
     <ClCompile Include="..\TESReloaded\Framework\Logger.cpp" />
     <ClCompile Include="..\TESReloaded\Framework\SafeWrite.cpp" />
-    <ClCompile Include="..\TESReloaded\Core\GameEventManager.cpp" />
     <ClCompile Include="..\TESReloaded\Core\GameMenuManager.cpp" />
     <ClCompile Include="..\TESReloaded\Core\KeyboardManager.cpp" />
     <ClCompile Include="..\TESReloaded\Core\Managers.cpp" />

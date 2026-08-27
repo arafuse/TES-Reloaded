@@ -14,10 +14,6 @@ float4 PSLightColor[4] : register(c2);
 sampler2D ShadowMap : register(s5);
 sampler2D ShadowMaskMap : register(s6);
 
-float4 TESR_SkinData : register(c8);
-float4 TESR_ShadowData : register(c10);
-float4 TESR_ShadowLightPosition[12] : register(c11);
-float4 TESR_ShadowSkinData : register(c24);
 sampler2D TESR_ShadowMapBufferNear : register(s8) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
 sampler2D TESR_ShadowMapBufferSkin : register(s10) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
 //

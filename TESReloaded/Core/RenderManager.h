@@ -25,6 +25,17 @@ public:
 	char*					ShaderName;
 	bool					isSkin;
 	bool					isRefraction;
+	// A numbered NEAR-water surface shader: WATER000-011. The engine's pre-sky LOD water group always
+	// binds WATER012+, the post-grass near group always WATER000-011, so the shader NUMBER is what
+	// separates them - the NiAlphaProperty flags are not usable, they flip when the camera gets close.
+	// The two per-draw blocks that trigger on the first near water (the mid-scene shadow apply and the
+	// shell's water prep) each rebuilt this from the name, atoi included; the name never changes, so
+	// it is classified once at shader creation instead.
+	//
+	// NOT for the shell's depth-buffer swap further down that same function: that one tests the WATER
+	// prefix alone, deliberately widening to WATERHMAP* as well. Narrowing it to this flag would
+	// change behaviour - see the comment there.
+	bool					isNearWater;
 };
 
 class RenderManager: public NiDX9Renderer {

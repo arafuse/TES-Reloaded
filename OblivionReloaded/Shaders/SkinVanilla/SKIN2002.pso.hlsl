@@ -9,19 +9,11 @@
 float4 AmbientColor : register(c1);
 float4 PSLightColor[4] : register(c2);
 float4 Toggles : register(c7);
-float4 TESR_SkinData : register(c8);
-float4 TESR_SkinColor : register(c9);
-
 sampler2D BaseMap : register(s0);
 sampler2D NormalMap : register(s1);
 sampler2D FaceGenMap0 : register(s2);
 sampler2D FaceGenMap1 : register(s3);
 sampler2D AttenuationMap : register(s5);
-float4 TESR_ShadowCubeData : register(c10);
-float4 TESR_ShadowLightPosition[12] : register(c14);
-float4 TESR_ShadowCubeMapBlend : register(c11);
-float4 TESR_ShadowCubeMapBlend2 : register(c12);
-float4 TESR_ShadowCubeMapBlend3 : register(c13);
 samplerCUBE TESR_ShadowCubeMapBuffer0 : register(s4) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; ADDRESSW = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
 samplerCUBE TESR_ShadowCubeMapBuffer1 : register(s6) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; ADDRESSW = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
 samplerCUBE TESR_ShadowCubeMapBuffer2 : register(s7) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; ADDRESSW = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };

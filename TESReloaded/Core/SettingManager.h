@@ -101,6 +101,11 @@ struct SettingsMainStruct {
 		float	FoV;
 		bool	NearShellEnabled;
 		float	NearShellBoundary;
+		float	VolumetricLightResolution;
+		// Runs the post chain as a 3-buffer rotation instead of copying through the render target
+		// between effects. Removes nearly every full-screen FP16 StretchRect in the chain.
+		// Default ON - the legacy path is left byte-identical so this can still be A/B'd in game.
+		UInt8	EffectChainPingPong;
 	};
 	
 	struct CameraModeStruct {
@@ -171,7 +176,6 @@ struct SettingsMainStruct {
 	struct ShadersStruct {
 		bool Blood;
 		bool Grass;
-		bool HDR;
 		bool NightEye;
 		bool POM;
 		bool Skin;
@@ -404,13 +408,6 @@ struct SettingsGrassStruct {
 	float CollisionRadius;
 	float CollisionStrength;
 	float CollisionFlattenStrength;
-};
-
-struct SettingsHDRStruct {
-	float ToneMapping;
-	float ToneMappingBlur;
-	float ToneMappingColor;
-	float Linearization;
 };
 
 struct SettingsPOMStruct {
@@ -721,7 +718,6 @@ public:
 	float							DefaultFov;
 	SettingsMainStruct				SettingsMain;
 	SettingsGrassStruct				SettingsGrass;
-	SettingsHDRStruct				SettingsHDR;
 	SettingsPOMStruct				SettingsPOM;
 	SettingsTerrainStruct			SettingsTerrain;
 	SettingsSkinStruct				SettingsSkin;
