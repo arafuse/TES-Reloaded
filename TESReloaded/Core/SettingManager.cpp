@@ -109,6 +109,7 @@ SettingManager::SettingManager() {
 	SettingsMain.Main.FPSOverlay = GetPrivateProfileIntA("Main", "FPSOverlay", 0, Filename);
 	SettingsMain.Main.DirectionalLightOverride = GetPrivateProfileIntA("Main", "DirectionalLightOverride", 0, Filename);
 	SettingsMain.Main.RenderEffectsBeforeHdr = GetPrivateProfileIntA("Main", "RenderEffectsBeforeHdr", 0, Filename);
+	SettingsMain.Main.EffectChainPingPong = GetPrivateProfileIntA("Main", "EffectChainPingPong", 0, Filename);
 	GetPrivateProfileStringA("Main", "MoonPhaseLumNew", "0.0", value, SettingStringBuffer, Filename);
 	SettingsMain.Main.MoonPhaseLumNew = atof(value);
 	GetPrivateProfileStringA("Main", "MoonPhaseLumQtr", "0.25", value, SettingStringBuffer, Filename);
@@ -433,7 +434,6 @@ SettingManager::SettingManager() {
 	SettingsMain.Develop.ProfileEffects = GetPrivateProfileIntA("Develop", "ProfileEffects", 0, Filename);
 	SettingsMain.Develop.ProfileFrame = GetPrivateProfileIntA("Develop", "ProfileFrame", 0, Filename);
 	SettingsMain.Develop.NearShellDebug = GetPrivateProfileIntA("Develop", "NearShellDebug", 0, Filename);
-	SettingsMain.Develop.EffectChainPingPong = GetPrivateProfileIntA("Develop", "EffectChainPingPong", 0, Filename);
 
 	GameLoading = false;
 

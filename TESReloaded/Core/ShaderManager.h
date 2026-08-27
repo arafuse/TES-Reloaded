@@ -384,7 +384,7 @@ public:
 	void						CreateCT();
 	void						SetCT();
 	void						Render(IDirect3DDevice9* Device, IDirect3DSurface9* RenderTarget, IDirect3DSurface9* RenderedSurface, bool ClearRenderTarget);
-	// Chain-rotation variant of Render (Develop.EffectChainPingPong). Reads the chain's current
+	// Chain-rotation variant of Render (Main.EffectChainPingPong). Reads the chain's current
 	// buffer and writes into the two scratch buffers, leaving the result in one of them; the caller
 	// then adopts it as the new current. Issues NO StretchRect at all.
 	void						RenderChained(IDirect3DDevice9* Device, bool ClearRenderTarget);
@@ -458,7 +458,7 @@ public:
 	bool					CreateShellCopy();		 // lazily builds what the masked capture needs; false = caller falls back to a blind blit
 	bool					CaptureDeviceState();	 // snapshot the full device state into CachedStateBlock; false = unavailable, caller must bail
 	void					ProfileBlitToSource(IDirect3DSurface9* RenderTarget); // counted scene->SourceSurface copy
-	// --- Post chain, opt-in rotation (Develop.EffectChainPingPong) --------------------------------
+	// --- Post chain, opt-in rotation (Main.EffectChainPingPong) --------------------------------
 	// The legacy chain hands the image between effects through the render target: every effect ends
 	// by copying it back into RenderedSurface, and every effect that reads TESR_SourceBuffer takes a
 	// second full-screen copy first. That is ~11 full-screen FP16 StretchRects a frame in a typical
