@@ -494,8 +494,13 @@ public:
 	struct					EffectQuad { float x, y, z; float u, v; };
 	struct					GrassActorPos { float x, y; };
 	ShaderConstants			ShaderConst;
-	GrassActorPos			GrassCollisionActors[4];
-	int						GrassCollisionActorCount;
+	/// World-space grass collision sources. Slot 0 is always the player's live position; slots 1-2
+	/// hold either a fading footprint left behind by the player or a nearby actor's live position.
+	GrassActorPos			GrassCollisionSources[3];
+	/// Recovery weights for sources 1 and 2. Source 0 is implicitly 1.0 and is not stored.
+	/// Negative values are the spring overshoot past upright and are expected.
+	float					GrassCollisionWeights[2];
+	int						GrassCollisionSourceCount;
 	CustomConstants			CustomConst;
 	CellLocation			LocationState;
 	bool					DialogState;
@@ -608,7 +613,7 @@ private:
 	static void UpdateSnowAccumulation(ShaderConstants& ShaderConst, TESWeather* currentWeather, TESWeather* previousWeather);
 	static void UpdateWetWorld(ShaderConstants& ShaderConst, TESWeather* currentWeather, TESWeather* previousWeather, float weatherPercent);
 	static void UpdatePrecipitation(ShaderConstants& ShaderConst, TESWeather* currentWeather, TESWeather* previousWeather, float weatherPercent);
-	static void UpdateGrass(ShaderConstants& ShaderConst, GrassActorPos GrassCollisionActors[4], int& GrassCollisionActorCount);
+	static void UpdateGrass(ShaderConstants& ShaderConst, GrassActorPos GrassCollisionSources[3], float GrassCollisionWeights[2], int& GrassCollisionSourceCount);
 	static void UpdatePOM(ShaderConstants& ShaderConst);
 	static void UpdateTerrain(ShaderConstants& ShaderConst);
 	static void UpdateSkin(ShaderConstants& ShaderConst);

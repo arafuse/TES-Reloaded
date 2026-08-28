@@ -579,6 +579,11 @@ void SettingManager::LoadSettings() {
 	SettingsGrass.CollisionStrength = atof(value);
 	GetPrivateProfileStringA("Default", "CollisionFlattenStrength", "60.0", value, SettingStringBuffer, Filename);
 	SettingsGrass.CollisionFlattenStrength = atof(value);
+	GetPrivateProfileStringA("Default", "CollisionRecoveryTime", "1.2", value, SettingStringBuffer, Filename);
+	SettingsGrass.CollisionRecoveryTime = atof(value);
+	GetPrivateProfileStringA("Default", "CollisionSpringiness", "0.5", value, SettingStringBuffer, Filename);
+	SettingsGrass.CollisionSpringiness = atof(value);
+	SettingsGrass.CollisionTrailSlots = GetPrivateProfileIntA("Default", "CollisionTrailSlots", 2, Filename);
 
 	strcpy(Filename, CurrentPath);
 	strcat(Filename, SettingsPath);
@@ -1543,6 +1548,9 @@ void SettingManager::SaveSettings(const char* Item, const char* Definition, cons
 			WritePrivateProfileStringA("Default", "CollisionRadius", ToString(SettingsGrass.CollisionRadius).c_str(), Filename);
 			WritePrivateProfileStringA("Default", "CollisionStrength", ToString(SettingsGrass.CollisionStrength).c_str(), Filename);
 			WritePrivateProfileStringA("Default", "CollisionFlattenStrength", ToString(SettingsGrass.CollisionFlattenStrength).c_str(), Filename);
+			WritePrivateProfileStringA("Default", "CollisionRecoveryTime", ToString(SettingsGrass.CollisionRecoveryTime).c_str(), Filename);
+			WritePrivateProfileStringA("Default", "CollisionSpringiness", ToString(SettingsGrass.CollisionSpringiness).c_str(), Filename);
+			WritePrivateProfileStringA("Default", "CollisionTrailSlots", ToString(SettingsGrass.CollisionTrailSlots).c_str(), Filename);
 		}
 		else if (!strcmp(Definition, "MotionBlur")) {
 			WritePrivateProfileStringA("Effects", "MotionBlur", ToString(SettingsMain.Effects.MotionBlur).c_str(), SettingsMain.Main.MainFile);
@@ -2206,6 +2214,9 @@ SettingsList SettingManager::GetMenuSettings(const char* Item, const char* Defin
 			Settings["CollisionRadius"] = SettingsGrass.CollisionRadius;
 			Settings["CollisionStrength"] = SettingsGrass.CollisionStrength;
 			Settings["CollisionFlattenStrength"] = SettingsGrass.CollisionFlattenStrength;
+			Settings["CollisionRecoveryTime"] = SettingsGrass.CollisionRecoveryTime;
+			Settings["CollisionSpringiness"] = SettingsGrass.CollisionSpringiness;
+			Settings["CollisionTrailSlots"] = SettingsGrass.CollisionTrailSlots;
 		}
 		else if (!strcmp(Definition, "MotionBlur")) {
 			SettingsMotionBlurStruct* sms = GetSettingsMotionBlur(Section);
@@ -2929,6 +2940,12 @@ void SettingManager::SetMenuSetting(const char* Item, const char* Definition, co
 				SettingsGrass.CollisionStrength = Value;
 			else if (!strcmp(Setting, "CollisionFlattenStrength"))
 				SettingsGrass.CollisionFlattenStrength = Value;
+			else if (!strcmp(Setting, "CollisionRecoveryTime"))
+				SettingsGrass.CollisionRecoveryTime = Value;
+			else if (!strcmp(Setting, "CollisionSpringiness"))
+				SettingsGrass.CollisionSpringiness = Value;
+			else if (!strcmp(Setting, "CollisionTrailSlots"))
+				SettingsGrass.CollisionTrailSlots = Value;
 		}
 		else if (!strcmp(Definition, "MotionBlur")) {
 			SettingsMotionBlurStruct* sms = GetSettingsMotionBlur(Section);

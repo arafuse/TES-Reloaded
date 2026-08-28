@@ -408,6 +408,9 @@ struct SettingsGrassStruct {
 	float CollisionRadius;
 	float CollisionStrength;
 	float CollisionFlattenStrength;
+	float CollisionRecoveryTime;
+	float CollisionSpringiness;
+	int CollisionTrailSlots;
 };
 
 struct SettingsPOMStruct {
