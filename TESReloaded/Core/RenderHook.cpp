@@ -930,7 +930,7 @@ UInt32 RenderHook::TrackSetupShaderPrograms(NiGeometry* Geometry, NiSkinInstance
 		result = (this->*SetupShaderPrograms)(Geometry, SkinInstance, SkinPartition, GeometryBufferData, PropertyState, EffectState, WorldTransform, WorldBound);
 	}
 
-	// Only c254/c255 belong here: they carry the collision actors made relative to THIS instance's
+	// Only c254/c255 belong here: they carry the collision sources made relative to THIS instance's
 	// world position, so they genuinely change per draw.
 	//
 	// c253 (TESR_GrassCollisionParams) used to be re-uploaded here too and no longer is. The grass
@@ -945,19 +945,24 @@ UInt32 RenderHook::TrackSetupShaderPrograms(NiGeometry* Geometry, NiSkinInstance
 	// TESR_ShadowCameraToLightTransformNear (c249-c252) sit in the same high registers, have no
 	// post-engine re-upload at all, and work - grass scaling and grass shadows would both be broken
 	// if the engine wrote there.
+	//
+	// The vertex constant space is full - c0-c19 belong to the engine, InstanceData[228] covers
+	// c20-c247, and c248-c255 are ours - so the two recovery weights ride in c255.zw rather than in
+	// a register of their own. That is why there are three collision sources and not four: source 0
+	// is the player at an implicit weight of 1.0, leaving exactly two weights to store.
 	if (VertexShader && VertexShader->ShaderProg && VertexShader->isGrass) {
 		float cx = WorldTransform->pos.x;
 		float cy = WorldTransform->pos.y;
 		D3DXVECTOR4 xy0(
-			TheShaderManager->GrassCollisionActors[0].x - cx,
-			TheShaderManager->GrassCollisionActors[0].y - cy,
-			TheShaderManager->GrassCollisionActors[1].x - cx,
-			TheShaderManager->GrassCollisionActors[1].y - cy);
+			TheShaderManager->GrassCollisionSources[0].x - cx,
+			TheShaderManager->GrassCollisionSources[0].y - cy,
+			TheShaderManager->GrassCollisionSources[1].x - cx,
+			TheShaderManager->GrassCollisionSources[1].y - cy);
 		D3DXVECTOR4 xy1(
-			TheShaderManager->GrassCollisionActors[2].x - cx,
-			TheShaderManager->GrassCollisionActors[2].y - cy,
-			TheShaderManager->GrassCollisionActors[3].x - cx,
-			TheShaderManager->GrassCollisionActors[3].y - cy);
+			TheShaderManager->GrassCollisionSources[2].x - cx,
+			TheShaderManager->GrassCollisionSources[2].y - cy,
+			TheShaderManager->GrassCollisionWeights[0],
+			TheShaderManager->GrassCollisionWeights[1]);
 		TheRenderManager->device->SetVertexShaderConstantF(254, (const float*)&xy0, 1);
 		TheRenderManager->device->SetVertexShaderConstantF(255, (const float*)&xy1, 1);
 
