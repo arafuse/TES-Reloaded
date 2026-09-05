@@ -206,7 +206,9 @@ float4 BlurNormals(VSOUT IN, uniform float2 OffsetMask) : COLOR0
 	float3 oColor = tex2D(TESR_RenderedBuffer,IN.UVCoord).rgb;
 	float3 finalColor = oColor * WeightSum;
 	float depth = readDepth01(IN.UVCoord);
-	if (depth == 0.0f || depth >= 0.9f) discard;
+	// Sky/invalid depth: pass the unblurred normal through. Not a discard -- see the note in
+	// Rain.fx.hlsl; the chained render target does not hold this pass's input.
+	if (depth == 0.0f || depth >= 0.9f) return float4(oColor, 1.0f);
 	
 	for (int i = 0; i < cKernelSize; i++) {
 		float2 uvOff = (BlurOffsets[i] * OffsetMask) * TESR_SnowAccumulationParams.y * abs(log(depth));

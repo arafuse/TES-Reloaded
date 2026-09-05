@@ -116,7 +116,10 @@ float4 Snow( VSOUT IN ) : COLOR0
 	}
 	float ortho = openSteps / OCCLUSION_STEPS;
 
-	if (ortho < 0.01f) discard;
+	// Fully occluded: pass the scene through unchanged. This must NOT be a discard -- the
+	// effect chain rotates render targets (ShaderManager::RenderChained), so the destination
+	// does not already hold the source image and a discarded pixel keeps stale buffer content.
+	if (ortho < 0.01f) return float4(color.rgb, 1.0f);
 	
 	float2 q;
 	float3 n;
