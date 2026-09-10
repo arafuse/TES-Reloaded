@@ -319,9 +319,10 @@ float4 Shadow(VSOUT IN) : COLOR0{
 			facing = TESR_ShadowBiasAdaptive.x > 0.0f ? smoothstep(0.0f, TESR_ShadowBiasAdaptive.x, ndl) : 1.0f;
 
 
-			// sqrt(1-x*x)/x == tan(acos(x)), without the transcendentals and clamped. The unclamped
-			// form diverges at grazing angles, which is what the legacy path below still does.
-			float ndlSafe = max(ndl, 0.05f);
+			// Clamped tan(acos(|ndl|)). abs(): depth slope depends on the angle to the ray, not the side --
+			// max(ndl,..) gave every sun-away face the peak bias (~82 world units), so thin walls stopped
+			// shadowing their own inner face and tree shadows leaked through onto it.
+			float ndlSafe = max(abs(ndl), 0.05f);
 			float slope = min(sqrt(saturate(1.0f - ndlSafe * ndlSafe)) / ndlSafe, TESR_ShadowBiasAdaptive.y);
 			biasNear = TESR_ShadowBiasDeferred.z * (1.0f + slope);
 			biasFar = TESR_ShadowBiasDeferred.w * (1.0f + slope);
