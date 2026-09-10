@@ -144,6 +144,7 @@ copy "$(TargetDir)$(TargetName).pdb" "C:\Games\Steam\steamapps\common\Oblivion\D
     <ClInclude Include="..\TESReloaded\Core\KeyboardManager.h" />
     <ClInclude Include="..\TESReloaded\Core\Managers.h" />
     <ClInclude Include="..\TESReloaded\Core\MemoryManagement.h" />
+    <ClInclude Include="..\TESReloaded\Core\RagdollCollision.h" />
     <ClInclude Include="..\TESReloaded\Core\MountedCombat.h" />
     <ClInclude Include="..\TESReloaded\Core\PluginVersion.h" />
     <ClInclude Include="..\TESReloaded\Core\RenderHook.h" />
@@ -182,6 +183,7 @@ copy "$(TargetDir)$(TargetName).pdb" "C:\Games\Steam\steamapps\common\Oblivion\D
     <ClCompile Include="..\TESReloaded\Core\KeyboardManager.cpp" />
     <ClCompile Include="..\TESReloaded\Core\Managers.cpp" />
     <ClCompile Include="..\TESReloaded\Core\MemoryManagement.cpp" />
+    <ClCompile Include="..\TESReloaded\Core\RagdollCollision.cpp" />
     <ClCompile Include="..\TESReloaded\Core\MountedCombat.cpp" />
     <ClCompile Include="..\TESReloaded\Core\PluginVersion.cpp" />
     <ClCompile Include="..\TESReloaded\Core\RenderHook.cpp" />
