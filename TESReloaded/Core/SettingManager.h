@@ -278,6 +278,8 @@ struct SettingsMainStruct {
 		UInt8	ProfileShadows;
 		UInt8	ProfileEffects;
 		UInt8	ProfileFrame;
+		UInt8	ProfileSampler;		// key code: toggles the main-thread sampling profiler
+		int		ProfileSamplerHz;
 		UInt8	NearShellDebug;
 	};
 
