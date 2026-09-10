@@ -20,4 +20,5 @@
 - [discard is illegal in chained effects](discard-illegal-in-chained-effects.md) — `discard` in a post-process .fx keeps STALE scratch content under EffectChainPingPong; return the source color instead
 - [Oblivion.exe symbols exist](oblivion-pdb-symbols.md) — community IDA-derived Oblivion.pdb in Plugins is GUID-stamped to the exe; dbghelp resolves engine addresses to real names (~21k RE'd, rest sub_XXXX)
 - [Main-thread sampling profiler](sampling-profiler.md) — Develop.ProfileSampler / F10; how to convert its percentages to ms/frame, why system-DLL inclusive numbers are garbage, and the suspend/resume deadlock rule
+- [Havok layer collision matrix](havok-layer-collision-matrix.md) — table 0xBA7DB0, init 0x8A83C0 clears Biped↔CharController (why actors walk through ragdolls), setter 0x8A7F20 only ever touches CustomPick rows at runtime
 - [Many actors = Havok, not AI](many-actors-havok-cost.md) — MEASURED: character-proxy collision (closestPointSegmentSegment 0x8D1A30, O(n²) contact prune 0x8CE770), ~3.2ms/s per actor; Calc_DetectionLevel is NOT implicated; fixed-timestep feedback loop; our shadow overlay costs +3.65ms/frame off-camera

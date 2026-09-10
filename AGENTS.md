@@ -87,7 +87,7 @@ Key hook files:
 
 Each has a `Create*Hook()` function called from `Main.cpp` based on INI settings:
 
-GrassMode, CameraMode, EquipmentMode, MountedCombat, SleepingMode, Dodge, FlyCam, WeatherMode, Animation, MemoryManagement, D3D9Hook (debug)
+GrassMode, CameraMode, EquipmentMode, MountedCombat, SleepingMode, Dodge, FlyCam, WeatherMode, Animation, MemoryManagement, RagdollCollision, D3D9Hook (debug)
 
 ### Multi-Game Conditionals
 

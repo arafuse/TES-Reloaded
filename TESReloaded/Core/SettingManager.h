@@ -83,6 +83,8 @@ struct SettingsMainStruct {
 		bool	RemoveUnderwater;
 		bool	RemovePrecipitations;
 		bool	MemoryManagement;
+		// Lets character controllers collide with ragdoll bones (the engine disables the pair).
+		bool	RagdollActorCollision;
 		bool	FPSOverlay;
 		bool	SaveSettings;
 		bool	ReplaceIntro;
