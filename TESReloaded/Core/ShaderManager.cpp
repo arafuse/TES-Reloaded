@@ -2392,9 +2392,12 @@ void ShaderManager::UpdateSharpening(ShaderConstants& ShaderConst) {
 void ShaderManager::UpdateVolumetricFog(ShaderConstants& ShaderConst, float weatherPercent) {
 	ShaderConst.VolumetricFog.Data.x = TheSettingManager->SettingsVolumetricFog.Exponent;
 	ShaderConst.VolumetricFog.Data.y = TheSettingManager->SettingsVolumetricFog.ColorCoeff;
-	ShaderConst.VolumetricFog.Data.z = TheSettingManager->SettingsVolumetricFog.Amount;
-	ShaderConst.VolumetricFog.Data.w = 1.0f;
-	if (weatherPercent == 1.0f && ShaderConst.fogData.y > TheSettingManager->SettingsVolumetricFog.MaxDistance) ShaderConst.VolumetricFog.Data.w = 0.0f;
+	// Data.w is a 0-1 weight: fog is off for weathers whose far fog exceeds MaxDistance, faded across transitions.
+	float MaxDistance = TheSettingManager->SettingsVolumetricFog.MaxDistance;
+	float FromWeight = ShaderConst.oldfogEnd > MaxDistance ? 0.0f : 1.0f;
+	float ToWeight = ShaderConst.currentfogEnd > MaxDistance ? 0.0f : 1.0f;
+	ShaderConst.VolumetricFog.Data.w = std::lerp(FromWeight, ToWeight, weatherPercent);
+	ShaderConst.VolumetricFog.Data.z = TheSettingManager->SettingsVolumetricFog.Amount * ShaderConst.VolumetricFog.Data.w;
 }
 
 void ShaderManager::UpdateTAA(ShaderConstants& ShaderConst, int& jitterIndex, const JitterPattern jitterPattern[2]) {

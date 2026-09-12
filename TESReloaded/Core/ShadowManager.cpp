@@ -1382,10 +1382,10 @@ void ShadowManager::RenderExteriorShadows() {
 		PublishCachedRegionSampleMatrix(MapFar);
 		PublishStaticFadeConstants();
 
-		// While volumetric fog draws (same gate as RenderEffects), shadows use the precipitation tier's
-		// darkness. Only Darkness is swapped: the selected struct still owns cascade geometry.
-		bool FogActive = TheSettingManager->SettingsMain.Effects.VolumetricFog && TheShaderManager->ShaderConst.VolumetricFog.Data.w;
-		ShadowData->y = FogActive ? TheSettingManager->SettingsShadows.ExteriorsPrecip.Darkness : ShadowsExteriors->Darkness;
+		// While volumetric fog draws, shadows blend toward the precipitation tier's darkness by the fog weight.
+		// Only Darkness is swapped: the selected struct still owns cascade geometry.
+		float FogWeight = TheSettingManager->SettingsMain.Effects.VolumetricFog ? TheShaderManager->ShaderConst.VolumetricFog.Data.w : 0.0f;
+		ShadowData->y = std::lerp(ShadowsExteriors->Darkness, TheSettingManager->SettingsShadows.ExteriorsPrecip.Darkness, FogWeight);
 		ShadowData->z = 1.0f / (float)ShadowsExteriors->ShadowMapSize[MapNear];
 		ShadowData->w = 1.0f / (float)ShadowsExteriors->ShadowMapSize[MapFar];
 
