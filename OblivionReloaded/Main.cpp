@@ -14,6 +14,7 @@
 #include "PluginVersion.h"
 #include "MemoryManagement.h"
 #include "RagdollCollision.h"
+#include "WeatherSmoothing.h"
 #include "D3D9Hook.h"
 
 extern "C" {
@@ -51,6 +52,7 @@ extern "C" {
 			CreateAnimationHook();
 			if (TheSettingManager->SettingsMain.Main.MemoryManagement) CreateMemoryManagementHook();
 			if (TheSettingManager->SettingsMain.Main.RagdollActorCollision) CreateRagdollCollisionHook();
+			if (TheSettingManager->SettingsMain.Main.WeatherMinTransitionTime > 0.0f) CreateWeatherSmoothingHook();
 			if (TheSettingManager->SettingsMain.GrassMode.Enabled) CreateGrassHook();
 			if (TheSettingManager->SettingsMain.CameraMode.Enabled) CreateCameraModeHook();
 

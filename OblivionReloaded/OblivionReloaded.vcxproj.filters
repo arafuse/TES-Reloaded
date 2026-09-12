@@ -65,6 +65,9 @@
     <ClInclude Include="..\TESReloaded\Core\RagdollCollision.h">
       <Filter>Core</Filter>
     </ClInclude>
+    <ClInclude Include="..\TESReloaded\Core\WeatherSmoothing.h">
+      <Filter>Core</Filter>
+    </ClInclude>
     <ClInclude Include="..\TESReloaded\Core\MountedCombat.h">
       <Filter>Core</Filter>
     </ClInclude>
@@ -182,6 +185,9 @@
       <Filter>Core</Filter>
     </ClCompile>
     <ClCompile Include="..\TESReloaded\Core\RagdollCollision.cpp">
+      <Filter>Core</Filter>
+    </ClCompile>
+    <ClCompile Include="..\TESReloaded\Core\WeatherSmoothing.cpp">
       <Filter>Core</Filter>
     </ClCompile>
     <ClCompile Include="..\TESReloaded\Core\MountedCombat.cpp">
