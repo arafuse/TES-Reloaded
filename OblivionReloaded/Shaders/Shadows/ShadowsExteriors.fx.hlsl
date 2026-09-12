@@ -12,7 +12,7 @@ float4 TESR_CameraPosition;
 float4 TESR_ShadowData;
 float4 TESR_ShadowLightDir;
 float4 TESR_ReciprocalResolution;
-float4 TESR_ShadowBiasDeferred;
+float4 TESR_ShadowBiasDeferred; // adaptive: xy = near/far normal offset (world), zw = near/far depth bias (normalized)
 // w is the SUN-ACTIVE flag: 1 while the sun shadow maps are being updated this frame, 0 otherwise
 // (published every exterior frame by ShadowManager::RenderExteriorShadows, including sunless ones).
 // The apply effect runs on a broader condition than the shadow pass does, so the terminator ramp

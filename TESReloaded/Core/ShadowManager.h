@@ -42,11 +42,9 @@ public:
 	void					CreateD3DMatrixWorld(D3DMATRIX* Matrix, NiTransform* Transform);
 	void					GetShadowFrustum(ShadowMapTypeEnum ShadowMapType, D3DMATRIX* Matrix);
 	bool					InShadowFrustum(ShadowMapTypeEnum ShadowMapType, NiAVObject* Object);
-	// Camera-relative frustum tests using a precomputed bound center+radius (no GetWorldBound /
-	// camera subtraction; done once at collection). Root variant ports InShadowFrustum exactly
-	// (incl. the MapFar near-frustum exclusion); Leaf variant is plain 6-plane containment.
-	bool					RootInShadowFrustum(ShadowMapTypeEnum ShadowMapType, const D3DXVECTOR3& Center, float Radius);
-	bool					LeafInShadowFrustum(ShadowMapTypeEnum ShadowMapType, const D3DXVECTOR3& Center, float Radius);
+	// Frustum test on a precomputed bound center+radius, already in the map's space (no
+	// GetWorldBound / base subtraction; done once at collection). Used for ref roots and leaves.
+	bool					SphereInShadowFrustum(ShadowMapTypeEnum ShadowMapType, const D3DXVECTOR3& Center, float Radius);
 	void					GetFrustumPlanes(D3DXPLANE* Frustum, D3DXMATRIX* Matrix);
 	bool					InFrustum(D3DXPLANE* Frustum, NiGeometry* Geo);
 	TESObjectREFR*			GetRef(TESObjectREFR* Ref, SettingsShadowStruct::FormsStruct* Forms, SettingsShadowStruct::ExcludedFormsList* ExcludedForms);

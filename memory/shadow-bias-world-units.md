@@ -1,32 +1,33 @@
 ---
 name: shadow-bias-world-units
-description: "Exterior sun-shadow depth bias in WORLD units (normalized x 2*ShadowMapFarPlane = x16384), the contact light-leak band it causes at wall bases, and a latent far-cascade exclusion bug"
-metadata: 
+description: "Exterior sun-shadow depth bias: authored in per-cascade TEXELS under AdaptiveBias (converted to normalized ortho depth = world / 2*FarPlane), why a world-unit bias leaks light at wall contacts, and the removed far-cascade exclusion"
+metadata:
   node_type: memory
   type: project
   originSessionId: e49fe85e-acf4-4a0f-96dc-f84088b3eff6
-  modified: 2026-09-11T00:34:54.195Z
+  modified: 2026-09-11T18:17:59.291Z
 ---
 
-`deferredConstBias`/`deferredFarConstBias` are normalized ortho depth; the ortho spans
-`2 * ShadowMapFarPlane` (16384 at 8192), so 0.001 = ~16.4 world units, and the adaptive path
-multiplies by `(1 + min(tan(acos|ndl|), BiasMaxSlope))` -> up to ~82 units. The SAME normalized
-constant is used for near (2 units/texel) and far (8 units/texel) — it is not texel-scaled, unlike
-the normal offset (`deferredNormBias`, scaled by 2R/Size in PublishShadowBiasConstants).
+Under `AdaptiveBias = 1`, `deferredConstBias`/`deferredFarConstBias` are shadow-map TEXELS of each
+cascade (since 2026-09-11), like `deferred*NormBias`. `PublishShadowBiasConstants` converts them:
+`texels * (2R/Size) / (2 * Selected->ShadowMapFarPlane)` -> normalized depth in
+`TESR_ShadowBiasDeferred.z/.w`; the shader and VolumetricLight still see normalized values. Legacy
+path (`AdaptiveBias = 0`, also the CODE default) keeps raw normalized values — so code defaults stay
+legacy-unit ("0.001"); only the shipped INI carries texel values. 1 texel = 2 units near, 8 far.
+Old normalized reference: 0.001 = ~16.4 world units at FarPlane 8192.
 
-Consequence: a receiver is unoccluded when the occluder is closer along the sun ray than the bias.
-On a floor beside a sun-side wall of thickness t at sun elevation e, the lit band is
-`x < bias_world * cos(e) - t` (~58 - t units at e=20°, ~81 - t at e=10°) — distant tree shadows show
-through it. Fixed 2026-09 for sun-AWAY faces (abs(ndl) in the slope term, commit 4a04e86); the
-sun-facing contact band remains a tuning trade vs acne.
+Why texels: a receiver stays lit wherever its occluder is closer along the sun ray than the bias.
+On a floor beside a sun-side wall of thickness t at sun elevation e the lit band is
+`x < bias_world * cos(e) - t`; wall tops show slivers. The effective bias is
+`value * (1 + min(tan(acos|ndl|), BiasMaxSlope))` — `abs(ndl)` since commit cff12bb (sun-away faces
+used to get the peak ~82 units and leaked tree shadows through thin walls).
 
-Ruled out while investigating (2026-09-10): record flag 0x200 ("NotCastShadows" in Game.h, UESP
-says "Casts shadows") is set on exactly 1 exterior ref in Oblivion.esm, so the naming is moot;
-persistent exterior statics are ~1.9k of 484k and nearly all markers.
+Removed 2026-09-11: the MapFar "fully inside near frustum" exclusion (RootInShadowFrustum and terrain
+InShadowFrustum). It tested far-anchor-relative centers against near-anchor-relative planes, and the
+two cached maps re-anchor independently, so far bakes lost casters that receivers later needed. Now a
+single `SphereInShadowFrustum`; far bakes draw the near area's >=100-radius casters too.
 
-Latent bug (unfixed): RootInShadowFrustum(MapFar) excludes casters "fully inside near" by testing
-FAR-anchor-relative centers against ShadowMapFrustum[MapNear], which is NEAR-anchor-relative, and the
-two cached regions rebake independently — so after near re-anchors, receivers that fall back to the
-far map lose static casters from the old near box (holes beyond ~1-2k units, behind the player).
+Ruled out (2026-09-10): record flag 0x200 ("NotCastShadows" in Game.h, UESP says "Casts shadows") is
+set on 1 exterior ref in Oblivion.esm; persistent exterior statics are ~1.9k of 484k, nearly all markers.
 
 Related: [[shader-deployment-workflow]], [[fxc-verify-shader-edits]]
