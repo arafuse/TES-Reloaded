@@ -10,7 +10,7 @@
 
 float4x4 TESR_ViewTransform;
 float4x4 TESR_ProjectionTransform;
-float4 TESR_ShadowPointData;      // z = 1 / cube map size, w = depth bias
+float4 TESR_ShadowPointData;      // x = shadow strength scale, z = 1 / cube map size, w = depth bias
 float4 TESR_ShadowLightPosition0; // xyz = camera-relative light pos, w = far plane (0 = slot empty)
 float4 TESR_ShadowLightPosition1;
 float4 TESR_ShadowLightPosition2;
@@ -146,7 +146,9 @@ float4 Shadow(VSOUT IN) : COLOR0{
 	shadow *= GetPointShadow(TESR_ShadowCubeMapBuffer2, TESR_ShadowLightPosition2, TESR_ShadowLightLuminance.z, pixelPos);
 	shadow *= GetPointShadow(TESR_ShadowCubeMapBuffer3, TESR_ShadowLightPosition3, TESR_ShadowLightLuminance.w, pixelPos);
 
-	color.rgb *= saturate(shadow);
+	// Strength scale (1 normally, lighter under volumetric fog) applies to the combined term, so
+	// overlapping lights lighten together and the falloff shape is kept.
+	color.rgb *= lerp(1.0f, saturate(shadow), TESR_ShadowPointData.x);
 	return float4(color, 1.0f);
 
 }

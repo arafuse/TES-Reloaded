@@ -364,6 +364,7 @@ struct SettingsShadowStruct {
 		float				MaxDistance;		// max light distance from player to cast shadows
 		float				Bias;				// depth bias in normalized cube distance (scales with light radius)
 		float				FadeTime;			// seconds a slot takes to fade its shadow in or out (0 = snap)
+		float				FogStrength;		// shadow strength multiplier under full volumetric fog (1 = unchanged, 0 = none)
 		ExcludedFormsList	ExcludedForms;
 	};
 
