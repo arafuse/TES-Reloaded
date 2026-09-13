@@ -1290,6 +1290,8 @@ void SettingManager::LoadSettings() {
 	SettingsShadows.Point.Bias = atof(value);
 	GetPrivateProfileStringA("Point", "FadeTime", "0.5", value, SettingStringBuffer, Filename);
 	SettingsShadows.Point.FadeTime = atof(value);
+	GetPrivateProfileStringA("Point", "FogStrength", "0.5", value, SettingStringBuffer, Filename);
+	SettingsShadows.Point.FogStrength = std::clamp((float)atof(value), 0.0f, 1.0f);
 	SettingsShadows.Point.Forms.Activators = GetPrivateProfileIntA("Point", "Activators", 1, Filename);
 	SettingsShadows.Point.Forms.Actors = GetPrivateProfileIntA("Point", "Actors", 1, Filename);
 	SettingsShadows.Point.Forms.Apparatus = GetPrivateProfileIntA("Point", "Apparatus", 1, Filename);
