@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: reference
   originSessionId: 57c88b05-51ab-4cd6-a9ce-28f6e179103c
-  modified: 2026-09-12T23:41:03.777Z
+  modified: 2026-09-14T01:21:18.713Z
 ---
 
 Disassembled 2026-09-12 (Oblivion.exe + community PDB, see [[oblivion-pdb-symbols]]). Oblivion `Sky` layout is the OBLIVION block in Game.h ([[gameh-multigame-blocks]]): first=+0x10, second(prev)=+0x14, next=+0x18, override=+0x1C, gameHour=+0xD0, transStartHour=+0xD4, weatherPercent=+0xD8, accelBasePct=+0xF4, flags=+0xFC. `TESWeather::transDelta` = byte +0x4B.
@@ -29,5 +29,7 @@ OR's WeatherMode (INI TransDelta override) is **disabled** in Adam's install, so
 **Save load:** `SaveLoad_LoadGame` → sub_5437C0 sets `(*0xB33B00)+0x18 |= 0x400` around its Sky::Update call — a reliable "snap, don't blend" signal. sub_65F770 also calls Sky::Update directly (likely wait/sleep time advance).
 
 Implemented as `WeatherSmoothing.cpp` (INI `Main.WeatherMinTransitionTime`, default 1.0 s): rel-call at 0x543004, rate-limits percent and restores secondWeather, re-runs 0x540850, logs `[WeatherSmoothing] <cause>` lines. Volumetric fog `Data.w` became a 0–1 weight lerped by percent (also scales `Data.z` and the shadow precip-darkness blend).
+
+**Restoring secondWeather re-arms the engine's own transition (bug fixed 2026-09-13):** after a forced change (ForceWeather resets start hour +0xD4), writing a non-NULL second back makes 0x5422F0 resume computing pct from game hours — ~0 for up to ~1 game hour. Following that percent pinned the blend at the OLD weather (exterior fog weathers showed inside BehaveLikeExterior "Interior*" weather cells for an in-game hour). Hence `State.Detached`: once the engine drops From, target 1.0 until settled; never re-follow engine pct.
 
 OR-side discontinuities that engine smoothing will NOT fix: `UpdateVolumetricFog` flips Data.w 1→0 on the exact frame pct==1.0 when fog far > Fog.ini MaxDistance (100000); `UpdateExteriorLighting` blends from its own `pWeather` (updated only when pct==1.0), not the engine's secondWeather.
