@@ -22,7 +22,8 @@ struct SmoothedTransition {
 	float		LastHour;
 	double		LastMs;
 	bool		Valid;
-	bool		Forced;	// The engine changed weather without blending from what was shown
+	bool		Forced;		// The engine changed weather without blending from what was shown
+	bool		Detached;	// The engine dropped From, so its percent no longer describes this blend
 	bool		Logged;
 };
 
@@ -94,6 +95,7 @@ static void __fastcall UpdateTransitionHook(Sky* WorldSky) {
 		State.From = EngineFrom;
 		State.Percent = EngineFrom ? EnginePercent : 1.0f;
 		State.Valid = EngineTo != NULL;
+		State.Detached = false;
 		State.Logged = true;
 		return;
 	}
@@ -112,17 +114,22 @@ static void __fastcall UpdateTransitionHook(Sky* WorldSky) {
 		}
 		State.To = EngineTo;
 		State.Forced = EngineFrom != State.From;
+		State.Detached = false;
 		State.Logged = false;
 	}
 
 	if (!State.From) {
 		State.From = EngineFrom;
 		State.Percent = EngineFrom ? EnginePercent : 1.0f;
+		State.Detached = false;
 		return;
 	}
 
 	// The engine dropped the source weather (snap or finished early): drive the shown blend to 1.
-	float Target = EngineFrom == State.From ? EnginePercent : 1.0f;
+	// Latched, because restoring secondWeather below makes the engine resume its own game-hour
+	// transition from the reset start hour, and following that percent would stall the blend near 0.
+	if (EngineFrom != State.From) State.Detached = true;
+	float Target = State.Detached ? 1.0f : EnginePercent;
 	float Percent = min(Target, State.Percent + (float)(Elapsed / MinTransitionSeconds));
 	State.Percent = max(Percent, 0.0f);
 	if (Percent < Target - 0.001f && !State.Logged) {
@@ -132,6 +139,7 @@ static void __fastcall UpdateTransitionHook(Sky* WorldSky) {
 	if (State.Percent >= 1.0f) {
 		State.From = NULL;
 		State.Percent = 1.0f;
+		State.Detached = false;
 	}
 
 	if (WorldSky->secondWeather != State.From || WorldSky->weatherPercent != State.Percent) {
