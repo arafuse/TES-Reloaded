@@ -15,9 +15,8 @@
 #elif defined(OBLIVION)
 #define CurrentBlend *WaterBlend
 #define TerrainShaders "SLS2001.vso SLS2001.pso SLS2064.vso SLS2068.pso SLS2042.vso SLS2048.pso SLS2043.vso SLS2049.pso"
-#define ExteriorPom "PAR2022.pso"
 #define ExteriorExtraShaders "SM3LL003.pso SM3002.vso"
-#define InteriorShadowShaders "SLS2022.pso SLS2021.pso SLS2016.vso SLS2015.vso SLS2015.pso SLS2012.vso SLS2011.vso SLS2010.pso SLS2008.vso SLS2007.vso SLS2002.vso SLS2002.pso SLS2000.vso SLS2000.pso SLS1006.vso SLS1005.vso SLS1004.pso SLS1S006.vso SLS1S005.vso SLS1003.pso SLS2009.pso SLS2035.vso SLS2036.vso SLS2041.pso SM3002.vso SM3001.vso SM3001.pso SM3000.vso SM3LL003.pso SM3LL001.pso SM3LL000.pso PAR2022.pso"
+#define InteriorShadowShaders "SLS2022.pso SLS2021.pso SLS2016.vso SLS2015.vso SLS2015.pso SLS2012.vso SLS2011.vso SLS2010.pso SLS2008.vso SLS2007.vso SLS2002.vso SLS2002.pso SLS2000.vso SLS2000.pso SLS1006.vso SLS1005.vso SLS1004.pso SLS1S006.vso SLS1S005.vso SLS1003.pso SLS2009.pso SLS2035.vso SLS2036.vso SLS2041.pso SM3002.vso SM3001.vso SM3001.pso SM3000.vso SM3LL003.pso SM3LL001.pso SM3LL000.pso"
 #define ExteriorDialogShaders "SLS2003.pso SLS2018.pso SLS2039.pso SKIN2001.pso SKIN2003.pso SKIN2007.pso"
 #define BloodShaders "GDECALS.vso GDECAL.pso SLS2040.vso SLS2046.pso"
 #elif defined(SKYRIM)
@@ -1182,6 +1181,9 @@ ShaderManager::ShaderManager() {
 	EffectSurface = NULL;
 	PingTexture = NULL;
 	PingSurface = NULL;
+	POMDepthTexture = NULL;
+	POMDepthSurface = NULL;
+	POMDepthBound = false;
 	RenderedBufferFilled = false;
 	DepthBufferFilled = false;
 	PreWaterDepthBufferFilled = false;
@@ -1261,6 +1263,12 @@ ShaderManager::ShaderManager() {
 	EffectTexture->GetSurfaceLevel(0, &EffectSurface);
 	TAATexture->GetSurfaceLevel(0, &TAASurface);
 	PingTexture->GetSurfaceLevel(0, &PingSurface);
+	// 64-bit like the FP16 scene target, as D3D9 MRT requires; a failure just leaves POM shadows flat.
+	if (TheSettingManager->SettingsMain.Shaders.POM &&
+		SUCCEEDED(TheRenderManager->device->CreateTexture(TheRenderManager->width, TheRenderManager->height, 1, D3DUSAGE_RENDERTARGET, D3DFMT_G32R32F, D3DPOOL_DEFAULT, &POMDepthTexture, NULL)))
+		POMDepthTexture->GetSurfaceLevel(0, &POMDepthSurface);
+	else if (TheSettingManager->SettingsMain.Shaders.POM)
+		Logger::Log("WARNING: TESR_POMDepthBuffer could not be created; POM shadows stay flat.");
 	UseIntervalUpdate = TheSettingManager->SettingsShadows.Exteriors.UseIntervalUpdate;
 	if (TheSettingManager->SettingsMain.Develop.CompileShaders) {
 		CompileShaders(ShadersPath);
@@ -1316,7 +1324,6 @@ void ShaderManager::UpdateShaderStates() {
 		if (LocationState != CellLocation::Exterior) {
 			LocationState = CellLocation::Exterior;
 			DisposeShader("InteriorShadows");
-			CreateShader("ExteriorPom"); //no disposal needed since they are disposed as part of "InteriorShadows"
 			CreateShader("ExteriorExtraShaders");//no disposal needed since they are disposed as part of "InteriorShadows"
 		}
 
@@ -2223,11 +2230,13 @@ void ShaderManager::UpdateGrass(ShaderConstants& ShaderConst, GrassActorPos Gras
 	ShaderConst.Grass.CollisionParams.w = (float)GrassCollisionSourceCount;
 }
 
+/// Packs the parallax height scale and its centering bias so the shader offset is a single mad,
+/// plus the shadow relief scale for the PAR shadow side channel.
 void ShaderManager::UpdatePOM(ShaderConstants& ShaderConst) {
-	ShaderConst.POM.ParallaxData.x = TheSettingManager->SettingsPOM.HeightMapScale;
-	ShaderConst.POM.ParallaxData.y = TheSettingManager->SettingsPOM.SelfShadow != 0.0f ? TheSettingManager->SettingsPOM.SelfShadowStrength : 0.0f;
-	ShaderConst.POM.ParallaxData.z = TheSettingManager->SettingsPOM.MinSamples;
-	ShaderConst.POM.ParallaxData.w = TheSettingManager->SettingsPOM.MaxSamples;
+	float Scale = TheSettingManager->SettingsPOM.HeightMapScale;
+	ShaderConst.POM.ParallaxData.x = Scale;
+	ShaderConst.POM.ParallaxData.y = -0.5f * Scale;
+	ShaderConst.POM.ParallaxData.z = TheSettingManager->SettingsPOM.ShadowReliefScale;
 }
 
 void ShaderManager::UpdateTerrain(ShaderConstants& ShaderConst) {
@@ -2886,14 +2895,6 @@ void ShaderManager::CreateShader(const char* Name) {
 			NiD3DVertexShaderEx* VS = SM3VertexShaders[i];
 			if (VS && strstr(InteriorShadowShaders, VS->ShaderName)) {
 				LoadShader(VS, "Exterior");
-			}
-		}
-	}
-	else if (!strcmp(Name, "ExteriorPom")) {
-		ParallaxShader* PRS = (ParallaxShader*)GetShaderDefinition(15)->Shader;
-		for each (NiD3DPixelShaderEx * PS in PRS->Pixel) {
-			if (PS && strstr(ExteriorPom, PS->ShaderName)) {
-				LoadShader(PS, "Exterior");
 			}
 		}
 	}
@@ -3689,6 +3690,25 @@ void ShaderManager::RenderShadowsMidScene() {
 
 	CachedStateBlock->Apply();
 	SceneRT->Release();
+
+}
+
+/// Zeroes TESR_POMDepthBuffer at the start of the main scene, so last frame's PAR pixels cannot match.
+/// A zero geometric depth never matches a real one in the shadow effects.
+void ShaderManager::ClearPOMDepth() {
+
+	BindPOMDepth(false);
+	if (POMDepthSurface) TheRenderManager->device->ColorFill(POMDepthSurface, NULL, 0);
+
+}
+
+/// Binds TESR_POMDepthBuffer as render target 1 (the PAR first-pass COLOR1 output) or unbinds it.
+/// Raw device call: NiDX9RenderState does not track MRT slots, and Oblivion never uses them.
+void ShaderManager::BindPOMDepth(bool Bind) {
+
+	if (Bind == POMDepthBound || (Bind && !POMDepthSurface)) return;
+	TheRenderManager->device->SetRenderTarget(1, Bind ? POMDepthSurface : NULL);
+	POMDepthBound = Bind;
 
 }
 

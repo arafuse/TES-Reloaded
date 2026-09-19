@@ -12,6 +12,7 @@
 #define SkinPixelShaders "SLS2003.pso SLS2018.pso SLS2039.pso"
 #define EyePositionShaders "SLS2025.vso SLS2009.vso SLS2003.vso SLS2042.vso SLS2043.vso"
 #define RefractionPixelShaders "SLS2063.pso SM3028.pso SM3029.pso SM3030.pso"
+#define POMShadowPixelShaders "PAR2000.pso PAR2002.pso PAR2004.pso PAR2006.pso PAR2010.pso PAR2016.pso PAR2018.pso PAR2026.pso"
 #elif defined(SKYRIM)
 #define kCreateVertexShader 0x00CCBB00
 #define kCreatePixelShader 0x00CCC420
@@ -126,6 +127,7 @@ NiD3DPixelShader* ShaderIOHook::TrackCreatePixelShader(char* FileName, char* Arg
 		PixelShader->ShaderName[5] >= '0' && PixelShader->ShaderName[5] <= '9' &&
 		atoi(PixelShader->ShaderName + 5) < 12;
 	TheShaderManager->LoadShader(PixelShader);
+	PixelShader->isPOMShadowWriter = PixelShader->ShaderProg && strstr(POMShadowPixelShaders, PixelShader->ShaderName) != NULL;
 	return (NiD3DPixelShader*)PixelShader;
 
 }

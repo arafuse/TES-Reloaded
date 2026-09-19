@@ -83,6 +83,9 @@ bool TextureRecord::LoadTexture(TextureRecordType Type, const char* Filename) {
 		case TextureRecordType_ShadowCubeMapBuffer3:
 			Texture = TheShadowManager->ShadowCubeMapTexture[3];
 			break;
+		case TextureRecordType_POMDepthBuffer:
+			Texture = TheShaderManager->POMDepthTexture;
+			break;
 	}	
 	return true;
 
@@ -193,6 +196,13 @@ TextureRecord* TextureManager::LoadTexture(const char* ShaderSource, UInt32 Regi
 					if (SamplerParser && SamplerParser < strstr(Sampler, WordSamplerDelimeter)) {
 						Type = TextureRecordType_TAABuffer;
 						strcpy(Filename, WordTAABuffer);
+					}
+				}
+				if (!Type) {
+					SamplerParser = strstr(Sampler, WordPOMDepthBuffer);
+					if (SamplerParser && SamplerParser < strstr(Sampler, WordSamplerDelimeter)) {
+						Type = TextureRecordType_POMDepthBuffer;
+						strcpy(Filename, WordPOMDepthBuffer);
 					}
 				}
 				if (!Type) {

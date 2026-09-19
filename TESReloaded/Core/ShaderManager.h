@@ -105,7 +105,7 @@ struct ShaderConstants {
 		D3DXVECTOR4		CollisionXY[2];
 	};
 	struct POMStruct {
-		D3DXVECTOR4		ParallaxData;
+		D3DXVECTOR4		ParallaxData;	// x = height scale, y = -0.5 * scale (offset bias), z = shadow relief scale
 	};
 	struct TerrainStruct {
 		D3DXVECTOR4		Data;
@@ -449,6 +449,8 @@ public:
 	void					RenderEffectsPostHdr(IDirect3DSurface9* RenderTarget);
 	void					RenderEffects(IDirect3DSurface9* RenderTarget);
 	void					RenderShadowsMidScene(); // sun + point shadow apply, run mid-scene before the first near-water draw
+	void					ClearPOMDepth();
+	void					BindPOMDepth(bool Bind);
 	void					FlattenShellDepth();	 // near shell: rewrite TESR_DepthBuffer to "at M" over shell-covered pixels, after the shell
 	void					FlattenShellPreWaterDepth(bool MaskResolved); // same over TESR_DepthBufferPreWater, DURING the shell, before its first near water
 	void					FlattenShellDepthInto(IDirect3DTexture9* Target, IDirect3DSurface9** TargetSurface, bool ResolveMask); // shared body of the two above
@@ -517,6 +519,9 @@ public:
 	IDirect3DSurface9*		TAASurface;
 	IDirect3DTexture9*		PingTexture;   // multi-pass ping-pong scratch (avoids per-pass blits)
 	IDirect3DSurface9*		PingSurface;
+	IDirect3DTexture9*		POMDepthTexture;	///< TESR_POMDepthBuffer: G32R32F (geometric, relief) view depth from PAR first passes; NULL if POM is off
+	IDirect3DSurface9*		POMDepthSurface;
+	bool					POMDepthBound;		///< POMDepthSurface is currently render target 1
 	D3DMATRIX				PrevWorldViewProjMatrix;
 	bool					RenderedBufferFilled;
 	bool					DepthBufferFilled;

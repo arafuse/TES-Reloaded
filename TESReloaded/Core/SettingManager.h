@@ -420,12 +420,10 @@ struct SettingsGrassStruct {
 	int CollisionTrailSlots;
 };
 
+/// Parallax settings from POM\POM.ini.
 struct SettingsPOMStruct {
-	float HeightMapScale;
-	float MinSamples;
-	float MaxSamples;
-	float SelfShadow;
-	float SelfShadowStrength;
+	float HeightMapScale;	///< UV offset per unit of height; 0.04 is the stock parallax depth
+	float ShadowReliefScale;	///< World units the shadow receiver rises at height 1 (TESR_POMDepthBuffer); 0 = flat
 };
 
 struct SettingsTerrainStruct {

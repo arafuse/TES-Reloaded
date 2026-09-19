@@ -41,6 +41,7 @@ sampler2D TESR_DepthBufferPreWater : register(s5) = sampler_state { ADDRESSU = C
 sampler2D TESR_ShadowMapBufferSkin : register(s6) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
 sampler2D TESR_ShadowMapBufferNearPrev : register(s7) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
 sampler2D TESR_ShadowMapBufferFarPrev : register(s8) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
+sampler2D TESR_POMDepthBuffer : register(s9) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = POINT; MINFILTER = POINT; MIPFILTER = NONE; };
 
 static const float nearZ = TESR_ProjectionTransform._43 / TESR_ProjectionTransform._33;
 static const float farZ = (TESR_ProjectionTransform._33 * nearZ) / (TESR_ProjectionTransform._33 - 1.0f);
@@ -85,6 +86,15 @@ float readDepth(in float2 coord : TEXCOORD0)
 	// and the submerged floor — with no near-water surface in it. No per-pixel waterline select needed.
 	float posZ = tex2D(TESR_DepthBufferPreWater, coord).x;
 	return Zmul / ((posZ * Zdiff) - farZ);
+}
+
+// POM shadow side channel: x = geometric view depth, y = view depth of the parallax relief, written
+// by the PAR first-pass shaders. Used only where x still matches this pixel's depth, i.e. where that
+// PAR draw is still the visible surface; anything drawn over it later fails the match.
+float reliefDepth(in float2 coord, in float depth)
+{
+	float2 pom = tex2D(TESR_POMDepthBuffer, coord).xy;
+	return (abs(pom.x - depth) < depth * 0.001f) ? pom.y : depth;
 }
 
 float3 getPosition(in float2 tex, in float depth)
@@ -263,7 +273,8 @@ float4 Shadow(VSOUT IN) : COLOR0{
 		return float4(color, 1.0f);
 	}
 
-	float depth = readDepth(IN.UVCoord);
+	// Receiver position follows the parallax relief; the normal below stays on the geometric depth.
+	float depth = reliefDepth(IN.UVCoord, readDepth(IN.UVCoord));
 	float3 camera_vector = toWorld(IN.UVCoord) * depth;
 	float4 world_pos = float4(TESR_CameraPosition.xyz + camera_vector, 1.0f);
 

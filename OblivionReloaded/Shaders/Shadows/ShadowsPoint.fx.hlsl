@@ -23,6 +23,7 @@ samplerCUBE TESR_ShadowCubeMapBuffer0 : register(s2) = sampler_state { ADDRESSU 
 samplerCUBE TESR_ShadowCubeMapBuffer1 : register(s3) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; ADDRESSW = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = NONE; };
 samplerCUBE TESR_ShadowCubeMapBuffer2 : register(s4) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; ADDRESSW = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = NONE; };
 samplerCUBE TESR_ShadowCubeMapBuffer3 : register(s5) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; ADDRESSW = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = NONE; };
+sampler2D TESR_POMDepthBuffer : register(s6) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = POINT; MINFILTER = POINT; MIPFILTER = NONE; };
 
 static const float nearZ = TESR_ProjectionTransform._43 / TESR_ProjectionTransform._33;
 static const float farZ = (TESR_ProjectionTransform._33 * nearZ) / (TESR_ProjectionTransform._33 - 1.0f);
@@ -74,6 +75,15 @@ float readDepth(in float2 coord : TEXCOORD0)
 	// including the submerged floor, and never the water surface itself.
 	float posZ = tex2D(TESR_DepthBufferPreWater, coord).x;
 	return Zmul / ((posZ * Zdiff) - farZ);
+}
+
+// POM shadow side channel: x = geometric view depth, y = view depth of the parallax relief, written
+// by the PAR first-pass shaders. Used only where x still matches this pixel's depth, i.e. where that
+// PAR draw is still the visible surface; anything drawn over it later fails the match.
+float reliefDepth(in float2 coord, in float depth)
+{
+	float2 pom = tex2D(TESR_POMDepthBuffer, coord).xy;
+	return (abs(pom.x - depth) < depth * 0.001f) ? pom.y : depth;
 }
 
 // One light's contribution. Returns the factor to multiply scene color by: 1 = unshadowed.
@@ -138,7 +148,7 @@ float4 Shadow(VSOUT IN) : COLOR0{
 		return float4(color, 1.0f);
 	}
 
-	float depth = readDepth(IN.UVCoord);
+	float depth = reliefDepth(IN.UVCoord, readDepth(IN.UVCoord));
 	float3 pixelPos = toWorld(IN.UVCoord) * depth; // camera-relative, same space as the light positions
 
 	float shadow = GetPointShadow(TESR_ShadowCubeMapBuffer0, TESR_ShadowLightPosition0, TESR_ShadowLightLuminance.x, pixelPos);

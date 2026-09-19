@@ -2,6 +2,7 @@
 - [Game.h multi-game struct blocks](gameh-multigame-blocks.md) — OBLIVION is the MIDDLE of 3 struct blocks; gotchas
 - [GameNi.h multi-game struct blocks](gameni-multigame-blocks.md) — OBLIVION is the SECOND of 2 blocks; classes defined twice with different layouts (e.g. BSShaderProperty)
 - [Shader pipeline facts](shader-pipeline-facts.md) — preshaders in .fx effects, recompile gate (Develop.CompileShaders), effect vs raw-shader split; read before optimizing HLSL
+- [PAR shader interpolator layout](par-shader-interpolator-layout.md) — PAR VSO overrides must keep STOCK output registers (stock sibling PSOs share them); stock parallax formula; how to extract/disassemble stock shaders from the .sdp; PAR multipass follow-ups test ZFUNC EQUAL, so POM shadow relief goes through a COLOR1 side channel, NEVER the main depth
 - [Grass drawn between water groups](grass-drawn-after-water.md) — main-pass order: opaque → LOD water → sky → LOD terrain → grass → NEAR water; discriminate near water by PS number <12 (NOT alpha flags — they flip when camera is close); dispatch call sites known
 - [Skinning bone-matrix cache](skinning-bone-matrix-cache.md) — game caches BoneMatrixes per frame via NiSkinInstance::FrameID (counter bumps once per BeginFrame); addresses verified by disasm
 - [Water reflection pass detection](water-reflection-pass-detection.md) — VERIFIED frame order: reflection map (1024²) renders AFTER main pass, NOT via RenderObject; BeginScene re-fires per off-screen render and resets per-scene latches; mid-scene effects must gate on InMainScenePass
