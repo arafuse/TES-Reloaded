@@ -1,16 +1,29 @@
 ---
 name: gameh-multigame-blocks
-description: Game.h/GameNi.h define each engine struct three times (NEWVEGAS/OBLIVION/SKYRIM); which block is active and pitfalls
-metadata: 
-  node_type: memory
+description: Game.h and GameNi.h define each engine struct three times (NEWVEGAS/OBLIVION/SKYRIM); OBLIVION is always the MIDDLE block — reading the first match gives the New Vegas layout
+metadata:
   type: reference
-  originSessionId: 436deae8-f14f-48b2-8562-b12116885928
 ---
 
-`TESReloaded/Framework/Game.h` and `GameNi.h` define each engine struct THREE times under `#if defined(NEWVEGAS)/#elif defined(OBLIVION)/#elif defined(SKYRIM)`. The build defines OBLIVION.
+`TESReloaded/Framework/Game.h` and `GameNi.h` define most engine structs THREE times, under
+`#if defined(NEWVEGAS)` / `#elif defined(OBLIVION)` / `#elif defined(SKYRIM)`. The build defines
+OBLIVION, so **the active copy is always the MIDDLE one**. Reading the first grep match gives the
+New Vegas layout, which silently misleads. Trust compiler errors over a first-match read.
 
-Gotcha: in Game.h the OBLIVION block is the MIDDLE one, not the first. E.g. `class GridCellArray` appears at ~4132 (NEWVEGAS), ~8123 (OBLIVION, the active one), ~12203 (SKYRIM); `TESObjectCELL` at ~2208/~6310/~10978. Reading the FIRST match gives the NewVegas layout, which can mislead. The compiler resolves names to the OBLIVION block, so trust compiler errors over a first-match read. Concretely: the OBLIVION `GridCellArray` has `worldX/worldY` but NO `gridSize` — use `*SettingGridsToLoad` (SettingManager.h:59, `static const UInt32* = (UInt32*)kSettingGridsToLoad`) for grid loops, as ShadowManager/GrassMode/ShaderManager do.
+Block boundaries (approximate, they drift with edits):
+- Game.h: NEWVEGAS ~419, OBLIVION ~5084, SKYRIM ~8873, `#endif` ~13008. E.g. `GridCellArray` at
+  ~4133 / **~8125** / ~12206; `TESObjectCELL` at ~2208 / **~6311** / ~10980.
+- GameNi.h: NEWVEGAS ~426, OBLIVION ~1822, SKYRIM ~3611, `#endif` ~4184. OBLIVION geometry structs:
+  NiAVObject ~1881, NiNode ~1945, NiVBChip ~2095, NiGeometryBufferData ~2108, NiGeometryData ~2133,
+  NiGeometry ~2258.
 
-In GameNi.h the OBLIVION block starts at line ~1822 (`#elif defined(OBLIVION)`); the geometry structs there are correct for Oblivion: NiGeometryBufferData@2108, NiGeometryData@2133, NiGeometry@2226, NiNode@1945, NiAVObject@1881.
+Layouts genuinely differ between copies. Concrete gotchas:
+- `BSShaderProperty`: the NEWVEGAS copy has a `BSShaderType` enum (kType_Default etc.); the OBLIVION
+  copy (~3323) has **no type field** and identifies its class via `IsLightingProperty()` (vtable compare).
+- OBLIVION `GridCellArray` has `worldX/worldY` and `size` (= uGridsToLoad); existing grid loops use
+  `*SettingGridsToLoad` (SettingManager.h) as ShadowManager/GrassMode/ShaderManager do.
+- VFT constants in ShadowManager.cpp: the OBLIVION set is the `0x00A7xxxx`/`0x00A3xxxx` block after
+  `#elif defined(OBLIVION)`; the `0x010xxxxx` block above it is NEWVEGAS.
 
-To verify a struct's real Oblivion layout, grep for all definitions and read the one inside the OBLIVION `#elif` block (middle range in Game.h), or just let the build tell you. Used by [[mesh-combining-feature]].
+**How to apply:** to check a struct's real Oblivion layout, grep all definitions and read the one
+inside the OBLIVION `#elif` block, or let the build tell you.
