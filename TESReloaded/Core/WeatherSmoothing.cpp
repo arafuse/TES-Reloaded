@@ -125,9 +125,9 @@ static void __fastcall UpdateTransitionHook(Sky* WorldSky) {
 		return;
 	}
 
-	// The engine dropped the source weather (snap or finished early): drive the shown blend to 1.
-	// Latched, because restoring secondWeather below makes the engine resume its own game-hour
-	// transition from the reset start hour, and following that percent would stall the blend near 0.
+	// The engine dropped the source weather: drive the shown blend to 1. Latched,
+	// as restoring secondWeather makes the engine restart its transition from the
+	// reset start hour, which would stall the blend near 0.
 	if (EngineFrom != State.From) State.Detached = true;
 	float Target = State.Detached ? 1.0f : EnginePercent;
 	float Percent = min(Target, State.Percent + (float)(Elapsed / MinTransitionSeconds));

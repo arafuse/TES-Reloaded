@@ -184,12 +184,8 @@ namespace SampleProfiler {
 			UInt32 Eip = 0, Esp = 0, Copied = 0;
 			bool   Phase = false;
 
-			// Everything between Suspend and Resume must be lock-free and
-			// allocation-free: the main thread may be holding the heap or loader lock
-			// at the moment it is stopped, and taking either here would deadlock the
-			// game outright. GetThreadContext and memcpy from an already-committed
-			// stack range satisfy that; a VirtualQuery would NOT, which is why the
-			// stack ceiling is captured once up front instead.
+			// Lock- and allocation-free until Resume: the stopped thread may hold the heap
+			// or loader lock. Hence no VirtualQuery; the stack ceiling is cached up front.
 			if (SuspendThread(gMain) == (DWORD)-1) { gSuspendFail++; return; }
 			Phase = InRender;
 			if (GetThreadContext(gMain, &Ctx)) {
@@ -405,10 +401,8 @@ namespace SampleProfiler {
 			Logger::Log("[Sampler]   %u samples over %.1f s (%.0f Hz effective, %d Hz requested)",
 				gSamples, Seconds, Seconds > 0.0 ? gSamples / Seconds : 0.0, gHz);
 			Logger::Log("[Sampler]   %u frames, %.1f FPS, %.3f ms/frame", Frames, Fps, Fps > 0.0 ? 1000.0 / Fps : 0.0);
-			// The ms/frame figures below are what to compare between runs. Raw
-			// percentages are shares of a frame whose LENGTH changed, so a bucket can
-			// grow in ms while its percentage falls - and a frame-capped run parks its
-			// idle time in the update phase, inflating that share for no work at all.
+			// Compare ms/frame between runs, not percentages: those are shares of a frame
+			// whose length changed, and a frame-capped run parks idle time in update.
 			Logger::Log("[Sampler]   phase split:  update %u (%.1f %%, %.3f ms/frame)   render %u (%.1f %%, %.3f ms/frame)",
 				gPhaseCount[0], gPhaseCount[0] * Inv, gPhaseCount[0] * MsPerCount,
 				gPhaseCount[1], gPhaseCount[1] * Inv, gPhaseCount[1] * MsPerCount);

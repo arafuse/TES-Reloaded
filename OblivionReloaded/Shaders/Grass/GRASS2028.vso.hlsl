@@ -73,6 +73,8 @@ struct VS_OUTPUT {
 
 // Code:
 
+#include "Includes/GrassCollision.hlsl"
+
 VS_OUTPUT main(VS_INPUT IN) {
     VS_OUTPUT OUT;
 
@@ -108,41 +110,7 @@ VS_OUTPUT main(VS_INPUT IN) {
     r0.z = r1.z;
     r0.xy = (((sin(fracr((q0.x / 128) + WindData.w)) * WindData.z) * sqr(IN.LCOLOR_0.w)) * WindData.xy) + r2.xy;
 
-    // Grass collision
-    {
-        float2 bladeXY = InstanceData[0 + IN.LTEXCOORD_1.x].xy;
-        float tipWeight = sqr(IN.LCOLOR_0.w);
-        float radius = TESR_GrassCollisionParams.x;
-        float pushStr = TESR_GrassCollisionParams.y;
-        float flatStr = TESR_GrassCollisionParams.z;
-        int numSources = (int)TESR_GrassCollisionParams.w;
-        float invRadius = 1.0 / max(radius, 0.001);
-
-        float3 collisionDisp = 0;
-        float2 sources[3] = {
-            TESR_GrassCollisionXY0.xy, TESR_GrassCollisionXY0.zw,
-            TESR_GrassCollisionXY1.xy
-        };
-        // Source 0 is the player at full strength. Sources 1 and 2 are fading footprints or nearby
-        // actors and carry a spring recovery weight, which dips negative near the end of the
-        // recovery so the blade whips just past upright before settling.
-        float weights[3] = { 1.0, TESR_GrassCollisionXY1.z, TESR_GrassCollisionXY1.w };
-
-        [unroll]
-        for (int i = 0; i < 3; i++) {
-            if (i >= numSources) break;
-            float2 diff = bladeXY - sources[i];
-            float dist = length(diff);
-            float t = saturate(dist * invRadius);
-            float influence = smoothstep(1.0, 0.0, t) * weights[i];
-
-            float2 pushDir = (dist > 0.001) ? (diff / dist) : float2(1, 0);
-            float pushFade = smoothstep(0.0, 0.3, t);
-            collisionDisp.xy += pushDir * influence * pushFade * pushStr * tipWeight;
-            collisionDisp.z -= influence * flatStr * tipWeight;
-        }
-        r0.xyz += collisionDisp;
-    }
+    r0.xyz += GrassCollisionDisplacement(InstanceData[0 + IN.LTEXCOORD_1.x].xy, sqr(IN.LCOLOR_0.w));
 
     r1.xyz = r0.xyz + InstanceData[0 + IN.LTEXCOORD_1.x].xyz;
     r0.xyzw = frac(InstanceData[0 + IN.LTEXCOORD_1.x]);

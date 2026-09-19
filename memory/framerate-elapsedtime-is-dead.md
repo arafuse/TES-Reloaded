@@ -7,8 +7,8 @@ metadata:
 
 `FrameRateManager::ElapsedTime` and `::Time` are initialised to 0.0 in the constructor
 and **never assigned anywhere else in the repo**. Several callers still read them
-(Dodge.cpp, EquipmentManager.cpp, ScriptManager.cpp, and GameMenuManager.cpp:456 does
-`1.0 / ElapsedTime`), so those paths are silently broken or dead.
+(Dodge.cpp, EquipmentManager.cpp, ScriptManager.cpp, and GameMenuManager.cpp does
+`1.0 / ElapsedTime` for its FPS display), so those paths are silently broken or dead.
 
 **Why:** it looks like the obvious delta-time source and is not one.
 

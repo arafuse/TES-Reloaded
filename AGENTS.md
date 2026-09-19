@@ -1,6 +1,6 @@
-# AGENTS.md
+# CLAUDE.md
 
-This file provides guidance to coding agents when working with code in this repository.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Project Overview
 
@@ -10,14 +10,14 @@ The plugin loads via OBSE (Oblivion Script Extender) and hooks into the game eng
 
 ## Build
 
-Must build via the solution file (not the .vcxproj directly) because `$(SolutionDir)` is used in force-include paths:
+Must build via the solution file (not the .vcxproj directly) because `$(SolutionDir)` is used in force-include paths. Run it through the PowerShell tool, not Bash (see memory `build-via-powershell-not-bash`):
 
 ```
 powershell -Command "& 'C:\Development\Microsoft\Visual Studio\18\Community\MSBuild\Current\Bin\MSBuild.exe' 'C:\Users\Adam\Code\Oblivion\Oblivion Reloaded E3 Custom\TESReloaded.sln' /p:Configuration=Release /p:Platform=x86 /t:OblivionReloaded /v:minimal"
 ```
 
 - **Platform:** x86 in the .sln (maps to Win32 in the .vcxproj)
-- **Toolset:** v145 (Visual Studio 2019)
+- **Toolset:** v145 (Visual Studio 2026 / VS 18)
 - **Output:** `OblivionReloaded\Release\OblivionReloaded.dll`
 - **Preprocessor defines:** `OBLIVION` selects Oblivion-specific code paths (vs `NEWVEGAS` or `SKYRIM`)
 - **Force-included header:** `TESReloaded/Framework/Framework.h` — pulled into every compilation unit automatically
@@ -26,7 +26,7 @@ powershell -Command "& 'C:\Development\Microsoft\Visual Studio\18\Community\MSBu
 
 There are no tests or linting tools configured.
 
-Shaders are automatically deployed via directory symbolic link in the game folder.
+Shaders are not copied by the build: the game's `Data\Shaders\OblivionReloaded` is a directory symlink to `OblivionReloaded\Shaders`. Edited `.hlsl` only takes effect after a recompile (`[Develop] CompileShaders = 1`).
 
 ## Architecture
 
@@ -38,15 +38,16 @@ TESReloaded/
   Core/          Manager singletons, hooks, and feature modules
 OblivionReloaded/
   Main.cpp       OBSE plugin entry point (OBSEPlugin_Query, OBSEPlugin_Load)
+  Shaders/       HLSL sources, per-effect INIs, and compiled shader caches
 NewVegasReloaded/  (Not actively developed in this fork)
 SkyrimReloaded/    (Not actively developed in this fork)
 ```
 
 ### Framework Layer (`TESReloaded/Framework/`)
 
-- **Framework.h** — Master header force-included everywhere. Pulls in Windows, STL, DirectX, Detours, NVAPI, and all framework headers.
-- **GameNi.h** — Gamebryo/NetImmerse engine class definitions (~4,500 lines). Reverse-engineered structs matching the game's memory layout.
-- **Game.h/.cpp** — Game initialization hooks that capture pointers to engine singletons (renderer, player, scene graph, TES world, etc.) as they are created.
+- **Framework.h** — Master header force-included everywhere. Pulls in Windows, STL, DirectX, Detours, NVAPI, Bink, and all framework headers.
+- **Game.h** (~13k lines) / **GameNi.h** (~4.2k lines) / **GameHavok.h** — Reverse-engineered game, Gamebryo/NetImmerse, and Havok structs matching the game's memory layout. Game.h and GameNi.h define most structs three times (NEWVEGAS / OBLIVION / SKYRIM blocks); see memory `gameh-multigame-blocks`.
+- **Game.cpp** — `PerformGameInitialization()`: hooks that capture pointers to engine singletons (`Tes`, `Player`, `WorldSceneGraph`, etc.) as they are created. They are NULL until then.
 - **Types.h** — `ThisCall` templates for invoking game engine methods by raw address: `ThisCall(0x00804000, instance, arg1, arg2)`.
 - **SafeWrite.h/.cpp** — Memory patching: `SafeWrite8/16/32()`, `WriteRelJump()`, `WriteRelCall()`.
 - **Detours/** — Microsoft Detours library for runtime function hooking.
@@ -57,16 +58,16 @@ Global singletons declared as `The*Manager` (e.g., `TheShaderManager`, `TheSetti
 
 | Manager | Role |
 |---------|------|
-| **SettingManager** | Loads/manages INI configuration (`OblivionReloaded.ini`, weather INI) |
-| **ShaderManager** | Manages 32 post-processing effect types (bloom, SMAA, TAA, god rays, shadows, etc.) and shader constants |
+| **SettingManager** | Loads/manages INI configuration (`OblivionReloaded.ini`, weather INI, per-effect shader INIs); also hosts the game-settings hooks |
+| **ShaderManager** | Shader/effect records and shader constants; runs the 23 post-processing effect types (`EffectRecordType`: bloom, SMAA, TAA, god rays, shadows, volumetric fog/light, etc.) |
 | **RenderManager** | Extends NiDX9Renderer; manages D3D9 pipeline, camera data, depth buffers |
-| **ShadowManager** | Shadow map generation (near/far/interior/point light passes) |
+| **ShadowManager** | Shadow map generation (exterior near/far/ortho/skin maps, point-light cube maps) |
 | **TextureManager** | Render targets and sampler states for the post-processing pipeline |
-| **EquipmentManager** | Weapon/shield positioning, dual-wielding, mounted combat |
+| **EquipmentManager** | Weapon/shield positioning and dual-wielding |
 | **CommandManager** | OBSE console command registration |
 | **KeyboardManager** | Input handling |
-| **FrameRateManager** | FPS timing |
-| **GameMenuManager** | Game UI integration |
+| **FrameRateManager** | FPS timing (`GetPerformance()`; see memory `framerate-elapsedtime-is-dead`) |
+| **GameMenuManager** | In-game settings menu |
 | **ScriptManager** | Script system hooks |
 
 ### Hook System
@@ -78,16 +79,21 @@ Hooks follow a consistent pattern using Detours:
 3. **Direct patches** — `WriteRelJump()` / `WriteRelCall()` / `SafeWrite*()` for simpler redirections.
 
 Key hook files:
-- **RenderHook.cpp** — Main render pipeline, HDR, scene graph rendering
-- **ShaderIOHook.cpp** (~15k lines) — Intercepts shader creation/loading; largest file in the codebase
-- **FormHook.cpp** — Intercepts form/object loading (weather, water, animations)
-- **Game.cpp** (~13k lines) — Engine initialization hooks, settings application
+- **RenderHook.cpp** — Main render pipeline: frame/scene begin, WorldSceneGraph render, per-draw shader setup (mid-scene shadow apply at the first near-water draw), HDR and image-space hooks
+- **ShaderIOHook.cpp** — Intercepts shader creation/loading and flags shaders by name (e.g. near water, POM shadow writers)
+- **FormHook.cpp** — Intercepts form loading (idles, weather, water)
+- **SettingManager.cpp** (`CreateSettingsHook`) — Game setting reads, load game, save settings
+- **ShadowManager.cpp** (`CreateShadowsHook`, `CreateEditorShadowsHook`) — Shadow map rendering
 
-### Feature Modules (Conditionally Loaded)
+The largest files are Game.h, ShaderManager.cpp (~4.4k lines), and SettingManager.cpp (~3.7k lines).
 
-Each has a `Create*Hook()` function called from `Main.cpp` based on INI settings:
+### Feature Modules
 
-GrassMode, CameraMode, EquipmentMode, MountedCombat, SleepingMode, Dodge, FlyCam, WeatherMode, Animation, MemoryManagement, RagdollCollision, D3D9Hook (debug)
+Always installed: WeatherMode, Animation (plus the core hooks above).
+
+Installed from `Main.cpp` based on INI settings: MemoryManagement, RagdollCollision (`Main.RagdollActorCollision`), WeatherSmoothing (`Main.WeatherMinTransitionTime > 0`), GrassMode, CameraMode, EquipmentMode (`CreateEquipmentHook` in EquipmentManager.cpp), MountedCombat (requires EquipmentMode), SleepingMode, Dodge, FlyCam, D3D9Hook (`Develop.LogShaders`).
+
+Other Core modules: WindowedMode (applied from a setting in SettingManager), PluginVersion, FrameProfiler (per-bucket render timing, `Develop.ProfileFrame`), SampleProfiler (main-thread sampling profiler, `Develop.ProfileSampler`).
 
 ### Multi-Game Conditionals
 
@@ -96,23 +102,25 @@ Game-specific code uses `#if defined(OBLIVION)` / `#elif defined(NEWVEGAS)` / `#
 ### Plugin Load Sequence (`OblivionReloaded/Main.cpp`)
 
 `OBSEPlugin_Load` orchestrates initialization:
-1. Logger + CommandManager + SettingManager created
-2. `PerformGameInitialization()` — hooks engine singleton creation
-3. Core hooks installed: ShaderIO, Render, FormLoad, Settings, Script, Shadows, WeatherMode, Animation
-4. Conditional feature hooks based on INI settings
-5. Direct memory patches (antialiasing/HDR unlock, death reload timer)
+1. Logger + CommandManager created, console commands registered
+2. In the editor, only `CreateEditorShadowsHook()` runs; the rest is game-only
+3. PluginVersion string, SettingManager created and settings loaded
+4. `PerformGameInitialization()` — hooks engine singleton creation
+5. Core hooks installed: ShaderIO, Render, FormLoad, Settings, Script, Shadows, WeatherMode, Animation
+6. Conditional feature hooks based on INI settings
+7. Direct memory patches (antialiasing/HDR unlock, death reload timer)
 
 ### Debugging
 
-Set `#define WaitForDebugger 1` in `Main.cpp` to spin until a debugger attaches. Enable `Develop.LogShaders` in the INI to activate D3D9 shader logging hooks.
+Set `#define WaitForDebugger 1` in `Main.cpp` to spin until a debugger attaches. `Develop.LogShaders` (a key code) installs the D3D9 device logging hooks and, when pressed, logs one frame's shader passes. `Develop.ProfileFrame` and `Develop.ProfileSampler` enable the two profilers (see memory `sampling-profiler`). Output goes to `OblivionReloaded.log` in the game folder.
 
 ### Coding style
 
 - Public symbols should have appropriate documentation comments.
-- Code should be self-documenting; avoid inline code comments unless abolutely necessary. Inline comments must be kept to 1-3 lines maxiumum.
+- Code should be self-documenting; avoid inline code comments unless absolutely necessary. Inline comments must be kept to 1-3 lines maximum, at 80 characters per line.
 
 ## Design docs and memory
 
-`memory/` is symbolically linked to the agent's memory directory, so agent memory gets committed to the repo.
+The agent's memory directory is a symbolic link to `memory/` in this repo, so agent memory gets committed.
 
-Changes to memory and design documents must be self contained in their own `docs:` commits.
+We do not track design documents or implementation plans in history; anything worth persisting across tasks is committed to memory.

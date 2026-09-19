@@ -10,7 +10,8 @@ static const UInt32 kLayerCharController	= 20;
 static void InitLayerMatrixHook() {
 
 	((void (__cdecl*)())kInitLayerMatrix)();
-	// The engine disables this pair on purpose; runtime layer toggles only touch the CustomPick layers.
+	// The engine clears this pair on purpose; runtime layer toggles only touch
+	// the CustomPick layers.
 	((void (__cdecl*)(UInt32, UInt32, bool))kSetLayerCollision)(kLayerBiped, kLayerCharController, true);
 
 }

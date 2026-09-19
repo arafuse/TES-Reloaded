@@ -1,11 +1,8 @@
 ---
 name: cellinfo-ninode-is-water-node
 description: "GridCellArray::CellInfo::niNode is the cell's WATER node (culled), not its object container; loaded cell objects hang off Tes->ObjectLODRoot"
-metadata: 
-  node_type: memory
+metadata:
   type: reference
-  originSessionId: 11258809-5bd7-4c79-ac78-077c42d72a19
-  modified: 2026-08-22T23:05:15.297Z
 ---
 
 `GridCellArray::CellInfo` in `Game.h` is declared `WaterPlaneData* waterData; NiNode* niNode; // ...`
@@ -24,8 +21,8 @@ WolfBody_def             < BASE creatures\rat\racco < Raccoon ref < ? < ?@270C61
 
 So `ObjectLODRoot -> cellNode -> subNode -> (refNode) -> BASE node -> geometry`. Diffing
 `ObjectLODRoot`'s children by set membership is the reliable way to detect cells loading and
-unloading, and a departing cell IS a removed child (so it can be pinned/held). Note the name is
-misleading in the same way `Tes->LODRoot` is — see [[distant-lod-scene-graph]].
+unloading, and a departing cell IS a removed child (so it can be pinned/held).
 
-Cost me five sessions on the LOD dither fade: the cell tier diffed `CellInfo::niNode`, detected
-transitions correctly, and faded a node nothing ever drew. See [[lod-dither-fade]].
+**How to apply:** never use `CellInfo::niNode` to find or fade a cell's objects — it detects
+transitions correctly but nothing ever draws it. The name `ObjectLODRoot` is misleading in the same
+way `Tes->LODRoot` is — see [[distant-lod-scene-graph]].

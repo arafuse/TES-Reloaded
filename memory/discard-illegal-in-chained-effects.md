@@ -1,37 +1,28 @@
 ---
 name: discard-illegal-in-chained-effects
-description: "`discard` in any post-process .fx effect is a stale-buffer bug once EffectChainPingPong is on — return the source color instead"
-metadata: 
-  node_type: memory
+description: "`discard` in a post-process .fx effect that writes the chain destination is a stale-buffer bug under EffectChainPingPong — return the source color instead"
+metadata:
   type: project
-  originSessionId: 74aa57b5-a845-4148-8cf6-c6c9e981e0f0
-  modified: 2026-09-04T23:41:10.233Z
 ---
 
-2026-09-04 (branch feat/misc-4). Adam reported "a wall of grey fuzz" with a fading camera trail
-whenever he stood in an occluded spot in the rain. Root cause: `discard` in a full-screen post
-effect.
+`EffectRecord::RenderChained` (used while `[Main] EffectChainPingPong = 1`, the default) rotates
+between scratch buffers — `RenderedSurface` / `PingSurface` / `EffectSurface`. The destination does
+**not** contain the effect's source image, so a discarded pixel keeps whatever that slot held from an
+earlier effect or an earlier frame. In a region that discards every frame the staleness compounds
+into a fading camera trail / "grey fuzz". The legacy `EffectRecord::Render` path drew into the live
+scene target, which is why `discard` used to be harmless.
 
-The legacy `EffectRecord::Render` path drew into the live scene render target, which already held
-the effect's own input, so a discarded pixel harmlessly kept the scene. `ShaderManager::RenderChained`
-(added in `feat: Cleanup and optimizations pt 5`, default-on since `EffectChainPingPong` = 1) rotates
-between three scratch buffers instead — `RenderedSurface` / `PingSurface` / `EffectSurface`. The
-destination does **not** contain the source image, so a discarded pixel keeps whatever that slot held
-from an earlier effect or an earlier frame. In a region that discards every frame the staleness
-compounds, which is the fading trail.
+**Why:** the chain gives no "leave it alone" semantics; any effect that opts a pixel out must write
+the pass-through value explicitly.
 
-**Why:** any effect that opts a pixel out must write the pass-through value explicitly; the chain
-gives no "leave it alone" semantics.
+**How to apply:** in a `.fx.hlsl` pass whose output is the chain destination, `return
+float4(color.rgb, 1.0f)` (or the pass's own input) instead of `discard`/`clip`. Rain, Snow and
+SnowAccumulation `BlurNormals` follow this (see their comments). An early `return` also compiles to a
+real `if/else` that skips the work, which `texkill` did not. `clip()` still exists in
+AmbientOcclusion `BlurPS`, DepthOfField and VolumetricLight — not audited against this rule, so check
+where those passes write before relying on them. `discard` is fine in raw `.pso.hlsl` geometry
+shaders (ShadowMap, ShadowCubeMap).
 
-**How to apply:** never use `discard`/`clip` in `OblivionReloaded/Shaders/**/*.fx.hlsl` post effects —
-`return float4(color.rgb, 1.0f)` (or the pass's own input) instead. Fixed in `Rain.fx.hlsl`,
-`Snow.fx.hlsl` (`ortho < 0.01`) and `SnowAccumulation.fx.hlsl` `BlurNormals` (sky depth).
-Bonus: the asm shows HEAD's `texkill` did *not* skip the 24-layer streak loop, while the early
-`return` compiles to a real `if_lt/else/endif` around it — so this is also a small win on occluded
-pixels. `discard` stays fine in raw `.pso.hlsl` shaders (ShadowMap, ShadowCubeMap): those are real
-geometry passes, not chain effects.
-
-Repro/confirm without a build: `[Main] EffectChainPingPong=0` restores the old path and the artifact
-disappears.
+Confirm a suspected case without a build: `[Main] EffectChainPingPong = 0` restores the old path.
 
 Related: [[shader-pipeline-facts]], [[fxc-verify-shader-edits]], [[shader-deployment-workflow]]

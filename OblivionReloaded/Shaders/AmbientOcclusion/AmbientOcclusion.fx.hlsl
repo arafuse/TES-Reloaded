@@ -28,8 +28,8 @@ static const float2 OffsetMaskV = float2(0.0f, 1.0f);
 static const float PI = 3.14159265;
 // Perf: 7-tap blur (center + 6 offsets) instead of 13-tap (center + 12).
 // Gaussian sigma=2.0, renormalized so center + sum(offsets) == 1.
-// Center weight (0.21609) is the WeightSum seed in BlurPS below.
 static const int cKernelSize = 6;
+static const float cCenterWeight = 0.21609f;
 
 static const float BlurWeights[cKernelSize] =
 {
@@ -168,7 +168,7 @@ float4 AOPass(VSOUT IN) : COLOR0
 
 float4 BlurPS(VSOUT IN, uniform float2 OffsetMask) : COLOR0
 {
-	float WeightSum = 0.21609f; // center tap weight (matches cKernelSize=6 Gaussian)
+	float WeightSum = cCenterWeight;
 	float4 ao = tex2D(TESR_RenderedBuffer, IN.UVCoord);
 	ao.r = ao.r * WeightSum;
  

@@ -309,11 +309,17 @@ float flowNoise(float3 uvw)
     return blended;
 }
 
+// pow(g, 1.5), which fxc does not fold into g * sqrt(g) on its own.
+float Pow1_5(float g)
+{
+	return g * sqrt(g);
+}
+
 float ComputeScatteringSky(float lightDotView)
 {
     float result = 1.0f - SCATTERING_SKY * SCATTERING_SKY;
-    float g = 1.0f + SCATTERING_SKY * SCATTERING_SKY - (2.0f * SCATTERING_SKY) * lightDotView; // >= 0
-    result /= (4.0f * PI * (g * sqrt(g))); // Perf: pow(g,1.5) -> g*sqrt(g); fxc doesn't fold pow 1.5
+    float g = 1.0f + SCATTERING_SKY * SCATTERING_SKY - (2.0f * SCATTERING_SKY) * lightDotView;
+    result /= (4.0f * PI * Pow1_5(g));
     return result;
 }
 
@@ -325,8 +331,8 @@ float ComputeScatteringClamped(float lightDotView, float media, float ceiling)
 {
     float scatter = min(SCATTERING + media, ceiling);
     float result = 1.0f - scatter * scatter;
-    float g = 1.0f + scatter * scatter - (2.0f * scatter) * lightDotView; // >= 0
-    result /= (4.0f * PI * (g * sqrt(g))); // Perf: pow(g,1.5) -> g*sqrt(g); fxc doesn't fold pow 1.5
+    float g = 1.0f + scatter * scatter - (2.0f * scatter) * lightDotView;
+    result /= (4.0f * PI * Pow1_5(g));
     return result;
 }
 
@@ -347,10 +353,8 @@ float4 VolumetricLightBaseSky(VSOUT IN) : COLOR0
     float sunIntensity = TESR_VolumetricLightData4.y - 1;
 
     float2 uv = IN.UVCoord.xy;
-    // Upsample the ray-march quadrant here rather than in a pass of its own. Clamp to the last
-    // texel centre the ray-march wrote: without it the bilinear tap of the final column and row
-    // straddles the quadrant edge and pulls in a quarter of whatever the shared buffer still
-    // holds outside it, drawing a 1px border of stale data.
+    // Upsample the ray-march quadrant, clamped to its last written texel centre so
+    // the bilinear tap never pulls stale data in from past the quadrant edge.
     float3 color = tex2D(TESR_RenderedBuffer, min(uv * resPercent, resPercent - 0.5f * TESR_ReciprocalResolution.xy)).rgb;
     float depth = readDepth(uv);
     float shadowDepth = readDepthShadow(uv);
@@ -364,9 +368,7 @@ float4 VolumetricLightBaseSky(VSOUT IN) : COLOR0
     float stepLength = rayLength / MARCH_NUM;
     float3 step = rayDirection * stepLength;
 
-    // Perf: this loop was fully loop-invariant (scatter/baseScatter depend only on
-    // rayDirection, currentPosition was never read). Folded to closed form -- exactly
-    // equivalent to summing the same value MARCH_NUM times, with zero visual change.
+    // Every march step is identical here, so the sum folds to * MARCH_NUM.
     float scatter = ComputeScatteringSky(dot(rayDirection, TESR_ShadowLightDir)).xxx;
     float baseScatter = ComputeScattering(dot(rayDirection, TESR_ShadowLightDir), 0.2f).xxx;
     float3 accumLight = (scatter * ((TESR_VolumetricLightData6.xyz) * TESR_ShadowLightDir.w)) * MARCH_NUM;
@@ -458,10 +460,8 @@ float4 VolumetricLight(VSOUT IN) : COLOR0
     float3 accumLight = 0.0f.xxx;
     fogDirection *= (TESR_Tick.y / 10000.0f).xxx;
 
-    // Perf: every one of these is loop-invariant (rayDirection and the light are fixed for the
-    // ray), so they are computed once instead of MARCH_NUM times. shadowedScatter is the whole
-    // shadowed-step phase term - its media argument is the constant 0, so only the distance
-    // falloff it gets multiplied by inside the loop actually varies.
+    // Loop-invariant for the ray; inside the loop only the distance falloff that
+    // shadowedScatter is multiplied by varies.
     float lightDotView = dot(rayDirection, TESR_ShadowLightDir.xyz);
     float3 lightColor = accumLightColor * TESR_ShadowLightDir.w;
     float scatterCeiling = isSky ? 1.0f : 0.5f;
@@ -469,7 +469,6 @@ float4 VolumetricLight(VSOUT IN) : COLOR0
 
     for (int i = 0; i < MARCH_NUM; i++)
     {
-        // Perf: collapse pos=mul(cp,WVP) + two muls into two preshader-combined muls.
         float4 ShadowNear = mul(float4(currentPosition, 1.0f), ShadowNearCombined);
         float4 ShadowFar = mul(float4(currentPosition, 1.0f), ShadowFarCombined);
         float4 cpos = float4(currentPosition + shadowCameraVector, 1.0f);

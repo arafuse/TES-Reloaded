@@ -1,25 +1,42 @@
 ---
 name: shader-pipeline-facts
-description: "How OblivionReloaded compiles/loads HLSL shaders — preshaders, recompile gate, effect vs raw-shader split. Read before optimizing shaders."
-metadata: 
-  node_type: memory
+description: "How OblivionReloaded compiles/loads HLSL shaders — preshaders, recompile gate, effect vs raw-shader split, silent flattening of tex2D branches. Read before optimizing shaders."
+metadata:
   type: reference
-  originSessionId: 7db762f9-deec-4798-81cc-4e0406184574
-  modified: 2026-08-07T12:26:49.800Z
 ---
 
-Key facts about the shader pipeline in `OblivionReloaded/Shaders/` (verified in `TESReloaded/Core/ShaderManager.cpp`), relevant when optimizing HLSL:
+Key facts about the shader pipeline in `OblivionReloaded/Shaders/` (see `TESReloaded/Core/ShaderManager.cpp`):
 
-- **`.fx.hlsl` files (have `technique{}`) are D3DX9 effects.** Loaded via `D3DXCreateEffectFromFileA` (`EffectRecord::LoadEffect`) and compiled by `CompileEffect` (~line 680) with flags = NULL — `D3DXSHADER_NO_PRESHADER` is NOT set. So **uniform-only expressions are auto-extracted into CPU preshaders** and evaluated once per draw during `Effect->Begin`. Do NOT bother manually hoisting frame-constant math (e.g. `exp`/sigmoids/`nearZ`/`farZ`, matrix concatenation) to C++ for effect files — the runtime already does it. The canonical preshader use (matrix `mul` of two uniforms in a `static const`) works and offloads to CPU.
+- **`.fx.hlsl` files (have `technique{}`) are D3DX9 effects**, compiled by `ShaderManager::CompileEffect`
+  via `ID3DXEffectCompiler` and loaded with `D3DXCreateEffectFromFileA`. The only flag ever passed is
+  `D3DXSHADER_PREFER_FLOW_CONTROL` (when the source contains `/Gfp`); `D3DXSHADER_NO_PRESHADER` is never
+  set. So **uniform-only expressions are auto-extracted into CPU preshaders**, evaluated once per draw.
+  Do NOT hand-hoist frame-constant math (exp/sigmoids/`nearZ`/`farZ`, matrix concatenation) to C++ for
+  effect files — the runtime already does it.
 
-- **`.pso.hlsl`/`.vso.hlsl` raw shaders** (Terrain, POM, Skin, Shadow includes, scene geometry) compile via `D3DXCompileShaderFromFileA` (`CompileShader`, ~line 656) to `ps_3_0`/`vs_3_0` — **no preshaders**. Uniform-only math here IS per-pixel/per-vertex, so hoisting it (or pre-concatenating matrices) is a real win.
+- **`.pso.hlsl`/`.vso.hlsl` raw shaders** (Terrain, POM, Skin, Grass, Shadow maps, scene geometry)
+  compile via `D3DXCompileShaderFromFileA` in `ShaderManager::CompileShader` to `ps_3_0`/`vs_3_0` —
+  **no preshaders**. Uniform-only math here IS per-pixel/per-vertex, so hoisting it is a real win.
+  `PREFER_FLOW_CONTROL` is set only for sources including `Includes/ShadowCube`.
 
-- **Recompile gate:** edited `.hlsl` does NOT take effect until shaders are recompiled. Set `[Develop] CompileShaders=1` in `OblivionReloaded.ini` (read at `SettingManager.cpp:421`; triggers `CompileShaders(ShadersPath)` at `ShaderManager.cpp:908`). Compiled output is cached as an **extension-less file beside each `.hlsl`** (not a timestamp check). Watch the load log for `D3DXCompileShaderFromFileA`/effect compile errors.
+- **Recompile gate:** edited `.hlsl` does NOT take effect until shaders are recompiled. Set
+  `[Develop] CompileShaders = 1` in `OblivionReloaded.ini`, which recompiles EVERY shader at startup
+  (no timestamp check). Output is cached beside each source with `.hlsl` stripped (`X.pso.hlsl` →
+  `X.pso`, gitignored). Watch the log for compile errors.
 
-- fxc folds constant-integer `pow(x, 2.0)`→`x*x` already; `pow(x, 1.5)` does NOT fold (replace with `x*sqrt(x)` manually).
+- No INI-derived `#define`s reach the compiler (`pDefines` is NULL) — see [[shader-bake-defines]].
 
-- **You CAN validate shader compiles offline** (don't need to launch the game): `fxc.exe` is at `C:\Development\Microsoft\DirectX SDK (June 2010)\Utilities\bin\x64\fxc.exe`. Raw shaders: `fxc /T ps_3_0 /E main /I <shaderDir> <file>`. Effects (`.fx.hlsl` with `technique{}`): `fxc /T fx_2_0 /I <shaderDir> <file>`. Pass `/I <the shader's own directory>` — the game's D3DX resolves nested relative includes (`../Shadows/Includes/...`) from the top-level `.pso` dir, but fxc resolves from the including file, so `/I` fixes it. Exit 0 = compiles.
+- fxc folds constant-integer `pow(x, 2.0)` → `x*x`; `pow(x, 1.5)` does NOT fold (write `x*sqrt(x)`).
 
-- **Gotcha — a dynamic `if` around `tex2D` is SILENTLY FLATTENED (verified 2026-08-07, feat/shadow-fade).** Not just loops: an ordinary `if (uniform < x) { ...tex2D... }` compiles with exit 0 and no warning, but fxc hoists the fetches out and executes BOTH sides unconditionally, leaving the condition as a bare `lrp` weight. Cause is the same — `tex2D` needs implicit ddx/ddy, which can't be computed under divergent flow control. **So "the branch isn't taken, it costs nothing" is worthless as an assumption; it must be measured.** Check with `fxc /T ps_3_0 /E <entry> /Fc out.asm` and look for real `if_lt`/`endif` around the `texld`s rather than an unconditional sequence. Fix: `tex2Dlod(s, float4(uv,0,0))` — lossless wherever the texture has `Levels=1` (all the shadow maps do), costs 0 extra instructions per tap, and restores a genuine branch. The `X3570 gradient instruction used in a loop` warning count is the tell: ShadowsExteriors went 888 → 0 with the conversion, and 166 instructions became skippable.
+- **A dynamic `if` around `tex2D` is SILENTLY FLATTENED.** An ordinary `if (uniform < x) { ...tex2D... }`
+  compiles with exit 0 and no warning, but fxc hoists the fetches out and executes BOTH sides, leaving
+  the condition as a `lrp` weight — `tex2D` needs implicit ddx/ddy, which can't be computed under
+  divergent flow control. "The branch isn't taken, it costs nothing" must be measured, not assumed:
+  check `/Fc` asm for real `if_*`/`endif` around the `texld`s. Fix: `tex2Dlod(s, float4(uv,0,0))` —
+  lossless wherever the texture has one mip level (all the shadow maps do), no extra instructions,
+  restores a genuine branch. `X3570 gradient instruction used in a loop` warnings are the tell.
 
-- **Gotcha — gradient instructions in dynamic loops:** inside a `[loop]` (dynamic flow control), `tex2D` is illegal (`error X3526: can't use gradient instructions in loops with break`) because it needs implicit ddx/ddy gradients. Use `tex2Dlod(s, float4(uv, 0, 0))` (explicit LOD, no gradients) — lossless when sampling a full-res buffer where only LOD 0 is used. This is why the original GodRays light-shaft loop used `[unroll(50)]`.
+- **Gradient instructions in dynamic loops:** inside a `[loop]`, `tex2D` is an error (`X3526: can't use
+  gradient instructions in loops with break`). Use `tex2Dlod` (explicit LOD) or `[unroll]`.
+
+How to compile/verify offline: [[fxc-verify-shader-edits]]. Deployment: [[shader-deployment-workflow]].

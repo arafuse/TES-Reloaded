@@ -182,28 +182,27 @@ void ShadowManager::PublishShadowBiasConstants(SettingsShadowStruct::ExteriorsSt
 
 	float ScaleNear = 1.0f;
 	float ScaleFar = 1.0f;
-	float DepthScale = 1.0f; // world units -> normalized ortho depth
+	float WorldToOrthoDepth = 1.0f;
 	if (Ext.AdaptiveBias) {
 		if (Selected->ShadowMapSize[MapNear])
 			ScaleNear = (2.0f * Selected->ShadowMapRadius[MapNear]) / (float)Selected->ShadowMapSize[MapNear];
 		if (Selected->ShadowMapSize[MapFar])
 			ScaleFar = (2.0f * Selected->ShadowMapRadius[MapFar]) / (float)Selected->ShadowMapSize[MapFar];
-		// Selected, not canonical: it is the struct the bake built its projection from.
+		// Selected, not canonical: the bake built its projection from it.
 		if (Selected->ShadowMapFarPlane > 0.0f)
-			DepthScale = 1.0f / (2.0f * Selected->ShadowMapFarPlane);
+			WorldToOrthoDepth = 1.0f / (2.0f * Selected->ShadowMapFarPlane);
 	}
 
 	Sm.ShadowBiasDeferred.x = Ext.deferredNormBias * ScaleNear;
 	Sm.ShadowBiasDeferred.y = Ext.deferredFarNormBias * ScaleFar;
-	Sm.ShadowBiasDeferred.z = Ext.deferredConstBias * ScaleNear * DepthScale;
-	Sm.ShadowBiasDeferred.w = Ext.deferredFarConstBias * ScaleFar * DepthScale;
+	Sm.ShadowBiasDeferred.z = Ext.deferredConstBias * ScaleNear * WorldToOrthoDepth;
+	Sm.ShadowBiasDeferred.w = Ext.deferredFarConstBias * ScaleFar * WorldToOrthoDepth;
 
 	Sm.ShadowBiasAdaptive.x = Ext.BiasTerminatorWidth;
 	Sm.ShadowBiasAdaptive.y = Ext.BiasMaxSlope;
 	Sm.ShadowBiasAdaptive.z = Ext.AdaptiveBias ? 1.0f : 0.0f;
-	// .w (sun-active flag) is deliberately NOT written here. It is owned by RenderExteriorShadows,
-	// which sets it every exterior frame BEFORE its no-work early return -- this function only runs
-	// on frames that already have sun, so writing .w here could never clear it.
+	// .w (sun-active) belongs to RenderExteriorShadows, which also runs on sunless
+	// frames; this only runs with sun, so it could never clear it.
 }
 
 // Startup publish. Uses the canonical Exteriors struct rather than SelectExteriorShadowSettings(),
@@ -221,15 +220,15 @@ void ShadowManager::LoadShadowShaders(IDirect3DDevice9* Device) {
 	if (ShadowCubeMapVertex->LoadShader("ShadowCubeMap.vso")) Device->CreateVertexShader((const DWORD*)ShadowCubeMapVertex->Function, &ShadowCubeMapVertexShader);
 	ShadowCubeMapPixel = new ShaderRecord();
 	if (ShadowCubeMapPixel->LoadShader("ShadowCubeMap.pso")) Device->CreatePixelShader((const DWORD*)ShadowCubeMapPixel->Function, &ShadowCubeMapPixelShader);
-	// Optional: instanced static shadow VS. If the binary is missing (not yet compiled), the
-	// handle stays NULL and the renderer transparently falls back to the per-object path.
+	// Optional instanced static shadow VS; if uncompiled the handle stays NULL
+	// and rendering falls back to the per-object path.
 	ShadowMapInstancedVertex = new ShaderRecord();
 	if (ShadowMapInstancedVertex->LoadShader("ShadowMapInstanced.vso")) Device->CreateVertexShader((const DWORD*)ShadowMapInstancedVertex->Function, &ShadowMapInstancedVertexShader);
 }
 
 void ShadowManager::CreateShadowMapSurfaces(IDirect3DDevice9* Device, SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors) {
-	// Zero-init all four map slots, then allocate them: MapOrtho (precipitation occlusion) first,
-	// the directional sun maps (Near/Far/Skin) in the loop below. R32F color + D24S8 depth throughout.
+	// Zero all four map slots, then allocate MapOrtho (precipitation occlusion)
+	// here and the sun maps below. R32F colour + D24S8 depth throughout.
 	for (int i = 0; i < 4; i++) {
 		ShadowMapTexture[i] = NULL;
 		ShadowMapSurface[i] = NULL;
@@ -243,15 +242,12 @@ void ShadowManager::CreateShadowMapSurfaces(IDirect3DDevice9* Device, SettingsSh
 	Device->CreateDepthStencilSurface(ShadowMapSize, ShadowMapSize, D3DFMT_D24S8, D3DMULTISAMPLE_NONE, 0, true, &ShadowMapDepthSurface[Ortho], NULL);
 	ShadowMapViewPort[Ortho] = { 0, 0, ShadowMapSize, ShadowMapSize, 0.0f, 1.0f };
 
-	// Directional sun maps (reimplemented). Near = crisp small radius, Far = wide coarse. Skin = the
-	// per-frame actor overlay (Task 9), drawn against the near region's baked projection. R32F color
-	// + D24S8 depth, matching the ortho map's formats.
+	// Sun maps: Near = crisp small radius, Far = wide coarse, Skin = per-frame
+	// actor overlay against the near region's baked projection.
 	for (int m = ShadowMapTypeEnum::MapNear; m <= ShadowMapTypeEnum::MapSkin; m++) {
-		if (m == ShadowMapTypeEnum::MapOrtho) continue; // allocated separately above
-		// The skin overlay is min-combined with the near map in the apply, which reuses the near texel size
-		// (TESR_ShadowData.z) for the skin PCF kernel — so allocate skin at the NEAR resolution to keep the
-		// kernel correctly scaled regardless of any [ExteriorsSkin] ShadowMapSize override. Texture (below) and
-		// stored viewport share this Size, so they stay consistent.
+		if (m == ShadowMapTypeEnum::MapOrtho) continue;
+		// Skin is allocated at the near resolution: the apply reuses the near texel
+		// size for its PCF kernel, whatever [ExteriorsSkin] ShadowMapSize says.
 		UINT Size = ShadowsExteriors->ShadowMapSize[m == ShadowMapTypeEnum::MapSkin ? ShadowMapTypeEnum::MapNear : m];
 		if (!Size) continue;
 		Device->CreateTexture(Size, Size, 1, D3DUSAGE_RENDERTARGET, D3DFMT_R32F, D3DPOOL_DEFAULT, &ShadowMapTexture[m], NULL);
@@ -260,15 +256,14 @@ void ShadowManager::CreateShadowMapSurfaces(IDirect3DDevice9* Device, SettingsSh
 		ShadowMapViewPort[m] = { 0, 0, Size, Size, 0.0f, 1.0f };
 	}
 
-	// Previous-bake copies for the static crossfade. Allocated HERE, in the same function as the maps
-	// they shadow, because EffectRecord::LoadTexture resolves a sampler's texture pointer ONCE at
-	// effect load — the pointer must already exist by then, which is the same guarantee the main maps
-	// rely on. Skipped entirely when the feature is off, so nothing pays the ~32 MB.
+	// Previous-bake copies for the static crossfade, allocated here because
+	// EffectRecord::LoadTexture resolves sampler textures once at effect load.
+	// Skipped when fading is off, saving ~32 MB.
 	ShadowMapTexturePrev[0] = ShadowMapTexturePrev[1] = NULL;
 	ShadowMapSurfacePrev[0] = ShadowMapSurfacePrev[1] = NULL;
 	StaticFadeReady = false;
-	// CacheStaticShadows = 0 rebakes every frame, so the maps are never stale and nothing pops; the
-	// rebake gate this feature installs would also silently turn caching back on there.
+	// Not with CacheStaticShadows = 0: every-frame rebakes never pop, and the
+	// fade's rebake gate would silently re-enable caching.
 	if (ShadowsExteriors->FadeTime > 0.0f && ShadowsExteriors->CacheStaticShadows) {
 		bool Ok = true;
 		for (int m = ShadowMapTypeEnum::MapNear; m <= ShadowMapTypeEnum::MapFar; m++) {
@@ -279,10 +274,8 @@ void ShadowManager::CreateShadowMapSurfaces(IDirect3DDevice9* Device, SettingsSh
 			if (FAILED(ShadowMapTexturePrev[r]->GetSurfaceLevel(0, &ShadowMapSurfacePrev[r]))) { Ok = false; break; }
 		}
 		if (!Ok) {
-			// A partial allocation must not leave a live D3D9 interface behind: StaticFadeReady is about
-			// to go false, and TextureManager must never be able to hand a sampler a texture the feature
-			// itself believes doesn't exist. Release whatever the loop above managed to create and NULL
-			// it back out, so "failed" and "never attempted" are indistinguishable.
+			// Release a partial allocation, so TextureManager can never bind a texture
+			// the disabled feature believes does not exist.
 			for (int r = 0; r < 2; r++) {
 				if (ShadowMapSurfacePrev[r]) { ShadowMapSurfacePrev[r]->Release(); ShadowMapSurfacePrev[r] = NULL; }
 				if (ShadowMapTexturePrev[r]) { ShadowMapTexturePrev[r]->Release(); ShadowMapTexturePrev[r] = NULL; }
@@ -294,8 +287,8 @@ void ShadowManager::CreateShadowMapSurfaces(IDirect3DDevice9* Device, SettingsSh
 }
 
 void ShadowManager::CreateCubeMapSurfaces(IDirect3DDevice9* Device, UINT CubeMapSize) {
-	// One R32F cube per point-light slot. Faces render strictly sequentially with a per-face
-	// depth clear, so a single shared depth-stencil surface serves every face of every cube.
+	// One R32F cube per point-light slot. Faces render one at a time with a depth
+	// clear, so one depth-stencil surface serves every face of every cube.
 	for (int i = 0; i < PointLightMax; i++) {
 		ShadowCubeMapTexture[i] = NULL;
 		for (int j = 0; j < 6; j++) ShadowCubeMapSurface[i][j] = NULL;
@@ -326,18 +319,13 @@ ShadowManager::ShadowManager() {
 
 	InitShadowBiasConstants();
 
-	// Shadow.Data.y is the shadow "darkness" multiplier, and it is only written on a DoSun frame
-	// (RenderExteriorShadows). ShaderConst is a plain member that is never zeroed, so it must be
-	// given a sane value here: the apply shader reads it as `darkness` on the very first exterior
-	// frames after a load, and ShaderManager reads it as the LOWER bound of several std::clamp()
-	// calls on ShadowLightDir.w -- where a garbage value above 1.0 would be undefined behavior.
-	// 1.0 means "no darkening", the safe neutral default.
+	// ShaderConst is never zeroed and Data.y (darkness) is only written on sun
+	// frames, yet the apply and several std::clamp lower bounds read it first.
+	// 1.0 = no darkening.
 	TheShaderManager->ShaderConst.Shadow.Data.y = 1.0f;
 
-	// Same reasoning for the sun-active flag: RenderExteriorShadows writes it on every worldspace
-	// frame (which is also the only condition under which the apply effect runs), so nothing should
-	// read it unwritten -- but since PublishShadowBiasConstants deliberately does not touch it, seed
-	// it explicitly rather than leaving it as uninitialized memory. 0 = terminator ramp off.
+	// PublishShadowBiasConstants never writes the sun-active flag, so seed it
+	// too; 0 = terminator ramp off.
 	TheShaderManager->ShaderConst.ShadowMap.ShadowBiasAdaptive.w = 0.0f;
 
 	UINT ShadowCubeMapSize = TheSettingManager->SettingsShadows.Point.ShadowCubeMapSize;
@@ -360,12 +348,10 @@ ShadowManager::ShadowManager() {
 	StaticFadeT = 1.0f;
 	StaticFadeLastMs = 0.0;
 	ForceRebake = false;
-	// Seeded to MapFar so the fair steady-state picker gives MapNear the first pick, matching this
-	// codebase's existing near-first convention on the very first rebake.
+	// Seeded to MapFar so the steady-state picker gives MapNear the first bake.
 	LastBakedRegion = MapFar;
-	// Seeded for the same reason as Shadow.Data.y above: ShaderConst is a plain member that is never
-	// zeroed, and 1.0 is the neutral "no crossfade" value the apply shader must see before the first
-	// sun frame publishes anything.
+	// Seeded like Shadow.Data.y: 1.0 is the neutral "no crossfade" value the
+	// apply must see before the first sun frame.
 	TheShaderManager->ShaderConst.ShadowMap.ShadowFadeData = D3DXVECTOR4(1.0f, 0.0f, 0.0f, 0.0f);
 
 	for (int i = 0; i < 2; i++) {
@@ -427,7 +413,7 @@ void ShadowManager::CreateD3DMatrixWorld(D3DMATRIX* Matrix, NiTransform* Transfo
 	Matrix->_11 = Rot->data[0][0] * Scale; Matrix->_12 = Rot->data[1][0] * Scale; Matrix->_13 = Rot->data[2][0] * Scale; Matrix->_14 = 0.0f;
 	Matrix->_21 = Rot->data[0][1] * Scale; Matrix->_22 = Rot->data[1][1] * Scale; Matrix->_23 = Rot->data[2][1] * Scale; Matrix->_24 = 0.0f;
 	Matrix->_31 = Rot->data[0][2] * Scale; Matrix->_32 = Rot->data[1][2] * Scale; Matrix->_33 = Rot->data[2][2] * Scale; Matrix->_34 = 0.0f;
-	// Anchor-relative translation (not absolute world) so cached-bake geometry stays near the origin.
+	// Anchor-relative translation keeps cached-bake geometry near the origin.
 	Matrix->_41 = Pos->x - CollectAnchor.x; Matrix->_42 = Pos->y - CollectAnchor.y; Matrix->_43 = Pos->z - CollectAnchor.z; Matrix->_44 = 1.0f;
 }
 
@@ -564,9 +550,8 @@ bool ShadowManager::InShadowFrustum(ShadowMapTypeEnum ShadowMapType, NiAVObject*
 	NiBound* Bound = Object->GetWorldBound();
 	if (!Bound) return false;
 
-	// Cull in the same space the map's frustum lives in: anchor-relative during a world-anchored
-	// bake (near/far cached maps), camera-relative otherwise (ortho). Must match the space the
-	// terrain is subsequently drawn in (see Render()), or terrain is culled against the wrong frustum.
+	// Cull in the frustum's own space: anchor-relative in cached bakes,
+	// camera-relative otherwise, matching how Render() places terrain.
 	float BaseX = CollectWorldSpace ? CollectAnchor.x : TheRenderManager->CameraPosition.x;
 	float BaseY = CollectWorldSpace ? CollectAnchor.y : TheRenderManager->CameraPosition.y;
 	float BaseZ = CollectWorldSpace ? CollectAnchor.z : TheRenderManager->CameraPosition.z;
@@ -600,12 +585,10 @@ void ShadowManager::CollectCubeMapGeometry(NiAVObject* Object, std::vector<NiGeo
 		}
 		else if (VFT == VFTNiTriShape || VFT == VFTNiTriStrips) {
 			NiGeometry* Geo = (NiGeometry*)Object;
-			// Torch geometry is skipped by Render() anyway; drop it once here instead of
-			// re-testing the name (and re-entering Render) for every one of the 6 cube faces.
+			// Render() skips torches anyway; drop them once here, not per cube face.
 			if (Geo->m_pcName && !memcmp(Geo->m_pcName, "Torch", 5)) return;
-			// SpeedTree leaves are unusable here: they need billboarding the cube bake VS does not
-			// implement, and Render()'s leaf path writes vertex constant c63 -- which is where the
-			// cube VS keeps the light position. Trunks still cast.
+			// No SpeedTree leaves: the cube VS lacks their billboarding, and their path
+			// writes c63, the cube VS's light position. Trunks still cast.
 			if (Geo->m_parent && Geo->m_parent->m_pcName && !memcmp(Geo->m_parent->m_pcName, "Leaves", 6)) return;
 			if (Geo->shader) {
 				if (Geo->geomData->BuffData) {
@@ -652,14 +635,12 @@ void ShadowManager::Render(NiGeometry* Geo, D3DXVECTOR4* ShadowData, const D3DMA
 	ShadowData->x = 0.0f;
 	ShadowData->y = 0.0f;
 	if (GeoData) {
-		// Reuse the matrix computed once per light for cube faces; otherwise build it now.
+		// Reuse the per-light matrix for cube faces; otherwise build it now.
 		if (PrecomputedWorld)
 			TheShaderManager->ShaderConst.ShadowMap.ShadowWorld = *PrecomputedWorld;
-		// Terrain is drawn through this path with no precomputed matrix. In a world-anchored bake (near/far
-		// cached maps) it must be placed anchor-relative like the statics (CreateD3DMatrixWorld), NOT
-		// camera-relative — otherwise it lands offset by (Camera - Anchor) and its shadow slides across the
-		// ground like a moving cloud as the camera drifts from the anchor. Ortho (CollectWorldSpace==false)
-		// stays camera-relative as before.
+		// Terrain has no precomputed matrix: place it anchor-relative in cached
+		// bakes like the statics, or its shadow slides as the camera leaves the
+		// anchor. Ortho stays camera-relative.
 		else if (CollectWorldSpace)
 			CreateD3DMatrixWorld(&TheShaderManager->ShaderConst.ShadowMap.ShadowWorld, &Geo->m_worldTransform);
 		else
@@ -711,13 +692,13 @@ void ShadowManager::SetupCachedRegionMatrices(ShadowMapTypeEnum ShadowMapType, S
 	int   Size     = ShadowsExteriors->ShadowMapSize[ShadowMapType];
 	float TexelWorld = (2.0f * Radius) / (float)Size;
 
-	D3DXVECTOR3 Anchor = LookAtPosition; // world-space; maintained by ComputeExteriorLookAt
+	D3DXVECTOR3 Anchor = LookAtPosition;
 	Anchor.x = floorf(Anchor.x / TexelWorld) * TexelWorld;
 	Anchor.y = floorf(Anchor.y / TexelWorld) * TexelWorld;
 	Anchor.z = floorf(Anchor.z / TexelWorld) * TexelWorld;
 
-	// Anchor-relative: look-at at the origin, eye up the sun direction. Geometry is drawn relative to Anchor
-	// (CollectAnchor below), and the apply re-bases the receiver to Anchor-relative before this matrix.
+	// Anchor-relative: look-at at the origin, eye up the sun direction; the
+	// apply re-bases receivers to the anchor before this matrix.
 	D3DXVECTOR3 Up(0.0f, 0.0f, 1.0f);
 	D3DXVECTOR3 AtRel(0.0f, 0.0f, 0.0f);
 	D3DXVECTOR3 Eye(FarPlane * SunDir->x, FarPlane * SunDir->y, FarPlane * SunDir->z);
@@ -731,11 +712,10 @@ void ShadowManager::SetupCachedRegionMatrices(ShadowMapTypeEnum ShadowMapType, S
 	Regions[r].AnchorPos     = Anchor;
 	Regions[r].BakedSunDir   = *SunDir;
 	Regions[r].Valid         = true;
-	CollectAnchor = Anchor; // this bake's geometry + cull centers are drawn relative to the anchor
+	CollectAnchor = Anchor;
 
-	// The bake renders geometry with anchor-relative matrices against this ViewProj (Task 9). Publish it as
-	// the current pass's ShadowViewProj so RenderShadowMap's vertex path uses it; set the culling frustum
-	// + billboard vectors as SetupShadowMapMatrices does.
+	// Publish as this pass's ShadowViewProj for RenderShadowMap's vertex path,
+	// with the culling frustum and billboard vectors, as SetupShadowMapMatrices.
 	TheShaderManager->ShaderConst.ShadowMap.ShadowViewProj = ViewProj;
 	BillboardRight = { View._11, View._21, View._31, 0.0f };
 	BillboardUp    = { View._12, View._22, View._32, 0.0f };
@@ -747,10 +727,9 @@ void ShadowManager::SetupCachedRegionMatrices(ShadowMapTypeEnum ShadowMapType, S
 // into the cached (possibly stale) light space correctly.
 void ShadowManager::PublishCachedRegionSampleMatrix(ShadowMapTypeEnum ShadowMapType) {
 	int r = ShadowMapType - MapNear;
-	// The map is baked ANCHOR-relative (origin at Regions[r].AnchorPos) to keep coordinates small.
-	// InvViewProjMatrix maps current clip -> camera-relative world (world - Camera). Translate by
-	// (Camera - Anchor) to reach anchor-relative world, then project with the baked matrix. Camera and Anchor
-	// are both near the player, so this stays small and precise.
+	// Baked anchor-relative; InvViewProjMatrix yields camera-relative world, so
+	// translate by (Camera - Anchor) first. Both are near the player, keeping it
+	// small and precise.
 	D3DXVECTOR3& A = Regions[r].AnchorPos;
 	D3DXMATRIX Trans;
 	D3DXMatrixTranslation(&Trans, TheRenderManager->CameraPosition.x - A.x, TheRenderManager->CameraPosition.y - A.y, TheRenderManager->CameraPosition.z - A.z);
@@ -760,10 +739,10 @@ void ShadowManager::PublishCachedRegionSampleMatrix(ShadowMapTypeEnum ShadowMapT
 // Advance the static crossfade on REAL time, not game time. An accelerated timescale is one of the
 // cases this fade exists to smooth, so the fade must still last FadeTime wall-clock seconds there.
 void ShadowManager::AdvanceStaticFade() {
-	double Now = TheFrameRateManager->GetPerformance(); // milliseconds since startup
-	if (StaticFadeT >= 1.0f) { StaticFadeLastMs = Now; return; }
-	double Delta = Now - StaticFadeLastMs;
-	StaticFadeLastMs = Now;
+	double NowMs = TheFrameRateManager->GetPerformance();
+	if (StaticFadeT >= 1.0f) { StaticFadeLastMs = NowMs; return; }
+	double Delta = NowMs - StaticFadeLastMs;
+	StaticFadeLastMs = NowMs;
 	if (Delta <= 0.0) return; // clock hiccup / same-millisecond frame
 	float FadeTime = TheSettingManager->SettingsShadows.Exteriors.FadeTime;
 	if (FadeTime <= 0.0f) { StaticFadeT = 1.0f; return; }
@@ -779,9 +758,8 @@ void ShadowManager::BeginStaticCrossfade() {
 	IDirect3DDevice9* Device = TheRenderManager->device;
 	for (int i = 0; i < 2; i++) {
 		if (!Regions[i].Valid || !ShadowMapSurfacePrev[i]) { Regions[i].PrevValid = false; continue; }
-		// The Prev surface is a D3DPOOL_DEFAULT render target with undefined contents until this blit
-		// actually populates it. If it fails, leave PrevValid false rather than fading against
-		// whatever garbage was left in VRAM reinterpreted as R32F depth.
+		// Prev is a default-pool target with undefined contents until this blit
+		// fills it; on failure leave PrevValid false rather than fade from garbage.
 		if (FAILED(Device->StretchRect(ShadowMapSurface[MapNear + i], NULL, ShadowMapSurfacePrev[i], NULL, D3DTEXF_NONE))) {
 			Regions[i].PrevValid = false;
 			continue;
@@ -817,7 +795,7 @@ void ShadowManager::SnapStaticFadeIfTeleported(SettingsShadowStruct::ExteriorsSt
 // world, translated by (Camera - Anchor) to reach anchor-relative world, then the baked projection —
 // but reads the Prev* fields.
 void ShadowManager::PublishStaticFadeConstants() {
-	auto& Sm = TheShaderManager->ShaderConst.ShadowMap; // as PublishShadowBiasConstants does
+	auto& Sm = TheShaderManager->ShaderConst.ShadowMap;
 	Sm.ShadowFadeData.x = StaticFadeEnabled() ? StaticFadeT : 1.0f;
 	if (Sm.ShadowFadeData.x >= 1.0f) return;
 	for (int i = 0; i < 2; i++) {
@@ -836,10 +814,8 @@ bool ShadowManager::RegionNeedsRebake(ShadowMapTypeEnum ShadowMapType) {
 	CachedRegion& Reg = Regions[r];
 	if (!Reg.Valid) return true;
 
-	// No rebake while a crossfade is in flight. A second rebake cannot be folded into one already
-	// running: both buffers hold DEPTHS, and a lerp of two depths is meaningless, so there is nowhere
-	// to put the partially faded state. Deferring by at most FadeTime is bounded staleness on top of
-	// caching that is already deliberately stale. Forced bakes bypass this by not calling here.
+	// No rebake mid-crossfade: both buffers hold depths, which cannot be lerped
+	// into a partial state. Forced bakes bypass this by not calling here.
 	if (StaticFadeEnabled() && StaticFadeT < 1.0f) return false;
 
 	SettingsShadowStruct::ExteriorsStruct* S = SelectExteriorShadowSettings();
@@ -862,9 +838,8 @@ void ShadowManager::BakeStaticRegion(ShadowMapTypeEnum ShadowMapType, SettingsSh
 	SetupCachedRegionMatrices(ShadowMapType, S, SunDir);
 	CollectWorldSpace = true;
 	BuildExteriorGeoItems(S, ShadowMapType);
-	// RIGID statics only. Skinned geometry (GeoData==NULL, drawn via RenderSkinnedGeo) is camera-relative
-	// and would land in the wrong space in this anchor-relative bake, so it's routed to the per-frame
-	// camera-relative overlay instead (along with actors).
+	// Rigid statics only: skinned geometry (GeoData == NULL) is camera-relative
+	// and goes to the per-frame overlay with the actors.
 	int w = 0;
 	for (int i = 0; i < ShadowGeoCount; i++) if (!ShadowGeoPool[i].IsActor && ShadowGeoPool[i].GeoData != NULL) ShadowGeoPool[w++] = ShadowGeoPool[i];
 	ShadowGeoCount = w;
@@ -876,19 +851,15 @@ void ShadowManager::BakeStaticRegion(ShadowMapTypeEnum ShadowMapType, SettingsSh
 // the cached near/far bakes). Camera-relative (matches RenderSkinnedGeo), with its own sample matrix
 // (TESR_ShadowCameraToLightTransformSkin) min-combined with the cached static term in the apply shader.
 void ShadowManager::RenderActorOverlay(SettingsShadowStruct::ExteriorsStruct* S, D3DXVECTOR4* SunDir) {
-	// The overlay is redrawn every frame (not cached), so draw it CAMERA-RELATIVE — matching the space
-	// RenderSkinnedGeo produces for skinned actors (and the Stage-1 directional path, which cast actors
-	// correctly). It gets its OWN sample matrix (ShadowCameraToLight[MapSkin] ->
-	// TESR_ShadowCameraToLightTransformSkin), which the apply shader min-combines with the cached
-	// anchor-relative near-static map. CollectWorldSpace stays FALSE (camera-relative collect + draw).
+	// Redrawn every frame, so camera-relative like RenderSkinnedGeo, with its own
+	// sample matrix that the apply min-combines with the cached near map.
 	D3DXVECTOR3 At;
 	At.x = LookAtPosition.x - TheRenderManager->CameraPosition.x;
 	At.y = LookAtPosition.y - TheRenderManager->CameraPosition.y;
 	At.z = LookAtPosition.z - TheRenderManager->CameraPosition.z;
-	SetupShadowMapMatrices(MapSkin, S, &At, SunDir); // camera-relative; publishes ShadowCameraToLight[MapSkin] + frustum + ShadowViewProj
-	// Actors AND any skinned geometry (GeoData==NULL) are camera-relative (RenderSkinnedGeo) so they belong in
-	// this camera-relative overlay, not the anchor-relative static bakes. CollectSkinnedOnly drops rigid
-	// non-actor statics during the walk, so the pool comes back already limited to skinned + actor casters.
+	SetupShadowMapMatrices(MapSkin, S, &At, SunDir);
+	// CollectSkinnedOnly drops rigid non-actor statics during the walk, leaving
+	// only the camera-relative skinned and actor casters.
 	CollectSkinnedOnly = true;
 	BuildExteriorGeoItems(S, MapSkin);
 	CollectSkinnedOnly = false;
@@ -927,7 +898,7 @@ void ShadowManager::CollectCellGeo(TESObjectCELL* Cell, SettingsShadowStruct::Fo
 		if (CollectWorldSpace) { RootCenter.x = RootBound->Center.x - CollectAnchor.x; RootCenter.y = RootBound->Center.y - CollectAnchor.y; RootCenter.z = RootBound->Center.z - CollectAnchor.z; }
 		else { RootCenter.x = RootBound->Center.x - TheRenderManager->CameraPosition.x; RootCenter.y = RootBound->Center.y - TheRenderManager->CameraPosition.y; RootCenter.z = RootBound->Center.z - TheRenderManager->CameraPosition.z; }
 		if (!SphereInShadowFrustum(ShadowMapType, RootCenter, RootBound->Radius)) continue; // whole-subtree cull
-		bool IsActorRef = (TypeID >= TESForm::FormType::kFormType_NPC && TypeID <= TESForm::FormType::kFormType_LeveledCreature); // used by the Stage 2 static/dynamic split
+		bool IsActorRef = (TypeID >= TESForm::FormType::kFormType_NPC && TypeID <= TESForm::FormType::kFormType_LeveledCreature);
 		CollectExteriorGeo(Node, HasWater, ShadowMapType, IsActorRef);
 	}
 }
@@ -964,7 +935,8 @@ void ShadowManager::CollectExteriorGeo(NiAVObject* Object, bool HasWater, Shadow
 	if (!Object || (Object->m_flags & NiAVObject::kFlag_AppCulled)) return;
 	void* VFT = *(void**)Object;
 	if (VFT == VFTNiNode || VFT == VFTBSFadeNode || VFT == VFTBSFaceGenNiNode || VFT == VFTBSTreeNode || VFT == VFTNiLODNode) {
-		NiNode* Node = (NiNode*)Object; // NiLODNode derives from NiNode, so children access is valid; the drawable (active) LOD casts, others are filtered by AppCull/NotDrawable
+		// NiLODNode is an NiNode too; its inactive LODs are filtered by AppCull.
+		NiNode* Node = (NiNode*)Object;
 		for (int i = 0; i < Node->m_children.end; i++)
 			CollectExteriorGeo(Node->m_children.data[i], HasWater, ShadowMapType, IsActorRef);
 		return;
@@ -976,22 +948,20 @@ void ShadowManager::CollectExteriorGeo(NiAVObject* Object, bool HasWater, Shadow
 	if (!Geo->shader) return;
 
 	NiBound* Bound = Geo->GetWorldBound();
-	if (!Bound) return; // no bound: can't cull/place; the ref-root test already requires one
-	// Submerged casters are intentionally NOT dropped: pre-water depth shadows underwater receivers, so
-	// submerged geometry must cast (a caster resting on a submerged base then grounds correctly instead of
-	// peter-panning). Skinned casters were already exempt (6d662023); this applies the same to statics.
-	// HasWater is still propagated through the recursion but no longer gates collection here.
+	if (!Bound) return;
+	// Submerged casters still cast, since pre-water depth shadows underwater
+	// receivers; HasWater is propagated but no longer gates collection.
 
-	// Per-pass cuts, applied at collection: drop sub-MinRadius geo and anything outside this pass's
-	// frustum. Center is reused for the stored item below.
+	// Per-pass cuts: drop sub-MinRadius geometry and anything outside this
+	// pass's frustum.
 	if (Bound->Radius < MinRadii[ShadowMapType]) return;
 	D3DXVECTOR3 Center;
 	if (CollectWorldSpace) { Center.x = Bound->Center.x - CollectAnchor.x; Center.y = Bound->Center.y - CollectAnchor.y; Center.z = Bound->Center.z - CollectAnchor.z; }
 	else { Center.x = Bound->Center.x - TheRenderManager->CameraPosition.x; Center.y = Bound->Center.y - TheRenderManager->CameraPosition.y; Center.z = Bound->Center.z - TheRenderManager->CameraPosition.z; }
 	if (!SphereInShadowFrustum(ShadowMapType, Center, Bound->Radius)) return;
 
-	// Resolve the buffer Render() will use: model buffer (static path), else first skin
-	// partition (RenderSkinnedGeo path, signalled by storing GeoData = NULL on the item).
+	// The buffer Render() will use: the model's, else the first skin partition's
+	// (the RenderSkinnedGeo path, flagged by GeoData = NULL).
 	NiGeometryBufferData* ModelBuff = Geo->geomData->BuffData;
 	bool DrawViaSkin = false;
 	if (!ModelBuff) {
@@ -1000,8 +970,8 @@ void ShadowManager::CollectExteriorGeo(NiAVObject* Object, bool HasWater, Shadow
 		DrawViaSkin = true;
 	}
 
-	// Overlay pass: only skinned geo (DrawViaSkin) and actors are drawn camera-relative here; skip rigid
-	// non-actor statics now, before their bounds/matrix/instancing work, instead of collecting then discarding.
+	// The overlay draws only skinned geometry and actors; skip rigid statics
+	// before their bounds, matrix and instancing work.
 	if (CollectSkinnedOnly && !DrawViaSkin && !IsActorRef) return;
 
 	bool BaseInstanceable = false;
@@ -1009,7 +979,7 @@ void ShadowManager::CollectExteriorGeo(NiAVObject* Object, bool HasWater, Shadow
 	if (!DrawViaSkin) {
 		bool IsLeaf = Geo->m_parent && Geo->m_parent->m_pcName && !memcmp(Geo->m_parent->m_pcName, "Leaves", 6);
 		if (!IsLeaf) {
-			// Opaque static path: Render() early-outs without a lighting property, so drop it here.
+			// Render() early-outs without a lighting property, so drop it here.
 			BSShaderProperty* LProp = (BSShaderProperty*)Geo->GetProperty(NiProperty::PropertyType::kType_Lighting);
 			if (!LProp || !LProp->IsLightingProperty()) return;
 			NiAlphaProperty* AProp = (NiAlphaProperty*)Geo->GetProperty(NiProperty::PropertyType::kType_Alpha);
@@ -1103,7 +1073,7 @@ void ShadowManager::DrawInstancedGroup(NiGeometryBufferData* GeoData, std::vecto
 
 	if (!Decl) return;
 
-	// Pack each instance's precomputed camera-relative world matrix as 3 columns into the stream.
+	// Pack each instance's camera-relative world matrix as 3 columns.
 	float* Data = NULL;
 	if (FAILED(InstanceVB->Lock(0, Count * ShadowInstanceStride, (void**)&Data, D3DLOCK_DISCARD))) return;
 	for (UINT i = 0; i < Count; i++) {
@@ -1144,7 +1114,7 @@ void ShadowManager::FlushInstanceGroups(D3DXVECTOR4* ShadowData) {
 		if (InstancePool[i].ItemIdx.size() >= ShadowInstanceMinCount && InstancePool[i].ItemIdx.size() > MaxGroup) MaxGroup = (UINT)InstancePool[i].ItemIdx.size();
 	bool CanInstance = MaxGroup > 0 && EnsureInstanceVB(MaxGroup);
 
-	// Pass 1: draw batchable groups with the instanced shader (opaque, ShadowData x=y=0).
+	// Pass 1: batchable groups, instanced shader (opaque, ShadowData x = y = 0).
 	bool InstancedSet = false;
 	if (CanInstance) {
 		for (int i = 0; i < InstanceGroupCount; i++) {
@@ -1164,7 +1134,7 @@ void ShadowManager::FlushInstanceGroups(D3DXVECTOR4* ShadowData) {
 		}
 	}
 
-	// Pass 2: everything not instanced (small groups, or buffers without a usable declaration).
+	// Pass 2: small groups and buffers without a usable declaration.
 	CurrentVertex = ShadowMapVertex;
 	CurrentPixel  = ShadowMapPixel;
 	RenderState->SetVertexShader(ShadowMapVertexShader, false);
@@ -1184,9 +1154,8 @@ void ShadowManager::RenderShadowMap(ShadowMapTypeEnum ShadowMapType, SettingsSha
 	ScopeTimer profile((ShadowPhase)(Phase_PassNear + ShadowMapType)); // enum order matches Near/Far/Ortho/Skin
 
 	AlphaEnabled = ShadowsExteriors->AlphaEnabled[ShadowMapType];
-	// Matrices/frustum are set up by the caller (RenderExteriorShadows) before geometry collection,
-	// so the pool is already culled to this map's frustum; do not recompute here.
-	if (!ShadowMapSurface[ShadowMapType]) return; // slot not allocated (e.g. ShadowMapSize 0) — nothing to render
+	// The caller set up the matrices and culled the pool to this map's frustum.
+	if (!ShadowMapSurface[ShadowMapType]) return;
 	Device->SetRenderTarget(0, ShadowMapSurface[ShadowMapType]);
 	Device->SetDepthStencilSurface(ShadowMapDepthSurface[ShadowMapType]);
 	Device->SetViewport(&ShadowMapViewPort[ShadowMapType]);
@@ -1200,7 +1169,7 @@ void ShadowManager::RenderShadowMap(ShadowMapTypeEnum ShadowMapType, SettingsSha
 	RenderState->SetVertexShader(ShadowMapVertexShader, false);
 	RenderState->SetPixelShader(ShadowMapPixelShader, false);
 	Device->BeginScene();
-	// Terrain lives in the exterior grid only, so an interior (incl. BehaveLikeExterior) has none to draw.
+	// Terrain lives only in the exterior grid, so interiors have none to draw.
 	if (!SkipTerrain && Player->GetWorldSpace()) {
 		gTerrainBucket = true;
 		for (UInt32 x = 0; x < *SettingGridsToLoad; x++)
@@ -1212,8 +1181,7 @@ void ShadowManager::RenderShadowMap(ShadowMapTypeEnum ShadowMapType, SettingsSha
 	bool UseInstancing = ShadowsExteriors->UseInstancing && ShadowMapInstancedVertexShader;
 	if (UseInstancing) { InstanceGroupIndex.clear(); InstanceGroupCount = 0; }
 
-	// Pool is already culled to this map's frustum and Forms-filtered (BuildExteriorGeoItems), so just
-	// draw: batch instanceable opaque statics, draw everything else immediately.
+	// Batch instanceable opaque statics; draw everything else immediately.
 	for (int i = 0; i < ShadowGeoCount; i++) {
 		ShadowGeoItem& Item = ShadowGeoPool[i];
 		if (UseInstancing && Item.BaseInstanceable && !(AlphaEnabled && Item.HasAlphaMask)) {
@@ -1269,17 +1237,11 @@ void ShadowManager::RenderExteriorShadows() {
 	if (!Player->IsExteriorLike()) return;
 	bool DoOrtho = OrthoNeeded();
 	bool DoSun   = SunShadowNeeded();
-	// Published every exterior frame, including ones with no sun: the apply shader runs on a
-	// broader condition than this function's shadow work, and its terminator ramp must switch
-	// off when the maps stop updating (otherwise it darkens flat ground as the sun sets).
+	// Published every exterior frame: the apply runs more broadly than this
+	// shadow work, and its terminator ramp must switch off with the maps.
 	TheShaderManager->ShaderConst.ShadowMap.ShadowBiasAdaptive.w = DoSun ? 1.0f : 0.0f;
-	// The clock only advances on sun frames, so a gap would otherwise resume a stale crossfade
-	// against maps from before the gap. The only gap that reaches this point is exterior-like with
-	// the sun below SunUpThreshold (dusk/dawn/night) -- true interiors already returned above, at
-	// the IsExteriorLike() check, so no bakes happen while this function is skipping its body and
-	// there is nothing here for interiors to leave stale. (Even without this pin, the large real-time
-	// delta accumulated across such a gap would clamp AdvanceStaticFade's clock straight to 1 on
-	// resume; this just makes that explicit and immediate instead of one more frame of drift.)
+	// The fade clock only advances with sun, so end any crossfade on sunless
+	// frames rather than resume it against maps from before the gap.
 	if (!DoSun) {
 		StaticFadeT = 1.0f;
 		Regions[0].PrevValid = Regions[1].PrevValid = false;
@@ -1300,9 +1262,7 @@ void ShadowManager::RenderExteriorShadows() {
 	ComputeExteriorLookAt(At, SkinAt, ShadowsExteriors);
 
 	if (DoOrtho) {
-		// Matrices/frustum first: collection culls geometry against ShadowMapFrustum[MapOrtho], so the
-		// frustum must exist before the walk. SetupShadowMapMatrices also publishes
-		// ShadowCameraToLight[MapOrtho] (-> TESR_ShadowCameraToLightTransformOrtho) and Billboard vectors.
+		// Matrices first: collection culls against ShadowMapFrustum[MapOrtho].
 		SetupShadowMapMatrices(MapOrtho, ShadowsExteriors, &At, &OrthoDir);
 
 		{ ScopeTimer profileBuild(Phase_BuildGeoItems); BuildExteriorGeoItems(ShadowsExteriors, MapOrtho); }
@@ -1310,32 +1270,25 @@ void ShadowManager::RenderExteriorShadows() {
 		RenderShadowMap(MapOrtho, ShadowsExteriors, &At, &OrthoDir, ShadowData);
 
 		OrthoData->z = 1.0f / (float)ShadowsExteriors->ShadowMapSize[MapOrtho];
-		// Occlusion-compare bias for the precipitation ray march, converted from world units to the
-		// normalized ortho depth the map stores (the projection spans 2 * FarPlane). Read from the
-		// canonical struct, not the selected copy: this is a precision knob, not a weather tier.
+		// Precipitation occlusion bias in normalized ortho depth (the projection
+		// spans 2 * FarPlane). Canonical struct: a precision knob, not a tier.
 		float OrthoDepthRange = 2.0f * TheSettingManager->SettingsShadows.Exteriors.ShadowMapFarPlane;
 		OrthoData->x = OrthoDepthRange > 0.0f ? TheSettingManager->SettingsShadows.Exteriors.OrthoOcclusionBias / OrthoDepthRange : 0.0f;
 	}
 
 	if (CurrentCell != Player->parentCell) {
 		CurrentCell = Player->parentCell;
-		// This used to clear Valid on both regions, which forced an immediate UNFADED bake — exactly
-		// the cell load/unload pop the crossfade exists to remove. Route it through the normal rebake
-		// path instead, so the outgoing maps survive as the fade's source. With fading off, the
-		// force flag reaches the same two BakeStaticRegion calls the invalidation used to cause.
+		// Rebake through the normal path rather than invalidating, so the outgoing
+		// maps survive as the crossfade's source instead of popping.
 		ForceRebake = true;
 	}
 
 	if (DoSun) {
 		D3DXVECTOR4* SunDir = &TheShaderManager->ShaderConst.ShadowMap.ShadowLightDir;
-		// A never-baked region (first frame / cell change) bakes immediately so it is never sampled unbaked
-		// (its AnchorPos + surface would be garbage). Both may bake on a cell-change frame — a one-time cost
-		// during an already-hitchy load. Once both are valid, steady-state refreshes pick whichever of
-		// Near/Far is due and did NOT bake last (see LastBakedRegion); never two refreshes in one frame.
+		// Never-baked regions bake at once so they are never sampled unbaked. In
+		// steady state, bake whichever due region did not bake last, one per frame.
 		if (!ShadowsExteriors->CacheStaticShadows) {
-			// Caching disabled (INI opt-out): rebake BOTH static regions every frame. Slower — the full
-			// scene walk + static draws happen every frame instead of on invalidation — but the shadow is
-			// always fresh (no round-robin lag, no guard-band/sun-interval staleness).
+			// Caching disabled: rebake both regions every frame; slower, always fresh.
 			BakeStaticRegion(MapNear, ShadowsExteriors, SunDir);
 			BakeStaticRegion(MapFar,  ShadowsExteriors, SunDir);
 		}
@@ -1362,10 +1315,8 @@ void ShadowManager::RenderExteriorShadows() {
 				bool NearDue = RegionNeedsRebake(MapNear);   // the fade gate lives inside; both are false while t < 1
 				bool FarDue  = RegionNeedsRebake(MapFar);
 				if (NearDue || FarDue) {
-					// Prefer whichever region did NOT bake last. A near-first chain starves MapFar once the
-					// fade gate is in play: the gate collapses far's evaluation windows to the single frame
-					// per FadeTime where t reaches 1, and sustained movement keeps near due on exactly those
-					// frames -- so far's anchor is abandoned and every distant shadow drops out mid-travel.
+					// Prefer the region that did not bake last: near-first starves MapFar once
+					// the fade gate narrows its windows, dropping distant shadows mid-travel.
 					ShadowMapTypeEnum Pick = (FarDue && (!NearDue || LastBakedRegion == MapNear)) ? MapFar : MapNear;
 					BeginStaticCrossfade();
 					BakeStaticRegion(Pick, ShadowsExteriors, SunDir);
@@ -1377,13 +1328,13 @@ void ShadowManager::RenderExteriorShadows() {
 
 		RenderActorOverlay(ShadowsExteriors, SunDir);
 
-		// Per-frame sample matrices from the CURRENT camera (the cached maps may be stale/world-anchored).
+		// Sample matrices from the current camera; the cached maps may be stale.
 		PublishCachedRegionSampleMatrix(MapNear);
 		PublishCachedRegionSampleMatrix(MapFar);
 		PublishStaticFadeConstants();
 
-		// While volumetric fog draws, shadows blend toward the precipitation tier's darkness by the fog weight.
-		// Only Darkness is swapped: the selected struct still owns cascade geometry.
+		// Under volumetric fog, blend Darkness toward the precipitation tier's by
+		// the fog weight; the selected struct still owns the cascade geometry.
 		float FogWeight = TheSettingManager->SettingsMain.Effects.VolumetricFog ? TheShaderManager->ShaderConst.VolumetricFog.Data.w : 0.0f;
 		ShadowData->y = std::lerp(ShadowsExteriors->Darkness, TheSettingManager->SettingsShadows.ExteriorsPrecip.Darkness, FogWeight);
 		ShadowData->z = 1.0f / (float)ShadowsExteriors->ShadowMapSize[MapNear];
@@ -1412,8 +1363,7 @@ void ShadowManager::CollectSceneLights() {
 		}
 		Entry = Entry->next;
 	}
-	// Order nearest-first; ties keep scene-graph order. Replaces a distance-keyed std::map
-	// with back-probing collision handling (a node allocation + O(log n) probe per light).
+	// Nearest first; stable, so ties keep scene-graph order.
 	std::stable_sort(SceneLights.begin(), SceneLights.end(),
 		[](const std::pair<int, NiPointLight*>& a, const std::pair<int, NiPointLight*>& b) { return a.first < b.first; });
 }
@@ -1444,8 +1394,8 @@ bool ShadowManager::IsPointLightCandidate(NiPointLight* Light, SettingsShadowStr
 	if (IsLightFromMagic(Light)) return false;
 	float Radius = Light->Spec.r; // NiPointLight stores light radius in Spec.rgb
 	if (Radius < Settings->LightRadiusMin || Radius > Settings->LightRadiusMax) return false;
-	// EquipmentMode torch-on-belt: the player's carried torch (CanCarry == 2) is stowed, so its
-	// shadow would be cast from inside the player's own body.
+	// With EquipmentMode's torch on the belt, the stowed torch would cast from
+	// inside the player's body.
 	if (TorchOnBeltEnabled && Light->CanCarry == 2) {
 		HighProcessEx* Process = (HighProcessEx*)Player->process;
 		if (Process && Process->OnBeltState == HighProcessEx::State::In) return false;
@@ -1462,12 +1412,12 @@ bool ShadowManager::IsPointLightCandidate(NiPointLight* Light, SettingsShadowStr
 // cell line. Fade-IN is instead started explicitly, by SelectPointLights zeroing Intensity at the two
 // points where a slot takes a new occupant.
 void ShadowManager::AdvancePointFades() {
-	double Now = TheFrameRateManager->GetPerformance(); // milliseconds since startup
-	double Delta = Now - PointFadeLastMs;
-	PointFadeLastMs = Now;
+	double NowMs = TheFrameRateManager->GetPerformance();
+	double Delta = NowMs - PointFadeLastMs;
+	PointFadeLastMs = NowMs;
 	float FadeTime = TheSettingManager->SettingsShadows.Point.FadeTime;
-	// Feature off, or a clock hiccup / same-millisecond frame: snap to the target so a slot mid-fade
-	// can never stall retired-but-visible, holding its slot forever.
+	// Feature off or no elapsed time: snap to the target, so a slot mid-fade can
+	// never stall retired-but-visible and hold its slot forever.
 	bool Snap = (FadeTime <= 0.0f || Delta <= 0.0);
 	float Step = Snap ? 1.0f : (float)(Delta / (1000.0 * (double)FadeTime));
 
@@ -1482,8 +1432,7 @@ void ShadowManager::AdvancePointFades() {
 			Slot.Intensity -= Step;
 			if (Slot.Intensity < Target) Slot.Intensity = Target;
 		}
-		// A slot that has finished fading out is fully released: only now may its cube be discarded
-		// and the slot reused.
+		// Only a fully faded-out slot is released for reuse.
 		if (!Slot.Light && Slot.Intensity <= 0.0f) {
 			Slot.Valid = false;
 			Slot.RetiringLight = NULL;
@@ -1510,7 +1459,7 @@ void ShadowManager::SelectPointLights() {
 
 	CollectSceneLights();
 
-	// Candidates, nearest first. SceneLights is sorted, so the scan stops at the distance cut.
+	// Candidates, nearest first; SceneLights is sorted, so stop at the cut.
 	const int MaxCandidates = 16;
 	struct Candidate { NiPointLight* Light; float Dist; };
 	Candidate Candidates[MaxCandidates];
@@ -1526,9 +1475,8 @@ void ShadowManager::SelectPointLights() {
 	}
 	ProfileCount(Cnt_PointCandidates, CandidateCount);
 
-	// 1. Incumbents that are still candidates keep their slot (and their cached cube). A slot whose
-	// light is absent from this frame's candidate set is released — its NiPointLight may already be
-	// destroyed (cell unload), so the pointer must not be dereferenced again after this point.
+	// 1. Incumbents still among the candidates keep their slot and cube. Others
+	// retire; their light may already be destroyed, so never dereference it.
 	for (int s = 0; s < PointLightMax; s++) {
 		if (s >= MaxSlots) { PointSlots[s].Light = NULL; continue; }
 		NiPointLight* Incumbent = PointSlots[s].Light;
@@ -1537,17 +1485,15 @@ void ShadowManager::SelectPointLights() {
 		for (int c = 0; c < CandidateCount; c++) {
 			if (!Taken[c] && Candidates[c].Light == Incumbent) { Found = c; break; }
 		}
-		// Retire rather than clear: Valid stays set so the frozen cube keeps being sampled, and
-		// AdvancePointFades clears it once the fade completes. A light that comes back before then
-		// (one hovering on the distance cut) simply reclaims the slot below with its cube intact.
+		// Retire rather than clear: the frozen cube stays sampled until the fade
+		// ends, and a light that returns first reclaims it in step 1b.
 		if (Found < 0) { PointSlots[s].Light = NULL; PointSlots[s].RetiringLight = Incumbent; }
 		else Taken[Found] = true;
 	}
 
-	// 1b. A retiring slot whose own light is a candidate again reclaims it, cube and all, and its
-	// Intensity ramps back up from wherever it had fallen to. Without this, a light sitting on the
-	// distance cut fades fully out and back in, rebaking each time. RetiringLight is compared, never
-	// dereferenced; a match means the address is in this frame's live candidate set.
+	// 1b. A retiring slot whose light is a candidate again reclaims it, cube
+	// and all, instead of fading out and back in. RetiringLight is only compared,
+	// never dereferenced.
 	for (int s = 0; s < MaxSlots; s++) {
 		if (PointSlots[s].Light || !PointSlots[s].RetiringLight) continue;
 		for (int c = 0; c < CandidateCount; c++) {
@@ -1559,7 +1505,7 @@ void ShadowManager::SelectPointLights() {
 		}
 	}
 
-	// 2. Fully free slots take the nearest unclaimed candidates. A retiring slot is not free.
+	// 2. Fully free slots take the nearest unclaimed candidates.
 	for (int s = 0; s < MaxSlots; s++) {
 		if (PointSlots[s].Light || PointSlots[s].Intensity > 0.0f) continue;
 		for (int c = 0; c < CandidateCount; c++) {
@@ -1572,13 +1518,9 @@ void ShadowManager::SelectPointLights() {
 		}
 	}
 
-	// 3. Hysteresis eviction: a still-unclaimed candidate displaces the farthest incumbent only if
-	// it is clearly nearer. Candidates are sorted, so once one fails the test no later one can pass.
-	// The incumbent is only retired here, not replaced — the candidate claims the slot through step 2
-	// on a later frame, once the fade-out has finished, giving a clean fade-out-then-in rather than a
-	// swap-pop. Skipped entirely while any slot is already retiring, and stopped after retiring one:
-	// otherwise the candidate, still unclaimed for the whole fade, would retire another slot every
-	// frame until every light in the set had been evicted.
+	// 3. Hysteresis: a clearly nearer candidate retires the farthest incumbent,
+	// then claims the slot via step 2 once it has faded out. One retirement at a
+	// time, or the waiting candidate would evict every slot.
 	bool AnyRetiring = false;
 	for (int s = 0; s < PointLightMax; s++)
 		if (!PointSlots[s].Light && PointSlots[s].Intensity > 0.0f) { AnyRetiring = true; break; }
@@ -1594,8 +1536,8 @@ void ShadowManager::SelectPointLights() {
 		}
 		if (Worst < 0) break;
 		if (Candidates[c].Dist >= WorstDist * PointSlotEvictFactor) break;
-		// RetiringLight is deliberately left NULL here: the evicted light is still a candidate, so
-		// step 1b would reclaim it on the very next frame and the two would trade the slot forever.
+		// RetiringLight stays NULL: the evicted light is still a candidate, so step
+		// 1b would reclaim the slot at once and the two would trade it forever.
 		PointSlots[Worst].Light = NULL;
 		break;
 	}
@@ -1609,11 +1551,10 @@ void ShadowManager::SelectPointLights() {
 // luminance instead — which is what makes the shadow lose depth rather than shrink.
 void ShadowManager::PublishPointLightConstants() {
 	D3DXVECTOR4* Positions = TheShaderManager->ShaderConst.ShadowMap.ShadowCastLightPosition;
-	// One component per slot, so index it as a float array (D3DXVECTOR4 converts implicitly).
+	// One component per slot, indexed as a float array.
 	float* Luminance = TheShaderManager->ShaderConst.ShadowMap.ShadowCastLightLuminance;
-	// Diff/Dimmer are read nowhere else in this fork (only Spec.r, which stores the radius), so log
-	// them once per slot occupant while shadow profiling is on: an unpopulated Diff or a zero Dimmer
-	// would silently produce no point shadows at all, with nothing else to point at the cause.
+	// Nothing else reads Diff/Dimmer, and a bad value silently kills point
+	// shadows, so log them once per occupant while profiling.
 	static NiPointLight* LastLoggedLight[PointLightMax] = { NULL };
 	int Active = 0;
 	int Shaded = 0;
@@ -1621,10 +1562,8 @@ void ShadowManager::PublishPointLightConstants() {
 		PointLightSlot& Slot = PointSlots[s];
 		NiPointLight* Light = Slot.Light;
 		if (!Light) {
-			// Retiring: the NiPointLight is gone but the cube is still live, so keep publishing from
-			// the cached values with the fade applied. BakedLightPos is the right position to use —
-			// drifting further than PointLightMoveEpsilon from it forces a rebake, which updates it,
-			// so it tracks the light to within one unit right up to the moment the slot retired.
+			// Retiring: keep publishing the cached values with the fade applied.
+			// BakedLightPos tracks the light to within PointLightMoveEpsilon.
 			if (Slot.Intensity > 0.0f) {
 				Positions[s].x = Slot.BakedLightPos.x - TheRenderManager->CameraPosition.x;
 				Positions[s].y = Slot.BakedLightPos.y - TheRenderManager->CameraPosition.y;
@@ -1641,19 +1580,16 @@ void ShadowManager::PublishPointLightConstants() {
 			continue;
 		}
 		NiPoint3* LightPos = &Light->m_worldTransform.pos;
-		// Carried torches use a fixed far plane: their authored radius is large and washes the
-		// cube's precision out over a range the torch never actually lights.
+		// Carried torches use a fixed far plane: their large authored radius would
+		// waste the cube's precision on range the torch never lights.
 		float FarPlane = Light->CanCarry ? 257.0f : Light->Spec.r;
 		Positions[s].x = LightPos->x - TheRenderManager->CameraPosition.x;
 		Positions[s].y = LightPos->y - TheRenderManager->CameraPosition.y;
 		Positions[s].z = LightPos->z - TheRenderManager->CameraPosition.z;
 		Positions[s].w = FarPlane;
-		// The shadow removes this light's own contribution, so the apply needs how bright the light
-		// is — diffuse scaled by the dimmer, as the engine's own lighting shaders use it, reduced to
-		// a single luma (Rec. 601). Brightness only, deliberately not colour: removing the light's
-		// hue tinted shadows in a way that read wrong in game.
-		// Cached unfaded, so a retiring slot fades out from the light's true brightness rather than
-		// from whatever partial value it happened to be published at.
+		// Luma (Rec. 601) of the dimmed diffuse, as the engine lights with it;
+		// brightness only, since removing the hue tinted shadows. Cached unfaded so a
+		// retiring slot fades from the true brightness.
 		Slot.LastFarPlane = FarPlane;
 		Slot.LastLuminance = (0.299f * Light->Diff.r + 0.587f * Light->Diff.g + 0.114f * Light->Diff.b) * Light->Dimmer;
 		Luminance[s] = Slot.LastLuminance * Slot.Intensity;
@@ -1684,9 +1620,8 @@ ShadowManager::RefLightInfo ShadowManager::BuildRefLightInfo(TESObjectREFR* Ref)
 	Info.IsActorType = (TypeID >= TESForm::FormType::kFormType_NPC && TypeID <= TESForm::FormType::kFormType_LeveledCreature);
 	Info.BoundRadius = Info.Node->GetWorldBoundRadius();
 	NiBound* B = Ref->niNode->GetWorldBound();
-	// Quantized to whole units: an idle NPC's bound center jitters continuously under its
-	// breathing animation, and an exact sum would report the scene as changed every frame,
-	// rebaking every cube forever. Whole units still catch any movement that shifts a shadow.
+	// Whole units: an idle NPC's breathing jitters its bound centre, and an
+	// exact sum would rebake every cube every frame.
 	Info.CenterSum = std::floor(B->Center.x) + std::floor(B->Center.y) + std::floor(B->Center.z);
 	Info.IsPlayer = (Ref->refID == Player->refID);
 	return Info;
@@ -1703,7 +1638,7 @@ void ShadowManager::ClassifyRefForPointSlot(const RefLightInfo& Info, int Slot, 
 
 	if (Info.Node->GetDistance(LightPos) - Info.BoundRadius > Radius) return;
 	if (Info.IsActorType) {
-		// The player's own carried torch would shadow the player from inside their own mesh.
+		// The player's carried torch would shadow the player from inside.
 		if (Info.IsPlayer && Light->CanCarry) return;
 		CubeMapActorMap[Slot].emplace_back(Info.Node);
 	}
@@ -1760,7 +1695,7 @@ bool ShadowManager::PointSlotNeedsRebake(int Slot, double Checksum) {
 	if (!EnableStaticMaps) return true;     // post-cell-change warmup: havok still settling
 	NiPoint3* P = &Slot_.Light->m_worldTransform.pos;
 	D3DXVECTOR3 Pos(P->x, P->y, P->z);
-	// Covers carried torches without special-casing them: a moving light is simply a moved light.
+	// Covers carried torches too: a moving light is simply a moved light.
 	if (D3DXVec3Length(&(Pos - Slot_.BakedLightPos)) > PointLightMoveEpsilon) return true;
 	return Checksum != Slot_.Checksum;      // a caster within reach moved
 }
@@ -1774,7 +1709,7 @@ void ShadowManager::BakePointCube(int Slot) {
 	D3DXVECTOR4* LightPos = &TheShaderManager->ShaderConst.ShadowMap.ShadowCastLightPosition[Slot];
 	ProfileCount(Cnt_PointRebakes);
 
-	// Cube bakes are camera-relative (matching the skinned bone path, which always is).
+	// Cube bakes are camera-relative, like the skinned bone path.
 	CollectWorldSpace = false;
 	CurrentVertex = ShadowCubeMapVertex;
 	CurrentPixel = ShadowCubeMapPixel;
@@ -1782,8 +1717,8 @@ void ShadowManager::BakePointCube(int Slot) {
 	TheShaderManager->ShaderConst.ShadowMap.ShadowCubeMapLightPosition = *LightPos;
 	BakeData->z = LightPos->w; // far plane: the PS normalizes distance by this
 
-	// Flatten the scene graph once and reuse across all 6 faces, with world matrices precomputed
-	// (they don't vary per face). Skinned geometry gets NULL here and resolves inside Render().
+	// Flatten the scene graph once for all 6 faces, with world matrices
+	// precomputed; skinned geometry resolves inside Render().
 	CubeMapGeoList.clear();
 	for (NiNode* RefNode : CubeMapRefMap[Slot]) CollectCubeMapGeometry(RefNode, CubeMapGeoList);
 	for (NiNode* RefNode : CubeMapActorMap[Slot]) CollectCubeMapGeometry(RefNode, CubeMapGeoList);
@@ -1802,7 +1737,7 @@ void ShadowManager::BakePointCube(int Slot) {
 		TheShaderManager->ShaderConst.ShadowMap.ShadowViewProj = View * Proj;
 		Device->SetDepthStencilSurface(ShadowCubeMapDepthSurface);
 		Device->SetRenderTarget(0, ShadowCubeMapSurface[Slot][Face]);
-		// Clear to 1.0 = "nothing occludes out to the far plane"; the apply reads distances < 1.
+		// Clear to 1.0 = nothing occludes out to the far plane.
 		Device->Clear(0L, NULL, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, D3DXCOLOR(1.0f, 1.0f, 1.0f, 1.0f), 1.0f, 0L);
 		if (CubeMapGeoList.empty()) continue;
 
@@ -1815,7 +1750,7 @@ void ShadowManager::BakePointCube(int Slot) {
 		Device->EndScene();
 	}
 
-	// Record what this cube was baked against, so the next frame can tell whether it is stale.
+	// Record what this cube was baked against, to detect staleness.
 	NiPoint3* P = &PointSlots[Slot].Light->m_worldTransform.pos;
 	PointSlots[Slot].BakedLightPos = D3DXVECTOR3(P->x, P->y, P->z);
 	PointSlots[Slot].Valid = true;
@@ -1825,9 +1760,8 @@ void ShadowManager::RenderPointShadows() {
 	PointSlotsActive = 0;
 	PointSlotsShaded = 0;
 	if (!PointShadowsNeeded()) {
-		// Publish zeroed slots so a stale set never keeps shadowing after the feature is disabled.
-		// Fades are killed outright rather than run out: there is nothing to fade against once the
-		// apply stops running, and a slot left mid-retirement would hold itself reserved forever.
+		// Publish zeroed slots so nothing keeps shadowing after disabling. Kill
+		// fades outright: with no apply running, a retiring slot would never free.
 		for (int s = 0; s < PointLightMax; s++) {
 			PointSlots[s].Light = NULL;
 			PointSlots[s].Valid = false;
@@ -1836,21 +1770,19 @@ void ShadowManager::RenderPointShadows() {
 			TheShaderManager->ShaderConst.ShadowMap.ShadowCastLightPosition[s] = D3DXVECTOR4(0.0f, 0.0f, 0.0f, 0.0f);
 		}
 		TheShaderManager->ShaderConst.ShadowMap.ShadowCastLightLuminance = D3DXVECTOR4(0.0f, 0.0f, 0.0f, 0.0f);
-		// Pin the clock, so the gap while the feature was off does not arrive as one huge delta that
-		// snaps the first slot straight to full instead of fading it in.
+		// Pin the clock so the disabled gap does not snap the first slot to full.
 		PointFadeLastMs = TheFrameRateManager->GetPerformance();
 		return;
 	}
 	ScopeTimer profile(Phase_PointTotal);
 
-	// Cell change invalidates every cached cube (the whole ref set changed). Tracked separately
-	// from CurrentCell, which belongs to the exterior-only sun path.
+	// A cell change invalidates every cube. Tracked apart from CurrentCell,
+	// which belongs to the exterior sun path.
 	if (PointCurrentCell != Player->parentCell) {
 		PointCurrentCell = Player->parentCell;
 		for (int s = 0; s < PointLightMax; s++) {
 			PointSlots[s].Valid = false;
-			// A retiring slot is fading out a cube baked from casters that just went away with the
-			// cell, so end it here rather than let it drag the old cell's shadow into the new one.
+			// End retiring slots: their casters left with the old cell.
 			if (!PointSlots[s].Light) { PointSlots[s].Intensity = 0.0f; PointSlots[s].RetiringLight = NULL; }
 		}
 		EnableStaticMapsFrameCount = 0;
@@ -1863,21 +1795,20 @@ void ShadowManager::RenderPointShadows() {
 	PublishPointLightConstants();
 
 	D3DXVECTOR4* PointData = &TheShaderManager->ShaderConst.ShadowPoint.PointData;
-	// Shadow strength scale. While volumetric fog draws, blend toward [Point] FogStrength by the fog
-	// weight, so fogged torch shadows stop reading black.
+	// Strength scale, blended toward [Point] FogStrength under volumetric fog
+	// so fogged torch shadows stop reading black.
 	float FogWeight = TheSettingManager->SettingsMain.Effects.VolumetricFog && Player->IsExteriorLike() ? TheShaderManager->ShaderConst.VolumetricFog.Data.w : 0.0f;
 	PointData->x = std::lerp(1.0f, TheSettingManager->SettingsShadows.Point.FogStrength, FogWeight);
-	// Dead since darkness became light-derived, but a stale compiled ShadowsPoint.fx still reads .y
-	// as its darkness preshader (CompileShaders defaults off). 1.0 makes that case degrade to
-	// "no point shadows" rather than an unwritten read.
+	// Unused since darkness became light-derived, but a stale compiled
+	// ShadowsPoint.fx still reads .y; 1.0 degrades it to no point shadows.
 	PointData->y = 1.0f;
 	PointData->z = 1.0f / (float)TheSettingManager->SettingsShadows.Point.ShadowCubeMapSize;
 	PointData->w = TheSettingManager->SettingsShadows.Point.Bias;
 
 	if (!PointSlotsActive) return;
 
-	// Classify every loaded ref against every occupied slot. This walk runs each frame even when
-	// no cube rebakes, because it is what produces the checksums that decide whether one must.
+	// Classify every loaded ref against every occupied slot each frame: this
+	// produces the checksums that decide whether a cube rebakes.
 	double Checksums[PointLightMax] = { 0.0 };
 	{
 		ScopeTimer profileClassify(Phase_PointClassify);
@@ -1925,7 +1856,7 @@ void ShadowManager::RenderShadowMaps() {
 	{
 		ScopeTimer profile(Phase_FrameTotal);
 		RenderExteriorShadows();
-		RenderPointShadows(); // unified point-light cubes: runs in interiors AND exteriors
+		RenderPointShadows(); // interiors and exteriors
 	}
 	Device->SetDepthStencilSurface(DepthSurface);
 	ShadowProfileFrameEnd();
@@ -2046,9 +1977,8 @@ void ShadowManager::RenderSkinnedGeo(NiGeometry* Geo, D3DXVECTOR4* ShadowData) {
 		CurrentPixel->SetCT();
 		DrawGeoArrays(GeoData, PrimitiveType, Partition->Vertices);
 	}
-	// CalculateBoneMatrixes stamped SkinInstance->FrameID, and the game's per-frame cache would make
-	// the later water-reflection pass reuse these shadow-pass bone matrices (floating actor
-	// reflections). Invalidate the stamp so the game recomputes with its own transform.
+	// CalculateBoneMatrixes stamped FrameID; invalidate it so the later water
+	// reflection pass recomputes rather than reusing shadow-pass bones.
 	SkinInstance->FrameID = 0xFFFFFFFF;
 }
 
@@ -2096,7 +2026,7 @@ static __declspec(naked) void RenderShadowMapHook() {
 
 void AddCastShadowFlag(TESObjectREFR* Ref, TESObjectLIGH* Light, NiPointLight* LightPoint) {
 
-	// Unified [Point] settings: torches behave the same in interiors and exteriors.
+	// Unified [Point] settings: torches behave alike in interiors and exteriors.
 	SettingsShadowStruct::PointStruct* ShadowSettings = &TheSettingManager->SettingsShadows.Point;
 	SettingsMainStruct::EquipmentModeStruct* EquipmentModeSettings = &TheSettingManager->SettingsMain.EquipmentMode;
 

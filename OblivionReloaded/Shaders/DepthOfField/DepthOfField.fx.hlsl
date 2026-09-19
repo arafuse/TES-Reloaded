@@ -47,6 +47,8 @@ float readDepth(in float2 coord : TEXCOORD0)
  
 static float focus = readDepth(float2(0.5, 0.5));
 
+static const int cSmartBlurTaps = 8;
+
 static float2 taps[12] =
 {
     float2(-0.326212, -0.405810),
@@ -86,7 +88,7 @@ float4 SmartBlur(VSOUT IN) : COLOR0
     float c = TESR_DepthOfFieldBlur.w * 2 * TESR_DepthOfFieldData.y * (tex2D(TESR_RenderedBuffer, IN.UVCoord).r - 0.5);
     float amount = 1;
  
-    for (int i = 0; i < 8; i++) // Perf: 8 of 12 Poisson taps
+    for (int i = 0; i < cSmartBlurTaps; i++)
     {
         float2 dir = taps[i];
         float2 s_tex = IN.UVCoord + TESR_ReciprocalResolution.xy * dir * c;
@@ -136,8 +138,7 @@ float4 BlurPS(VSOUT IN, uniform bool VertBlur) : COLOR0
 			color += tex2D(TESR_RenderedBuffer, float2(IN.UVCoord.x, IN.UVCoord.y + TESR_ReciprocalResolution.y * 2 * scale)).rgb * 28;
 		}
 
-		// Perf: 5-tap (center + +/-1 + +/-2), was 9-tap. Weights 70 + 2*(56+28) = 238.
-		color = color / 238;
+		color = color / (70 + 2 * (56 + 28));
 	}
 	else
 		color = tex2D(TESR_SourceBuffer, IN.UVCoord).rgb;

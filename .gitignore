@@ -2,12 +2,14 @@
 # This .gitignore file was automatically created by Microsoft(R) Visual Studio.
 ################################################################################
 
-/.vs
+.vs/
 Debug/
 Release/
 %TEMP%/
+__pycache__/
 
 *.obj
+*.exe
 *.aps
 *.pso
 *.vso

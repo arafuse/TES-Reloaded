@@ -39,7 +39,8 @@ VS_OUTPUT main(VS_INPUT IN) {
 	float4 r1 = 0.0f;
 	float4 r0 = IN.position;
 
-	if (TESR_ShadowCubeBakeData.x == 1.0f) { // Skinned (Actors)
+	bool skinned = TESR_ShadowCubeBakeData.x == 1.0f;
+	if (skinned) {
 		offset.xyzw = IN.blendindexes.zyxw * const_0.y;
 		r0.w = 1;
 		q0.xyzw = (IN.position.xyzx * const_0.xxxz) + const_0.zzzx;
