@@ -8074,8 +8074,8 @@ public:
 	float			unk0C4;							// 0C4
 	float			unk0C8;							// 0C8
 	float			unk0CC;							// 0CC
-	float			unk0D0;							// 0D0
-	float			unk0D4;							// 0D4
+	float			gameHour;						// 0D0 Written each frame by Sky::Update
+	float			transitionStartHour;			// 0D4 Game hour the current transition began
 	float			weatherPercent;					// 0D8
 	UInt32			unk0DC;							// 0DC
 	UInt32			unk0E0;							// 0E0
@@ -8083,9 +8083,9 @@ public:
 	UInt32			unk0E8;							// 0E8
 	UInt32			unk0EC;							// 0EC
 	float			unk0F0;							// 0F0
-	float			unk0F4;							// 0F4
+	float			unk0F4;							// 0F4 weatherPercent when transition acceleration began
 	UInt32			unk0F8;							// 0F8
-	UInt32			Flags0FC;						// 0FC
+	UInt32			Flags0FC;						// 0FC 0x08 = transition accelerated, 0x10 = interrupt (teleport)
 	UInt8			unk100;							// 100
 	UInt8			unk101[3];						// 101
 };

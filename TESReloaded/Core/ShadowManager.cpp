@@ -166,10 +166,12 @@ namespace {
 
 // Publish the deferred shadow bias constants. Two things are going on here:
 //
-// 1. The normal-offset values (.x/.y) are authored in shadow-map TEXELS, so they are scaled by each
-//    cascade's world-units-per-texel (2 * Radius / Size). That keeps them correct if ShadowMapSize or
-//    ShadowMapRadius is retuned. The legacy bias path wants the raw clip-space numbers instead, so the
-//    scaling is skipped entirely when AdaptiveBias is off.
+// 1. Under AdaptiveBias all four values are authored in shadow-map TEXELS, so each cascade's own
+//    texel size applies -- near's texels are 4x finer than far's, so one world-unit depth bias would
+//    over-bias near and leak light at contacts. The normal offsets (.x/.y) become world units
+//    (texels * 2R/Size); the depth biases (.z/.w) become normalized ortho depth (world / 2*FarPlane,
+//    the span the projection covers), which is what the shader compares against. The legacy path
+//    wants the raw numbers, so all scaling is skipped when AdaptiveBias is off.
 // 2. Bias is NOT weather-dependent, so the values come from the canonical Exteriors struct while only
 //    the cascade geometry comes from the weather-selected one. This is also what makes live INI edits
 //    take effect under the cloudy/precipitation tiers -- SelectExteriorShadowSettings returns a COPY
@@ -180,17 +182,21 @@ void ShadowManager::PublishShadowBiasConstants(SettingsShadowStruct::ExteriorsSt
 
 	float ScaleNear = 1.0f;
 	float ScaleFar = 1.0f;
+	float DepthScale = 1.0f; // world units -> normalized ortho depth
 	if (Ext.AdaptiveBias) {
 		if (Selected->ShadowMapSize[MapNear])
 			ScaleNear = (2.0f * Selected->ShadowMapRadius[MapNear]) / (float)Selected->ShadowMapSize[MapNear];
 		if (Selected->ShadowMapSize[MapFar])
 			ScaleFar = (2.0f * Selected->ShadowMapRadius[MapFar]) / (float)Selected->ShadowMapSize[MapFar];
+		// Selected, not canonical: it is the struct the bake built its projection from.
+		if (Selected->ShadowMapFarPlane > 0.0f)
+			DepthScale = 1.0f / (2.0f * Selected->ShadowMapFarPlane);
 	}
 
 	Sm.ShadowBiasDeferred.x = Ext.deferredNormBias * ScaleNear;
 	Sm.ShadowBiasDeferred.y = Ext.deferredFarNormBias * ScaleFar;
-	Sm.ShadowBiasDeferred.z = Ext.deferredConstBias;
-	Sm.ShadowBiasDeferred.w = Ext.deferredFarConstBias;
+	Sm.ShadowBiasDeferred.z = Ext.deferredConstBias * ScaleNear * DepthScale;
+	Sm.ShadowBiasDeferred.w = Ext.deferredFarConstBias * ScaleFar * DepthScale;
 
 	Sm.ShadowBiasAdaptive.x = Ext.BiasTerminatorWidth;
 	Sm.ShadowBiasAdaptive.y = Ext.BiasMaxSlope;
@@ -555,68 +561,24 @@ TESObjectREFR* ShadowManager::GetRef(TESObjectREFR* Ref, SettingsShadowStruct::F
 
 bool ShadowManager::InShadowFrustum(ShadowMapTypeEnum ShadowMapType, NiAVObject* Object) {
 
-	float Distance = 0.0f;
-	bool R = false;
 	NiBound* Bound = Object->GetWorldBound();
+	if (!Bound) return false;
 
-	if (Bound) {
-		// Cull in the same space the map's frustum lives in: anchor-relative during a world-anchored
-		// bake (near/far cached maps), camera-relative otherwise (ortho). Must match the space the
-		// terrain is subsequently drawn in (see Render()), or terrain is culled against the wrong frustum.
-		float BaseX = CollectWorldSpace ? CollectAnchor.x : TheRenderManager->CameraPosition.x;
-		float BaseY = CollectWorldSpace ? CollectAnchor.y : TheRenderManager->CameraPosition.y;
-		float BaseZ = CollectWorldSpace ? CollectAnchor.z : TheRenderManager->CameraPosition.z;
-		D3DXVECTOR3 Position = { Bound->Center.x - BaseX, Bound->Center.y - BaseY, Bound->Center.z - BaseZ };
-
-		R = true;
-		for (int i = 0; i < 6; ++i) {
-			Distance = D3DXPlaneDotCoord(&ShadowMapFrustum[ShadowMapType][i], &Position);
-			if (Distance <= -Bound->Radius) {
-				R = false;
-				break;
-			}
-		}
-		if (ShadowMapType == MapFar && R) { // Ensures to not be fully in the near frustum
-			for (int i = 0; i < 6; ++i) {
-				Distance = D3DXPlaneDotCoord(&ShadowMapFrustum[MapNear][i], &Position);
-				if (Distance <= -Bound->Radius || std::fabs(Distance) < Bound->Radius) {
-					R = false;
-					break;
-				}
-			}
-			R = !R;
-		}
-	}
-	return R;
+	// Cull in the same space the map's frustum lives in: anchor-relative during a world-anchored
+	// bake (near/far cached maps), camera-relative otherwise (ortho). Must match the space the
+	// terrain is subsequently drawn in (see Render()), or terrain is culled against the wrong frustum.
+	float BaseX = CollectWorldSpace ? CollectAnchor.x : TheRenderManager->CameraPosition.x;
+	float BaseY = CollectWorldSpace ? CollectAnchor.y : TheRenderManager->CameraPosition.y;
+	float BaseZ = CollectWorldSpace ? CollectAnchor.z : TheRenderManager->CameraPosition.z;
+	D3DXVECTOR3 Position = { Bound->Center.x - BaseX, Bound->Center.y - BaseY, Bound->Center.z - BaseZ };
+	return SphereInShadowFrustum(ShadowMapType, Position, Bound->Radius);
 
 }
 
-// Ref-root cull: exact behaviour of InShadowFrustum (incl. the MapFar near-frustum
-// exclusion) but on a precomputed camera-relative center+radius. Keeps which refs
-// participate in which map identical to the per-candidate test it replaces.
-bool ShadowManager::RootInShadowFrustum(ShadowMapTypeEnum ShadowMapType, const D3DXVECTOR3& Center, float Radius) {
-	for (int i = 0; i < 6; ++i)
-		if (D3DXPlaneDotCoord(&ShadowMapFrustum[ShadowMapType][i], &Center) <= -Radius) return false;
-	if (ShadowMapType == MapFar) { // Ensures to not be fully in the near frustum
-		// "Fully inside near" is a short-circuit AND over the 6 near planes. Near and far share
-		// the same view (only the ortho extents differ), so the two depth planes are identical to
-		// far's — already satisfied here and effectively never decisive. Test the 4 (much tighter)
-		// side planes first so the early-out fires on the first plane for the common case of an
-		// object laterally outside the small near cascade. Result is identical; only order changes.
-		static const int NearPlaneOrder[6] = { PlaneLeft, PlaneRight, PlaneTop, PlaneBottom, PlaneNear, PlaneFar };
-		bool fullyInNear = true;
-		for (int k = 0; k < 6; ++k) {
-			float Distance = D3DXPlaneDotCoord(&ShadowMapFrustum[MapNear][NearPlaneOrder[k]], &Center);
-			if (Distance <= -Radius || std::fabs(Distance) < Radius) { fullyInNear = false; break; }
-		}
-		if (fullyInNear) return false;
-	}
-	return true;
-}
-
-// Leaf cull: plain 6-plane containment against the map's frustum (no near-exclusion). Only
-// removes sub-geometry fully outside the light frustum, which contributes nothing.
-bool ShadowManager::LeafInShadowFrustum(ShadowMapTypeEnum ShadowMapType, const D3DXVECTOR3& Center, float Radius) {
+// Plain 6-plane sphere test against one map's frustum. MapFar deliberately does NOT exclude what
+// is inside the near cascade: the two cached maps re-anchor independently, so any region left out
+// of a far bake goes stale once near moves, and receivers falling back to far lose their casters.
+bool ShadowManager::SphereInShadowFrustum(ShadowMapTypeEnum ShadowMapType, const D3DXVECTOR3& Center, float Radius) {
 	for (int i = 0; i < 6; ++i)
 		if (D3DXPlaneDotCoord(&ShadowMapFrustum[ShadowMapType][i], &Center) <= -Radius) return false;
 	return true;
@@ -964,7 +926,7 @@ void ShadowManager::CollectCellGeo(TESObjectCELL* Cell, SettingsShadowStruct::Fo
 		D3DXVECTOR3 RootCenter;
 		if (CollectWorldSpace) { RootCenter.x = RootBound->Center.x - CollectAnchor.x; RootCenter.y = RootBound->Center.y - CollectAnchor.y; RootCenter.z = RootBound->Center.z - CollectAnchor.z; }
 		else { RootCenter.x = RootBound->Center.x - TheRenderManager->CameraPosition.x; RootCenter.y = RootBound->Center.y - TheRenderManager->CameraPosition.y; RootCenter.z = RootBound->Center.z - TheRenderManager->CameraPosition.z; }
-		if (!RootInShadowFrustum(ShadowMapType, RootCenter, RootBound->Radius)) continue; // whole-subtree cull
+		if (!SphereInShadowFrustum(ShadowMapType, RootCenter, RootBound->Radius)) continue; // whole-subtree cull
 		bool IsActorRef = (TypeID >= TESForm::FormType::kFormType_NPC && TypeID <= TESForm::FormType::kFormType_LeveledCreature); // used by the Stage 2 static/dynamic split
 		CollectExteriorGeo(Node, HasWater, ShadowMapType, IsActorRef);
 	}
@@ -1026,7 +988,7 @@ void ShadowManager::CollectExteriorGeo(NiAVObject* Object, bool HasWater, Shadow
 	D3DXVECTOR3 Center;
 	if (CollectWorldSpace) { Center.x = Bound->Center.x - CollectAnchor.x; Center.y = Bound->Center.y - CollectAnchor.y; Center.z = Bound->Center.z - CollectAnchor.z; }
 	else { Center.x = Bound->Center.x - TheRenderManager->CameraPosition.x; Center.y = Bound->Center.y - TheRenderManager->CameraPosition.y; Center.z = Bound->Center.z - TheRenderManager->CameraPosition.z; }
-	if (!LeafInShadowFrustum(ShadowMapType, Center, Bound->Radius)) return;
+	if (!SphereInShadowFrustum(ShadowMapType, Center, Bound->Radius)) return;
 
 	// Resolve the buffer Render() will use: model buffer (static path), else first skin
 	// partition (RenderSkinnedGeo path, signalled by storing GeoData = NULL on the item).
@@ -1420,7 +1382,10 @@ void ShadowManager::RenderExteriorShadows() {
 		PublishCachedRegionSampleMatrix(MapFar);
 		PublishStaticFadeConstants();
 
-		ShadowData->y = ShadowsExteriors->Darkness;
+		// While volumetric fog draws, shadows blend toward the precipitation tier's darkness by the fog weight.
+		// Only Darkness is swapped: the selected struct still owns cascade geometry.
+		float FogWeight = TheSettingManager->SettingsMain.Effects.VolumetricFog ? TheShaderManager->ShaderConst.VolumetricFog.Data.w : 0.0f;
+		ShadowData->y = std::lerp(ShadowsExteriors->Darkness, TheSettingManager->SettingsShadows.ExteriorsPrecip.Darkness, FogWeight);
 		ShadowData->z = 1.0f / (float)ShadowsExteriors->ShadowMapSize[MapNear];
 		ShadowData->w = 1.0f / (float)ShadowsExteriors->ShadowMapSize[MapFar];
 
@@ -1898,6 +1863,10 @@ void ShadowManager::RenderPointShadows() {
 	PublishPointLightConstants();
 
 	D3DXVECTOR4* PointData = &TheShaderManager->ShaderConst.ShadowPoint.PointData;
+	// Shadow strength scale. While volumetric fog draws, blend toward [Point] FogStrength by the fog
+	// weight, so fogged torch shadows stop reading black.
+	float FogWeight = TheSettingManager->SettingsMain.Effects.VolumetricFog && Player->IsExteriorLike() ? TheShaderManager->ShaderConst.VolumetricFog.Data.w : 0.0f;
+	PointData->x = std::lerp(1.0f, TheSettingManager->SettingsShadows.Point.FogStrength, FogWeight);
 	// Dead since darkness became light-derived, but a stale compiled ShadowsPoint.fx still reads .y
 	// as its darkness preshader (CompileShaders defaults off). 1.0 makes that case degrade to
 	// "no point shadows" rather than an unwritten read.

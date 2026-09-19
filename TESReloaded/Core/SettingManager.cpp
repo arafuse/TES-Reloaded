@@ -84,6 +84,9 @@ SettingManager::SettingManager() {
 	SettingsMain.Main.RemoveUnderwater = GetPrivateProfileIntA("Main", "RemoveUnderwater", 1, Filename);
 	SettingsMain.Main.RemovePrecipitations = GetPrivateProfileIntA("Main", "RemovePrecipitations", 0, Filename);
 	SettingsMain.Main.MemoryManagement = GetPrivateProfileIntA("Main", "MemoryManagement", 0, Filename);
+	SettingsMain.Main.RagdollActorCollision = GetPrivateProfileIntA("Main", "RagdollActorCollision", 0, Filename);
+	GetPrivateProfileStringA("Main", "WeatherMinTransitionTime", "1.0", value, SettingStringBuffer, Filename);
+	SettingsMain.Main.WeatherMinTransitionTime = atof(value);
 	SettingsMain.Main.AnisotropicFilter = GetPrivateProfileIntA("Main", "AnisotropicFilter", 0, Filename);
 	GetPrivateProfileStringA("Main", "FarPlaneDistance", "0.0", value, SettingStringBuffer, Filename);
 	SettingsMain.Main.FarPlaneDistance = atof(value);
@@ -433,6 +436,8 @@ SettingManager::SettingManager() {
 	SettingsMain.Develop.ProfileShadows = GetPrivateProfileIntA("Develop", "ProfileShadows", 0, Filename);
 	SettingsMain.Develop.ProfileEffects = GetPrivateProfileIntA("Develop", "ProfileEffects", 0, Filename);
 	SettingsMain.Develop.ProfileFrame = GetPrivateProfileIntA("Develop", "ProfileFrame", 0, Filename);
+	SettingsMain.Develop.ProfileSampler = GetPrivateProfileIntA("Develop", "ProfileSampler", 0, Filename);
+	SettingsMain.Develop.ProfileSamplerHz = GetPrivateProfileIntA("Develop", "ProfileSamplerHz", 1000, Filename);
 	SettingsMain.Develop.NearShellDebug = GetPrivateProfileIntA("Develop", "NearShellDebug", 0, Filename);
 
 	GameLoading = false;
@@ -1285,6 +1290,8 @@ void SettingManager::LoadSettings() {
 	SettingsShadows.Point.Bias = atof(value);
 	GetPrivateProfileStringA("Point", "FadeTime", "0.5", value, SettingStringBuffer, Filename);
 	SettingsShadows.Point.FadeTime = atof(value);
+	GetPrivateProfileStringA("Point", "FogStrength", "0.5", value, SettingStringBuffer, Filename);
+	SettingsShadows.Point.FogStrength = std::clamp((float)atof(value), 0.0f, 1.0f);
 	SettingsShadows.Point.Forms.Activators = GetPrivateProfileIntA("Point", "Activators", 1, Filename);
 	SettingsShadows.Point.Forms.Actors = GetPrivateProfileIntA("Point", "Actors", 1, Filename);
 	SettingsShadows.Point.Forms.Apparatus = GetPrivateProfileIntA("Point", "Apparatus", 1, Filename);

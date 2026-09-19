@@ -466,6 +466,11 @@ void RenderHook::TrackRender(BSRenderedTexture* RenderedTexture) {
 	FrameProfiler::FrameBegin();
 	FrameProfiler::Scope FrameScope(FrameProfiler::Buck_FrameTotal);
 
+	// The sampler's phase boundary is deliberately the SAME envelope FrameProfiler
+	// measures, so "render" in one report means exactly what it means in the other.
+	SampleProfiler::CheckKey();
+	SampleProfiler::InRender = true;
+
 	TheShaderManager->UpdateShaderStates();
 	TheRenderManager->SetSceneGraph();
 	TheShaderManager->UpdateConstants();
@@ -484,6 +489,7 @@ void RenderHook::TrackRender(BSRenderedTexture* RenderedTexture) {
 	// the frame it is reporting on.
 	FrameScope.Close();
 	FrameProfiler::FrameEnd();
+	SampleProfiler::InRender = false;
 }
 
 bool (__thiscall RenderHook::* EndTargetGroup)(NiCamera*, NiRenderTargetGroup*);

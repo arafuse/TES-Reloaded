@@ -123,7 +123,8 @@ struct ShaderConstants {
 	// (the old system overloaded one TESR_ShadowCubeData between phases — a known trap).
 	struct ShadowPointStruct {
 		D3DXVECTOR4		BakeData;	// bake phase: x = skinned flag, y = alpha flag, z = far plane
-		D3DXVECTOR4		PointData;	// sample phase: z = 1 / cube map size, w = depth bias (x unused;
+		D3DXVECTOR4		PointData;	// sample phase: x = shadow strength scale (volumetric fog lightens it),
+									// z = 1 / cube map size, w = depth bias (
 									// y is a neutral 1.0, kept only so a stale compiled ShadowsPoint.fx
 									// reading it as a darkness preshader degrades to "no point shadows")
 	};

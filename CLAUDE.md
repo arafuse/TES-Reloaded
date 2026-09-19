@@ -87,7 +87,7 @@ Key hook files:
 
 Each has a `Create*Hook()` function called from `Main.cpp` based on INI settings:
 
-GrassMode, CameraMode, EquipmentMode, MountedCombat, SleepingMode, Dodge, FlyCam, WeatherMode, Animation, MemoryManagement, D3D9Hook (debug)
+GrassMode, CameraMode, EquipmentMode, MountedCombat, SleepingMode, Dodge, FlyCam, WeatherMode, Animation, MemoryManagement, RagdollCollision, D3D9Hook (debug)
 
 ### Multi-Game Conditionals
 
@@ -110,3 +110,9 @@ Set `#define WaitForDebugger 1` in `Main.cpp` to spin until a debugger attaches.
 
 - Public symbols should have appropriate documentation comments.
 - If inline code comments are needed, they should be 1-3 lines maximum.
+
+## Design docs and memory
+
+`memory/` is symbolically linked to the agent's memory directory, so agent memory gets committed to the repo.
+
+`.gitignore` excludes `docs/` and `.superpowers/` on purpose. We do not track design documents or implementation plans in history; anything worth persisting across tasks is committed to memory.

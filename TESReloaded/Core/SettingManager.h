@@ -83,6 +83,10 @@ struct SettingsMainStruct {
 		bool	RemoveUnderwater;
 		bool	RemovePrecipitations;
 		bool	MemoryManagement;
+		// Lets character controllers collide with ragdoll bones (the engine disables the pair).
+		bool	RagdollActorCollision;
+		// Minimum real-time weather transition in seconds; 0 leaves transitions to the engine.
+		float	WeatherMinTransitionTime;
 		bool	FPSOverlay;
 		bool	SaveSettings;
 		bool	ReplaceIntro;
@@ -278,6 +282,8 @@ struct SettingsMainStruct {
 		UInt8	ProfileShadows;
 		UInt8	ProfileEffects;
 		UInt8	ProfileFrame;
+		UInt8	ProfileSampler;		// key code: toggles the main-thread sampling profiler
+		int		ProfileSamplerHz;
 		UInt8	NearShellDebug;
 	};
 
@@ -358,6 +364,7 @@ struct SettingsShadowStruct {
 		float				MaxDistance;		// max light distance from player to cast shadows
 		float				Bias;				// depth bias in normalized cube distance (scales with light radius)
 		float				FadeTime;			// seconds a slot takes to fade its shadow in or out (0 = snap)
+		float				FogStrength;		// shadow strength multiplier under full volumetric fog (1 = unchanged, 0 = none)
 		ExcludedFormsList	ExcludedForms;
 	};
 

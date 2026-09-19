@@ -1935,8 +1935,60 @@ static void TryInsertActor(ActorDist nearest[], int& count, float x, float y, fl
 	}
 }
 
+// Extra world units around an actor's collision footprint that still count as on screen, so an
+// actor walking in from the edge has already bent the grass before that grass becomes visible.
+const float kGrassViewMargin      = 256.0f;
+const float kGrassActorHalfHeight = 64.0f;	// actor bound sphere is centred this far above the feet
+
+// The scene camera's four side planes, in camera space. Near and far are left out: the far limit is
+// already the grass draw distance, and near-plane culling would only drop actors the margin keeps.
+struct GrassViewCull {
+	bool  valid;
+	float px, py, pz;
+	float fx, fy, fz, ux, uy, uz, rx, ry, rz;
+	float left, right, top, bottom;
+	float invLeft, invRight, invTop, invBottom;	// 1 / plane normal length, for signed distances
+};
+
+// Captures the scene camera's view frustum. Leaves the cull invalid (accept everything) when there
+// is no perspective scene camera to test against.
+static void BuildGrassViewCull(GrassViewCull& cull) {
+	cull.valid = false;
+	NiCamera* camera = WorldSceneGraph ? WorldSceneGraph->camera : NULL;
+	if (!camera || camera->Frustum.Ortho) return;
+
+	const NiMatrix33& rot = camera->m_worldTransform.rot;
+	const NiFrustum& fr = camera->Frustum;
+	cull.px = camera->m_worldTransform.pos.x;
+	cull.py = camera->m_worldTransform.pos.y;
+	cull.pz = camera->m_worldTransform.pos.z;
+	cull.fx = rot.data[0][0]; cull.fy = rot.data[1][0]; cull.fz = rot.data[2][0];
+	cull.ux = rot.data[0][1]; cull.uy = rot.data[1][1]; cull.uz = rot.data[2][1];
+	cull.rx = rot.data[0][2]; cull.ry = rot.data[1][2]; cull.rz = rot.data[2][2];
+	cull.left = fr.Left; cull.right = fr.Right; cull.top = fr.Top; cull.bottom = fr.Bottom;
+	cull.invLeft   = 1.0f / sqrtf(1.0f + fr.Left * fr.Left);
+	cull.invRight  = 1.0f / sqrtf(1.0f + fr.Right * fr.Right);
+	cull.invTop    = 1.0f / sqrtf(1.0f + fr.Top * fr.Top);
+	cull.invBottom = 1.0f / sqrtf(1.0f + fr.Bottom * fr.Bottom);
+	cull.valid = true;
+}
+
+// True if a sphere of the given radius around (x, y, z) reaches inside the view frustum's sides.
+static bool GrassSphereInView(const GrassViewCull& cull, float x, float y, float z, float radius) {
+	if (!cull.valid) return true;
+	float dx = x - cull.px, dy = y - cull.py, dz = z - cull.pz;
+	float d  = dx * cull.fx + dy * cull.fy + dz * cull.fz;	// depth along the view direction
+	float cx = dx * cull.rx + dy * cull.ry + dz * cull.rz;
+	float cy = dx * cull.ux + dy * cull.uy + dz * cull.uz;
+	return (cx - cull.left * d)   * cull.invLeft   > -radius &&
+	       (cull.right * d - cx)  * cull.invRight  > -radius &&
+	       (cull.top * d - cy)    * cull.invTop    > -radius &&
+	       (cy - cull.bottom * d) * cull.invBottom > -radius;
+}
+
 static void CollectActorsFromObjectList(TList<TESObjectREFR>::Entry* entry, TESObjectREFR* player,
-                                        ActorDist nearest[], int& count, float maxTrackDistSq) {
+                                        ActorDist nearest[], int& count, float maxTrackDistSq,
+                                        const GrassViewCull& cull, float cullRadius) {
 	while (entry) {
 		if (TESObjectREFR* ref = entry->item) {
 			if (ref->baseForm && ref != player) {
@@ -1947,7 +1999,8 @@ static void CollectActorsFromObjectList(TList<TESObjectREFR>::Entry* entry, TESO
 					float dx = ref->pos.x - player->pos.x;
 					float dy = ref->pos.y - player->pos.y;
 					float distSq = dx * dx + dy * dy;
-					if (distSq < maxTrackDistSq)
+					if (distSq < maxTrackDistSq &&
+					    GrassSphereInView(cull, ref->pos.x, ref->pos.y, ref->pos.z + kGrassActorHalfHeight, cullRadius))
 						TryInsertActor(nearest, count, ref->pos.x, ref->pos.y, distSq);
 				}
 			}
@@ -2101,17 +2154,23 @@ void ShaderManager::UpdateGrass(ShaderConstants& ShaderConst, GrassActorPos Gras
 	int npcCount = 0;
 	float maxTrackDistSq = TheSettingManager->SettingsGrass.MaxDistance * TheSettingManager->SettingsGrass.MaxDistance;
 
+	// Only actors whose bent grass could be on screen compete for the two slots, so an off-screen
+	// actor never takes a slot from a visible one.
+	GrassViewCull cull;
+	BuildGrassViewCull(cull);
+	float cullRadius = radius + kGrassActorHalfHeight + kGrassViewMargin;
+
 	if (Player->parentCell) {
 		if (Player->GetWorldSpace()) {
 			for (UInt32 x = 0; x < *SettingGridsToLoad; x++) {
 				for (UInt32 y = 0; y < *SettingGridsToLoad; y++) {
 					TESObjectCELL* Cell = Tes->gridCellArray->GetCell(x, y);
 					if (Cell)
-						CollectActorsFromObjectList(&Cell->objectList.First, Player, nearest, npcCount, maxTrackDistSq);
+						CollectActorsFromObjectList(&Cell->objectList.First, Player, nearest, npcCount, maxTrackDistSq, cull, cullRadius);
 				}
 			}
 		} else {
-			CollectActorsFromObjectList(&Player->parentCell->objectList.First, Player, nearest, npcCount, maxTrackDistSq);
+			CollectActorsFromObjectList(&Player->parentCell->objectList.First, Player, nearest, npcCount, maxTrackDistSq, cull, cullRadius);
 		}
 	}
 	if (npcCount == kGrassMaxNPCs && nearest[1].distSq < nearest[0].distSq) {
@@ -2135,12 +2194,11 @@ void ShaderManager::UpdateGrass(ShaderConstants& ShaderConst, GrassActorPos Gras
 	if (trailSlots > kGrassStampCount) trailSlots = kGrassStampCount;
 	if (stampCount > trailSlots) stampCount = trailSlots;
 
-	// Fill the two remaining sources by alternating priority: the player's wake outranks a second
-	// actor, but a nearby actor outranks the player's older, fainter footprint.
+	// Fill the two remaining sources with visible actors first, nearest first; the player's
+	// footprints, newest first, only take the slots the actors leave free.
 	int stampIdx = 0, npcIdx = 0;
-	bool takeStamp = true;
 	while (GrassCollisionSourceCount < 3 && (stampIdx < stampCount || npcIdx < npcCount)) {
-		bool useStamp = takeStamp ? (stampIdx < stampCount) : (npcIdx >= npcCount && stampIdx < stampCount);
+		bool useStamp = npcIdx >= npcCount;
 		int slot = GrassCollisionSourceCount;
 		if (useStamp) {
 			const GrassStamp& stamp = GrassStamps[stampOrder[stampIdx++]];
@@ -2160,7 +2218,6 @@ void ShaderManager::UpdateGrass(ShaderConstants& ShaderConst, GrassActorPos Gras
 			npcIdx++;
 		}
 		GrassCollisionSourceCount++;
-		takeStamp = !takeStamp;
 	}
 
 	ShaderConst.Grass.CollisionParams.w = (float)GrassCollisionSourceCount;
@@ -2392,9 +2449,12 @@ void ShaderManager::UpdateSharpening(ShaderConstants& ShaderConst) {
 void ShaderManager::UpdateVolumetricFog(ShaderConstants& ShaderConst, float weatherPercent) {
 	ShaderConst.VolumetricFog.Data.x = TheSettingManager->SettingsVolumetricFog.Exponent;
 	ShaderConst.VolumetricFog.Data.y = TheSettingManager->SettingsVolumetricFog.ColorCoeff;
-	ShaderConst.VolumetricFog.Data.z = TheSettingManager->SettingsVolumetricFog.Amount;
-	ShaderConst.VolumetricFog.Data.w = 1.0f;
-	if (weatherPercent == 1.0f && ShaderConst.fogData.y > TheSettingManager->SettingsVolumetricFog.MaxDistance) ShaderConst.VolumetricFog.Data.w = 0.0f;
+	// Data.w is a 0-1 weight: fog is off for weathers whose far fog exceeds MaxDistance, faded across transitions.
+	float MaxDistance = TheSettingManager->SettingsVolumetricFog.MaxDistance;
+	float FromWeight = ShaderConst.oldfogEnd > MaxDistance ? 0.0f : 1.0f;
+	float ToWeight = ShaderConst.currentfogEnd > MaxDistance ? 0.0f : 1.0f;
+	ShaderConst.VolumetricFog.Data.w = std::lerp(FromWeight, ToWeight, weatherPercent);
+	ShaderConst.VolumetricFog.Data.z = TheSettingManager->SettingsVolumetricFog.Amount * ShaderConst.VolumetricFog.Data.w;
 }
 
 void ShaderManager::UpdateTAA(ShaderConstants& ShaderConst, int& jitterIndex, const JitterPattern jitterPattern[2]) {
