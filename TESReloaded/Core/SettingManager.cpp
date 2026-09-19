@@ -593,16 +593,10 @@ void SettingManager::LoadSettings() {
 	strcpy(Filename, CurrentPath);
 	strcat(Filename, SettingsPath);
 	strcat(Filename, "POM\\POM.ini");
-	GetPrivateProfileStringA("Default", "HeightMapScale", "0.05", value, SettingStringBuffer, Filename);
+	GetPrivateProfileStringA("Default", "HeightMapScale", "0.04", value, SettingStringBuffer, Filename);
 	SettingsPOM.HeightMapScale = atof(value);
-	GetPrivateProfileStringA("Default", "MinSamples", "8", value, SettingStringBuffer, Filename);
-	SettingsPOM.MinSamples = atof(value);
-	GetPrivateProfileStringA("Default", "MaxSamples", "32", value, SettingStringBuffer, Filename);
-	SettingsPOM.MaxSamples = atof(value);
-	GetPrivateProfileStringA("Default", "SelfShadow", "1", value, SettingStringBuffer, Filename);
-	SettingsPOM.SelfShadow = atof(value);
-	GetPrivateProfileStringA("Default", "SelfShadowStrength", "2.0", value, SettingStringBuffer, Filename);
-	SettingsPOM.SelfShadowStrength = atof(value);
+	GetPrivateProfileStringA("Default", "ShadowReliefScale", "3.0", value, SettingStringBuffer, Filename);
+	SettingsPOM.ShadowReliefScale = atof(value);
 
 	strcpy(Filename, CurrentPath);
 	strcat(Filename, SettingsPath);
@@ -1575,10 +1569,7 @@ void SettingManager::SaveSettings(const char* Item, const char* Definition, cons
 		else if (!strcmp(Definition, "POM")) {
 			strcat(Filename, "POM\\POM.ini");
 			WritePrivateProfileStringA("Default", "HeightMapScale", ToString(SettingsPOM.HeightMapScale).c_str(), Filename);
-			WritePrivateProfileStringA("Default", "MaxSamples", ToString(SettingsPOM.MaxSamples).c_str(), Filename);
-			WritePrivateProfileStringA("Default", "MinSamples", ToString(SettingsPOM.MinSamples).c_str(), Filename);
-			WritePrivateProfileStringA("Default", "SelfShadow", ToString(SettingsPOM.SelfShadow).c_str(), Filename);
-			WritePrivateProfileStringA("Default", "SelfShadowStrength", ToString(SettingsPOM.SelfShadowStrength).c_str(), Filename);
+			WritePrivateProfileStringA("Default", "ShadowReliefScale", ToString(SettingsPOM.ShadowReliefScale).c_str(), Filename);
 		}
 		else if (!strcmp(Definition, "Skin")) {
 			strcat(Filename, "Skin\\Skin.ini");
@@ -2235,10 +2226,7 @@ SettingsList SettingManager::GetMenuSettings(const char* Item, const char* Defin
 		}
 		else if (!strcmp(Definition, "POM")) {
 			Settings["HeightMapScale"] = SettingsPOM.HeightMapScale;
-			Settings["MaxSamples"] = SettingsPOM.MaxSamples;
-			Settings["MinSamples"] = SettingsPOM.MinSamples;
-			Settings["SelfShadow"] = SettingsPOM.SelfShadow;
-			Settings["SelfShadowStrength"] = SettingsPOM.SelfShadowStrength;
+			Settings["ShadowReliefScale"] = SettingsPOM.ShadowReliefScale;
 		}
 		else if (!strcmp(Definition, "Shadows")) {
 			if (!strcmp(Section, "Exteriors")) {
@@ -2970,14 +2958,8 @@ void SettingManager::SetMenuSetting(const char* Item, const char* Definition, co
 		else if (!strcmp(Definition, "POM")) {
 			if (!strcmp(Setting, "HeightMapScale"))
 				SettingsPOM.HeightMapScale = Value;
-			else if (!strcmp(Setting, "MaxSamples"))
-				SettingsPOM.MaxSamples = Value;
-			else if (!strcmp(Setting, "MinSamples"))
-				SettingsPOM.MinSamples = Value;
-			else if (!strcmp(Setting, "SelfShadow"))
-				SettingsPOM.SelfShadow = Value;
-			else if (!strcmp(Setting, "SelfShadowStrength"))
-				SettingsPOM.SelfShadowStrength = Value;
+			else if (!strcmp(Setting, "ShadowReliefScale"))
+				SettingsPOM.ShadowReliefScale = Value;
 		}
 		else if (!strcmp(Definition, "Shadows")) {
 			if (!strcmp(Section, "Exteriors")) {

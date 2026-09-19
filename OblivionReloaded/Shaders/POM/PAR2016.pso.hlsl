@@ -1,6 +1,6 @@
-// PAR2018.pso: parallax lighting-only pass, sun + two point lights + ambient.
-// Stock-equivalent (paired with PAR2022.vso), minus the vanilla projected
-// shadow term: sun shadows come from the Oblivion Reloaded shadow pass.
+// PAR2016.pso: parallax lighting-only first pass, sun + two point lights + ambient.
+// Stock-equivalent (paired with PAR2020.vso); the interior twin of PAR2018, which
+// has no vanilla shadow term to drop. Overridden so interior multipass writes the depth offset.
 
 float4 AmbientColor : register(c1);
 float4 PSLightColor[4] : register(c2);

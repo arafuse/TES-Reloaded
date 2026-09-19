@@ -36,6 +36,8 @@ public:
 	// prefix alone, deliberately widening to WATERHMAP* as well. Narrowing it to this flag would
 	// change behaviour - see the comment there.
 	bool					isNearWater;
+	/// One of our PAR first-pass pixel shaders, which output the POM shadow side channel on COLOR1.
+	bool					isPOMShadowWriter;
 };
 
 class RenderManager: public NiDX9Renderer {

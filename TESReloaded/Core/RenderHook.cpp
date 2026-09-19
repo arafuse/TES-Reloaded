@@ -774,6 +774,13 @@ UInt32 RenderHook::TrackSetupShaderPrograms(NiGeometry* Geometry, NiSkinInstance
 			RenderState->SetRenderState(D3DRS_ZWRITEENABLE, FALSE, 0);
 		}
 
+#if defined(OBLIVION)
+		// POM shadow side channel: RT1 only under a depth-writing, unblended PAR first pass of the main
+		// scene; every other pass unbinds it (MUST stay ahead of the mid-scene shadow apply below).
+		TheShaderManager->BindPOMDepth(PixelShader->isPOMShadowWriter && TheShaderManager->InMainScenePass &&
+			RenderState->GetRenderState(D3DRS_ZWRITEENABLE) && !RenderState->GetRenderState(D3DRS_ALPHABLENDENABLE));
+#endif
+
 		// Sun-shadow apply + pre-water depth, fired at the first NEAR-water surface draw of the main
 		// pass. Engine pass order is: opaque -> LOD water -> sky -> LOD terrain -> grass -> NEAR water
 		// ([GrassOrderDbg] captures, 2026-07-15), so at this moment everything that should receive
@@ -1055,6 +1062,7 @@ void __cdecl TrackRenderObject(NiCamera* Camera, NiNode* Object, NiCullingProces
 	if (MainScenePass) {
 		TheShaderManager->InMainScenePass = true;
 		TheShaderManager->PreWaterDepthBufferFilled = false; // reset before the main pass so only main-pass water binds populate the pre-water depth
+		TheShaderManager->ClearPOMDepth();
 		if (TheSettingManager->SettingsMain.Develop.LogShaders && TheKeyboardManager->OnKeyDown(TheSettingManager->SettingsMain.Develop.LogShaders)) { // [GrassOrderDbg]
 			GrassOrderCapture = true;
 			GrassOrderSeq = GrassOrderGrassTraces = GrassOrderWaterTraces = 0;
@@ -1077,6 +1085,7 @@ void __cdecl TrackRenderObject(NiCamera* Camera, NiNode* Object, NiCullingProces
 	//    reset by BeginScene, which is the whole point.
 	// Do not move this after the shell block.
 	if (MainScenePass) TheShaderManager->InMainScenePass = false;
+	if (MainScenePass) TheShaderManager->BindPOMDepth(false);
 	if (Object == WorldSceneGraph && GrassOrderCapture) { // [GrassOrderDbg]
 		GrassOrderCapture = false;
 		Logger::Log("[GrassOrderDbg] ==== capture end (%d passes) ====", GrassOrderSeq);
