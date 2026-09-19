@@ -109,8 +109,10 @@ Set `#define WaitForDebugger 1` in `Main.cpp` to spin until a debugger attaches.
 ### Coding style
 
 - Public symbols should have appropriate documentation comments.
-- If inline code comments are needed, they should be 1-3 lines maximum.
+- Code should be self-documenting; avoid inline code comments unless abolutely necessary. Inline comments must be kept to 1-3 lines maxiumum.
 
 ## Design docs and memory
 
 `memory/` is symbolically linked to the agent's memory directory, so agent memory gets committed to the repo.
+
+Changes to memory and design documents must be self contained in their own `docs:` commits.
