@@ -80,10 +80,8 @@ float3 toWorld(float2 tex)
 
 float readDepth(in float2 coord : TEXCOORD0)
 {
-	// The apply now runs MID-SCENE, right before the first near-water surface draw (engine order:
-	// opaque -> LOD water -> sky -> LOD terrain -> grass -> near water). TESR_DepthBufferPreWater is
-	// resolved at that same moment, so this single snapshot holds every shadow receiver — land, grass,
-	// and the submerged floor — with no near-water surface in it. No per-pixel waterline select needed.
+	// Resolved mid-scene before the first near-water draw, so it holds every
+	// receiver (land, grass, submerged floor) but no near-water surface.
 	float posZ = tex2D(TESR_DepthBufferPreWater, coord).x;
 	return Zmul / ((posZ * Zdiff) - farZ);
 }
@@ -115,7 +113,7 @@ float3 getRawNormal(float2 UVCoord)
 	float3 right = getPosition(UVCoord + TESR_ReciprocalResolution.xy * float2(1, 0), readDepth(UVCoord + TESR_ReciprocalResolution.xy * float2(1, 0))) - pos;
 	float3 up = pos - getPosition(UVCoord + TESR_ReciprocalResolution.xy * float2(0, -1), readDepth(UVCoord + TESR_ReciprocalResolution.xy * float2(0, -1)));
 	float3 down = getPosition(UVCoord + TESR_ReciprocalResolution.xy * float2(0, 1), readDepth(UVCoord + TESR_ReciprocalResolution.xy * float2(0, 1))) - pos;
-	// Shorter derivative wins: at a silhouette the far side spans a depth discontinuity.
+	// Shorter derivative wins: at a silhouette the far side spans a depth jump.
 	float3 dx = length(left) < length(right) ? left : right;
 	float3 dy = length(up) < length(down) ? up : down;
 
@@ -150,7 +148,6 @@ float GetLightAmountFar(sampler2D mapFar, float4 ShadowPos, float bias) {
 
 	ShadowPos.x = ShadowPos.x * 0.5f + 0.5f;
 	ShadowPos.y = ShadowPos.y * -0.5f + 0.5f;
-	// Perf: 2x2 = 4 taps (was 3x3 = 9). Aggressive quality trade.
 	for (x = -0.5f; x <= 0.5f; x += 1.0f) {
 		for (y = -0.5f; y <= 0.5f; y += 1.0f) {
 			Shadow += LookupFar(mapFar, ShadowPos, float2(x, y), bias);
@@ -202,8 +199,8 @@ float GetLightAmountSkin(float4 ShadowPosSkin, float bias) {
 	float y;
 	for (y = -1.5f; y <= 1.5f; y += 1.0f)
 		for (x = -1.5f; x <= 1.5f; x += 1.0f) {
-			// TESR_ShadowData.z is the near map's texel size; the skin overlay map is allocated at the same
-			// (near) resolution (see CreateShadowMapSurfaces), so it is the correct PCF step here too.
+			// The skin map is allocated at the near resolution, so the near texel size
+			// (TESR_ShadowData.z) is its PCF step too.
 			float s = tex2Dlod(TESR_ShadowMapBufferSkin, float4(ShadowPosSkin.xy + float2(x, y) * TESR_ShadowData.z, 0, 0)).r;
 			Shadow += (s < ShadowPosSkin.z - bias) ? darkness : 1.0f;
 		}
@@ -230,7 +227,6 @@ float GetLightAmount(sampler2D mapNear, sampler2D mapFar, float4 ShadowPos, floa
 	ShadowPos.x = ShadowPos.x * 0.5f + 0.5f;
 	ShadowPos.y = ShadowPos.y * -0.5f + 0.5f;
 
-	// Perf: 4x4 = 16 taps (was 6x6 = 36). Aggressive quality trade.
 	for (y = -1.5f; y <= 1.5f; y += 1.0f) {
 		for (x = -1.5f; x <= 1.5f; x += 1.0f) {
 			Shadow += Lookup(mapNear, ShadowPos, float2(x, y), biasNear);
@@ -238,7 +234,6 @@ float GetLightAmount(sampler2D mapNear, sampler2D mapFar, float4 ShadowPos, floa
 	}
 	Shadow /= 16.0f;
 
-	// Both crossfade sets apply the same current-frame skin overlay -- see the function comment.
 	Shadow = min(Shadow, GetLightAmountSkin(ShadowPosSkin, biasNear));
 
 	return saturate(Shadow);
@@ -263,36 +258,23 @@ float StaticTerm(sampler2D mapNear, sampler2D mapFar, float4x4 toNear, float4x4 
 float4 Shadow(VSOUT IN) : COLOR0{
 	float3 color = tex2D(TESR_RenderedBuffer, IN.UVCoord).rgb;
 
-	// Sky guard: pixels at the far plane are sky/backdrop and must never be shadowed (keep full brightness).
-	// This REPLACES the old `length(color) > 1.4` bright-pixel early-out. That brightness test also skipped
-	// the sun-specular "glare" on real geometry, letting it survive on top of shadowed ground as washed-out
-	// blobs. Gating on depth instead lets bright glare on receivers flow through the shadow multiply below
-	// (darkened when in shadow, preserved in sun) while still protecting the sky.
+	// Sky guard on depth, not brightness, so sun glare on receivers is shadowed.
 	float rawDepth = tex2D(TESR_DepthBufferPreWater, IN.UVCoord).x;
-	if (rawDepth >= 0.9999f) {
+	bool isSky = rawDepth >= 0.9999f;
+	if (isSky) {
 		return float4(color, 1.0f);
 	}
 
-	// Receiver position follows the parallax relief; the normal below stays on the geometric depth.
+	// The receiver follows the parallax relief; the normal keeps geometric depth.
 	float depth = reliefDepth(IN.UVCoord, readDepth(IN.UVCoord));
 	float3 camera_vector = toWorld(IN.UVCoord) * depth;
 	float4 world_pos = float4(TESR_CameraPosition.xyz + camera_vector, 1.0f);
 
-	// Sun-active gate. This effect runs on a BROADER condition than the shadow pass that feeds it:
-	// it needs only an exterior worldspace, while ShadowManager::SunShadowNeeded() also requires the
-	// light to be above SunUpThreshold. Below that threshold the shadow maps AND the per-frame
-	// camera->light sample matrices stop being republished while the map textures stay resident, so
-	// sampling them with a frozen matrix drifts by exactly the camera delta and the shadows visibly
-	// detach and swim with the camera. TESR_ShadowBiasAdaptive.w is published every exterior frame
-	// from that same DoSun condition, so gating on it makes the two passes agree: when the maps stop
-	// updating, we stop sampling them. That is what makes SunUpThreshold safe at ANY value rather
-	// than a setting whose only correct value is the one that disables it.
-	//
-	// This REPLACES a dead `world_pos.z > -2147483000.0f` test that was always true. Reusing that
-	// slot rather than adding an early return is deliberate: an extra return ahead of the PCF loops
-	// puts their tex2D calls inside another dynamic branch, and fxc's X3570 unroll count jumps from
-	// 285 to 497. Same branch count, no new sampling context.
-	if (TESR_ShadowBiasAdaptive.w >= 0.5f) {
+	// Maps and matrices freeze below SunUpThreshold; sampling them then makes the
+	// shadows swim. A branch, not an early return: that would put the PCF loops in
+	// another dynamic branch (fxc X3570 unroll count 285 -> 497).
+	bool sunMapsLive = TESR_ShadowBiasAdaptive.w >= 0.5f;
+	if (sunMapsLive) {
 		float fogCoeff = (saturate((distance(world_pos, TESR_CameraPosition.xyz) - ((TESR_FogData.y - 2000))) / 1000)) + 1.0f;
 		float3 raw = getRawNormal(IN.UVCoord);
 
@@ -306,49 +288,34 @@ float4 Shadow(VSOUT IN) : COLOR0{
 			// Resolve the reconstruction's sign: a visible surface must face the camera.
 			float3 viewRay = normalize(toWorld(IN.UVCoord));
 			float3 N = (dot(raw, viewRay) > 0.0f) ? -raw : raw;
-			// Published already normalized by the C++ side (every assignment to ShadowLightDir copies a
-			// normalized SunDir/MasserDir), so no normalize() here: besides the wasted ALU, it would turn
-			// the zero moon-direction ShaderManager publishes when !MoonsExist into NaN, where the raw
-			// dot below just yields a benign 0.
-			float3 L = TESR_ShadowLightDir.xyz; // points TOWARD the sun; no abs()
-			float ndl = dot(N, L);
+			// Already normalized on the CPU; normalize() would turn the zero moon
+			// direction published when !MoonsExist into NaN.
+			float3 toSun = TESR_ShadowLightDir.xyz;
+			float ndl = dot(N, toSun);
 
-			// Optional terminator ramp: a surface pointing away from the sun is self-shadowed by its
-			// own geometry, so ramping it to the shadow term directly keeps it away from the depth
-			// compare, where no bias value can stop acne.
-			//
-			// OFF BY DEFAULT (BiasTerminatorWidth = 0), because it FLAT-SHADES the scene. N here is
-			// reconstructed from depth derivatives, so it is the GEOMETRIC face normal: constant
-			// across each triangle. Any visible term driven by it is therefore constant across each
-			// triangle too, and this one multiplies whole triangles by exactly `darkness` while the
-			// engine's own Gouraud (vertex-normal) shading still lights them -- smooth meshes break
-			// up into hard-edged facets. The depth compare handles these surfaces correctly anyway:
-			// a surface turned away from the sun has its object's lit side in the shadow map, so it
-			// tests as occluded, and the resulting boundary follows the real silhouette instead of
-			// triangle edges. Set a small width (0.15 was the old default) only to trade facets back
-			// for suppressing terminator-band acne.
+			// Optional terminator ramp against acne, off by default: N is the per-triangle
+			// geometric normal, so any ramp flat-shades smooth meshes. The depth compare
+			// already shadows sun-away faces along the real silhouette.
 			facing = TESR_ShadowBiasAdaptive.x > 0.0f ? smoothstep(0.0f, TESR_ShadowBiasAdaptive.x, ndl) : 1.0f;
 
 
-			// Clamped tan(acos(|ndl|)). abs(): depth slope depends on the angle to the ray, not the side --
-			// max(ndl,..) gave every sun-away face the peak bias (~82 world units), so thin walls stopped
-			// shadowing their own inner face and tree shadows leaked through onto it.
+			// Clamped tan(acos(|ndl|)). abs(), since max(ndl, ..) gave sun-away faces the
+			// peak bias and thin walls stopped shadowing their own inner face.
 			float ndlSafe = max(abs(ndl), 0.05f);
 			float slope = min(sqrt(saturate(1.0f - ndlSafe * ndlSafe)) / ndlSafe, TESR_ShadowBiasAdaptive.y);
 			biasNear = TESR_ShadowBiasDeferred.z * (1.0f + slope);
 			biasFar = TESR_ShadowBiasDeferred.w * (1.0f + slope);
 
-			// World-space normal offset, growing with tilt, applied BEFORE the transform chain.
-			// TESR_ShadowBiasDeferred.x/.y arrive pre-scaled from texels to world units per cascade.
+			// World-space normal offset, growing with tilt, applied before the transforms.
+			// TESR_ShadowBiasDeferred.xy arrive pre-scaled to world units per cascade.
 			float sinT = sqrt(saturate(1.0f - ndl * ndl));
 			posNear = mul(float4(world_pos.xyz + N * TESR_ShadowBiasDeferred.x * sinT, 1.0f), TESR_WorldViewProjectionTransform);
 			posFar = mul(float4(world_pos.xyz + N * TESR_ShadowBiasDeferred.y * sinT, 1.0f), TESR_WorldViewProjectionTransform);
 		}
 		else {
-			// Legacy path, bit-exact with the pre-adaptive shader: encoded normal mirrored in z, an
-			// abs()'d light dir (both of which force everything into the positive octant, which is
-			// why cosTheta could never tell sun-facing from sun-away), unclamped slope, flat far
-			// bias, and a normal offset applied in CLIP space after the WVP multiply.
+			// Legacy path, bit-exact with the pre-adaptive shader: z-mirrored encoded
+			// normal, abs()'d light dir, unclamped slope, flat far bias, and a clip-space
+			// normal offset.
 			float4 normal = float4((float3(raw.x, raw.y, -raw.z) + 1) / 2, 1);
 			float4 lightDir = abs(TESR_ShadowLightDir);
 			float3 n = normalize(normal);
@@ -362,23 +329,17 @@ float4 Shadow(VSOUT IN) : COLOR0{
 			posFar = pos;
 			posNear.xyz = posNear.xyz + (normal.xyz * TESR_ShadowBiasDeferred.x);
 			posFar.xyz = posFar.xyz + (normal.xyz * TESR_ShadowBiasDeferred.y);
-			facing = 1.0f; // no terminator ramp: lerp below collapses to the raw map term
+			facing = 1.0f;
 		}
 
 		float4 ShadowSkin = mul(posNear, TESR_ShadowCameraToLightTransformSkin);
 
-		// Current map set. The comments that used to sit on the lerps below now live in StaticTerm:
-		// the terminator ramp collapses to the raw map term at facing == 1, and the coverage ramp
-		// fades the whole term out where the cascades hold no data (LOD terrain, distant statics,
-		// tree billboards all sit outside the far box, where a screen-space normal is meaningless).
 		float Shadow = StaticTerm(TESR_ShadowMapBufferNear, TESR_ShadowMapBufferFar,
 		                          TESR_ShadowCameraToLightTransformNear, TESR_ShadowCameraToLightTransformFar,
 		                          posNear, posFar, ShadowSkin, biasNear, biasFar, facing);
 
-		// Crossfade against the previous static bake while one is in flight, so a rebake -- whatever
-		// triggered it: cell load/unload, drift past the guard band, sun rotation -- ramps in over
-		// [Exteriors] FadeTime instead of switching in one frame. TESR_ShadowFadeData.x is 1 in
-		// steady state, so this branch is not taken and the previous set costs nothing but the test.
+		// Crossfade from the previous static bake while a rebake fades in over
+		// [Exteriors] FadeTime; in steady state .x is 1 and the branch is skipped.
 		if (TESR_ShadowFadeData.x < 1.0f) {
 			float prevShadow = StaticTerm(TESR_ShadowMapBufferNearPrev, TESR_ShadowMapBufferFarPrev,
 			                              TESR_ShadowCameraToLightTransformNearPrev, TESR_ShadowCameraToLightTransformFarPrev,

@@ -219,10 +219,9 @@ TextureRecord* TextureManager::LoadTexture(const char* ShaderSource, UInt32 Regi
 						strcpy(Filename, WordDepthBuffer);
 					}
 				}
-				// MUST precede the Near/Far blocks below: this parser matches with strstr, and
-				// "TESR_ShadowMapBufferNear" is a prefix of "TESR_ShadowMapBufferNearPrev", so
-				// testing the shorter name first would claim the Prev sampler and bind it to the
-				// live map. Same reason WordDepthBufferPreWater is tested before WordDepthBuffer.
+				// Must precede the Near/Far blocks: strstr matches prefixes, so testing
+				// "TESR_ShadowMapBufferNear" first would claim the Prev sampler. Same reason
+				// WordDepthBufferPreWater is tested before WordDepthBuffer.
 				if (!Type) {
 					SamplerParser = strstr(Sampler, WordShadowMapBufferNearPrev);
 					if (SamplerParser && SamplerParser < strstr(Sampler, WordSamplerDelimeter)) {

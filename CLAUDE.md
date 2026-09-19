@@ -117,7 +117,7 @@ Set `#define WaitForDebugger 1` in `Main.cpp` to spin until a debugger attaches.
 ### Coding style
 
 - Public symbols should have appropriate documentation comments.
-- If inline code comments are needed, they should be 1-3 lines maximum.
+- Code should be self-documenting; avoid inline code comments unless absolutely necessary. Inline comments must be kept to 1-3 lines maximum, at 80 characters per line.
 
 ## Design docs and memory
 

@@ -71,8 +71,8 @@ float3 toWorld(float2 tex)
 
 float readDepth(in float2 coord : TEXCOORD0)
 {
-	// Pre-water depth: resolved just before the near-water draw, so it holds every shadow receiver
-	// including the submerged floor, and never the water surface itself.
+	// Pre-water depth holds every receiver, submerged floor included, but no
+	// water surface.
 	float posZ = tex2D(TESR_DepthBufferPreWater, coord).x;
 	return Zmul / ((posZ * Zdiff) - farZ);
 }
@@ -94,21 +94,20 @@ float reliefDepth(in float2 coord, in float depth)
 // correspondingly faint shadow and a bright one a deep shadow.
 float GetPointShadow(samplerCUBE cubeMap, float4 lightPos, float lum, float3 pixelPos)
 {
-	if (lightPos.w == 0.0f) return 1.0f; // empty slot
+	float radius = lightPos.w;
+	if (radius == 0.0f) return 1.0f;
 
 	float3 dir = pixelPos - lightPos.xyz;
 	float len = length(dir);
-	float dist = len / lightPos.w;
-	// Beyond this light's reach, or degenerately close to it (which would make the PCF basis NaN).
+	float dist = len / radius;
+	// Out of reach, or so close that the PCF basis below would be NaN.
 	if (dist >= 1.0f || len < 0.001f) return 1.0f;
 
-	// The cube was rendered with GetCubeFaceAtUp's swapped Z faces; negating Z here is what makes
-	// the lookup agree with it. Change one and you must change the other.
+	// Negate Z to match GetCubeFaceAtUp's swapped Z faces; change both together.
 	float3 lookup = float3(dir.x, dir.y, -dir.z);
 
-	// PCF offsets must be perpendicular to the lookup direction, otherwise the kernel collapses
-	// wherever the direction is dominated by Z. One texel of a 90-degree face subtends
-	// ~(pi/2)/size radians, which at this distance is len * 1.57 * texelSize.
+	// PCF offsets are perpendicular to the lookup, else the kernel collapses where
+	// Z dominates. One texel of a 90-degree face spans ~len * (pi/2) * texelSize.
 	float3 n = lookup / len;
 	float3 up = abs(n.z) < 0.999f ? float3(0.0f, 0.0f, 1.0f) : float3(1.0f, 0.0f, 0.0f);
 	float3 tangent = normalize(cross(up, n));
@@ -123,16 +122,12 @@ float GetPointShadow(samplerCUBE cubeMap, float4 lightPos, float lum, float3 pix
 	}
 	lit /= SAMPLE_COUNT;
 
-	// The engine's own falloff: its lighting shaders build attenuation UVs as compress(lightVec /
-	// radius) and combine them saturate(1 - att_xy - att_z), i.e. this quadratic ramp. dist is
-	// normalized by the CUBE FAR PLANE, which equals the authored radius Spec.r for non-carried
-	// lights, so for those the contribution reaches zero exactly where the cube's coverage stops.
-	// Carried torches pin the far plane to a fixed 257.0 while the engine still attenuates by the
-	// (larger) authored radius, so for those the shadow fades out before the torch stops lighting.
-	// Either way the ramp is smooth, so no separate edge fade is needed here.
+	// The engine's own quadratic falloff. dist is normalized by the cube far plane:
+	// the authored radius, except for carried torches (fixed 257), whose shadow
+	// therefore fades out before their light does.
 	float att = saturate(1.0f - dist * dist);
-	// Clamp the brightness, not the product: a Dimmer > 1 would otherwise inflate lum * att past 1
-	// and flatten unlit to 0 (solid black) across a large fraction of the radius, not just at dist=0.
+	// Clamp lum, not the product: a Dimmer > 1 would flatten unlit to black across
+	// much of the radius.
 	float unlit = 1.0f - saturate(lum) * att;
 	return lerp(unlit, 1.0f, lit);
 }
@@ -140,24 +135,23 @@ float GetPointShadow(samplerCUBE cubeMap, float4 lightPos, float lum, float3 pix
 float4 Shadow(VSOUT IN) : COLOR0{
 	float3 color = tex2D(TESR_RenderedBuffer, IN.UVCoord).rgb;
 
-	// Sky guard: only the far-plane backdrop is exempt from point shadowing (same guard as the sun apply,
-	// ShadowsExteriors.fx). Replaces the old `length(color) > 1.4` brightness early-out, which also skipped
-	// bright glare on real geometry and let it survive on top of shadowed ground as washed-out blobs.
+	// Sky guard on depth, not brightness, so sun glare on receivers is shadowed.
 	float rawDepth = tex2D(TESR_DepthBufferPreWater, IN.UVCoord).x;
-	if (rawDepth >= 0.9999f) {
+	bool isSky = rawDepth >= 0.9999f;
+	if (isSky) {
 		return float4(color, 1.0f);
 	}
 
 	float depth = reliefDepth(IN.UVCoord, readDepth(IN.UVCoord));
-	float3 pixelPos = toWorld(IN.UVCoord) * depth; // camera-relative, same space as the light positions
+	float3 pixelPos = toWorld(IN.UVCoord) * depth; // camera-relative, like the lights
 
 	float shadow = GetPointShadow(TESR_ShadowCubeMapBuffer0, TESR_ShadowLightPosition0, TESR_ShadowLightLuminance.x, pixelPos);
 	shadow *= GetPointShadow(TESR_ShadowCubeMapBuffer1, TESR_ShadowLightPosition1, TESR_ShadowLightLuminance.y, pixelPos);
 	shadow *= GetPointShadow(TESR_ShadowCubeMapBuffer2, TESR_ShadowLightPosition2, TESR_ShadowLightLuminance.z, pixelPos);
 	shadow *= GetPointShadow(TESR_ShadowCubeMapBuffer3, TESR_ShadowLightPosition3, TESR_ShadowLightLuminance.w, pixelPos);
 
-	// Strength scale (1 normally, lighter under volumetric fog) applies to the combined term, so
-	// overlapping lights lighten together and the falloff shape is kept.
+	// Scale the combined term (lighter under volumetric fog) so overlapping lights
+	// lighten together.
 	color.rgb *= lerp(1.0f, saturate(shadow), TESR_ShadowPointData.x);
 	return float4(color, 1.0f);
 

@@ -194,7 +194,9 @@ namespace {
 			// Collect any slot pending from a previous frame (not the one just issued).
 			for (int i = 0; i < 2; i++)
 				if (i != gGpuActiveSlot) EffGpuTryCollect(gGpuSlot[i]);
-			gGpuActiveSlot = -1; // chain over: EffMark from outside the chain (e.g. the mid-scene shadow apply) must not mark a pending slot
+			// Chain over: EffMark calls from outside it (the mid-scene shadow apply) must
+			// not mark a pending slot.
+			gGpuActiveSlot = -1;
 		}
 
 		if (++gEffFrames < gEffReportFrames) return;
@@ -209,7 +211,7 @@ namespace {
 		Logger::Log("[EffectProfile]   Effects     %6.2f /frame  (max %u)", gEffCount * inv, gEffMax);
 		Logger::Log("[EffectProfile]   Passes      %6.2f /frame  (max %u)", gPassCount * inv, gPassMax);
 		Logger::Log("[EffectProfile]   Blits       %6.2f /frame  (max %u)", gBlitCount * inv, gBlitMax);
-		// Per-effect GPU breakdown, averaged over measured frames, sorted by cost desc.
+		// Per-effect GPU breakdown, averaged over measured frames, costliest first.
 		if (gEffGpuSamples && gEffBucketCount) {
 			Logger::Log("[EffectProfile]   per-effect GPU (ms/frame, measured frames):");
 			double gpuInv = 1.0 / gEffGpuSamples;
@@ -285,9 +287,8 @@ bool ShaderProgram::SetConstantTableValue1(LPCSTR Name, UInt32 Index) {
 		FloatShaderValues[Index].Value = (D3DXVECTOR4*)&TheRenderManager->viewMatrix;
 	else if (!strcmp(Name, "TESR_ProjectionTransform"))
 		FloatShaderValues[Index].Value = (D3DXVECTOR4*)&TheRenderManager->projMatrix;
-	// Same matrix, but with the depth row of whatever is currently in TESR_DepthBuffer rather than of
-	// the matrix we are rasterising with. Use it to linearize that buffer; use the one above for
-	// rasterisation-space work. The two differ only inside the near shell's second pass.
+	// Decodes TESR_DepthBuffer; differs from TESR_ProjectionTransform only in the
+	// near shell pass.
 	else if (!strcmp(Name, "TESR_DepthProjectionTransform"))
 		FloatShaderValues[Index].Value = (D3DXVECTOR4*)&RenderManager::DepthProjMatrix;
 	else if (!strcmp(Name, "TESR_WorldViewProjectionTransform"))
@@ -694,23 +695,9 @@ void ShaderRecord::SetCT() {
 			TheRenderManager->device->StretchRect(TheRenderManager->currentRTGroup->RenderTargets[0]->data->Surface, NULL, TheShaderManager->RenderedSurface, NULL, D3DTEXF_NONE);
 			TheShaderManager->RenderedBufferFilled = true;
 		}
-		// DepthBufferFilled alone is not enough while the near shell is active, because it is a
-		// per-SCENE latch being asked to hold for the rest of the FRAME: BeginScene clears it, and the
-		// game calls BeginScene again for the off-screen renders that follow the main pass - the water
-		// reflection map among them, where numbered WATER* shaders bind and every one of them declares
-		// TESR_DepthBuffer, so HasDB is true. Same trap, same shape of guard as the mid-scene pre-water
-		// trigger in RenderHook: also require the main scene render to be on the stack.
-		//
-		// Why it only matters with the shell: before it, a second resolve merely duplicated a
-		// depth-stencil that still held the whole scene. With the shell, the main depth-stencil is
-		// resolved and then CLEARED at the end of the far pass and afterwards holds only the shell (in
-		// first person, only the arms), and the post-shell flatten has already rewritten
-		// TESR_DepthBuffer. A stray resolve after that overwrites the flattened buffer with a near-blank
-		// one before the image-space effects read it. It is destructive on the NvAPI path in
-		// particular, where ResolveDepthInto copies the CACHED main depth-stencil rather than whatever
-		// the off-screen render currently has bound - the RESZ path's size mismatch would hide it.
-		//
-		// Gated on ShellActive so the shell-off path keeps vanilla's behaviour exactly.
+		// DepthBufferFilled is per-scene, and the reflection render's BeginScene
+		// reopens it. With the shell, a later resolve would overwrite the flattened
+		// depth with the near-blank shell, so also require the main scene render.
 		if (HasDB && !TheShaderManager->DepthBufferFilled &&
 			(!RenderManager::ShellActive || TheShaderManager->InMainScenePass)) {
 			FrameProfiler::Scope ResolveScope(FrameProfiler::Buck_HookResolve);
@@ -723,18 +710,14 @@ void ShaderRecord::SetCT() {
 			Value = &TextureShaderValues[c];
 			TextureRecord* Tex = Value->Texture;
 			if (Tex->Texture) Device->SetTexture(Value->RegisterIndex, Tex->Texture);
-			// Compacted at load time by TextureRecord::PackSamplerStates rather than rescanning all 12
-			// sparse slots on every bind. Same states, same order, same skip of zero-valued entries -
-			// see PackSamplerStates for why that skip is preserved rather than fixed.
+			// Packed at load by TextureRecord::PackSamplerStates; see there for why
+			// zero-valued states are still skipped.
 			for (UInt32 s = 0; s < Tex->PackedStateCount; s++) {
 				TheRenderManager->SetSamplerState(Value->RegisterIndex, Tex->PackedStates[s].Type, Tex->PackedStates[s].Value);
 			}
 		}
-		// Type is fixed for the life of the record, so the test is hoisted out rather than re-run per
-		// constant. Coalescing adjacent constants into single multi-register uploads was measured and
-		// rejected: a merge needs consecutive REGISTERS and contiguous storage in ShaderConst at the
-		// same time, and those two orderings are set independently - fxc's declaration order on one
-		// side, the header's grouping on the other. Across every raw shader here they never coincide.
+		// One upload per constant: register order (fxc) and ShaderConst layout never
+		// line up, so adjacent constants cannot be coalesced.
 		if (Type == ShaderType_Vertex) {
 			for (UInt32 c = 0; c < FloatShaderValuesCount; c++) {
 				Value = &FloatShaderValues[c];
@@ -987,27 +970,12 @@ void EffectRecord::Render(IDirect3DDevice9* Device, IDirect3DSurface9* RenderTar
 	UINT Passes;
 
 	EffCountEffect();
-	EffMark(ProfileName.c_str()); // open this effect's GPU-time interval (per-effect breakdown)
+	EffMark(ProfileName.c_str());
 	Effect->Begin(&Passes, NULL);
 
-	// Original per-pass-copy path: single-pass effects (nothing to ping-pong) and clear-based
-	// effects (SMAA).
-	//
-	// CORRECTED 2026-08-24. This comment used to say SMAA was excluded because "SMAA's passes read
-	// dedicated intermediate textures rather than the previous pass via TESR_RenderedBuffer". That is
-	// false, and dangerously so: SMAA chains through TESR_RenderedBuffer exactly like everything else
-	// - pass 0 (edge detection) reads it, pass 1 (blending weights) reads it, pass 2 (neighborhood
-	// blending) reads it alongside TESR_SourceBuffer (SMAA.fx.hlsl:285, 297, 309). The per-pass
-	// StretchRect below is what delivers each pass's output to the next one and is LOAD BEARING for
-	// SMAA; anyone who trusts the old comment and elides it will silently break antialiasing.
-	//
-	// The two real reasons SMAA cannot take the ping-pong path:
-	//   1. It needs the render target CLEARED before every pass. The ping-pong path never clears.
-	//   2. The ping-pong path hardcodes Device->SetTexture(0, srcTex), i.e. it assumes
-	//      TESR_RenderedBuffer sits at sampler 0. SMAA puts TESR_SourceBuffer at s0 and
-	//      TESR_RenderedBuffer at s1 (SMAA.fx.hlsl:215-216), so that rebind would feed the wrong
-	//      texture. Any future attempt to widen ping-ponging must read the register out of the
-	//      effect's own parameter table instead of assuming s0.
+	// Per-pass copy path for single-pass and clear-based effects (SMAA). SMAA
+	// chains through TESR_RenderedBuffer, so this per-pass copy is load bearing.
+	// Ping-pong cannot serve it: it never clears and rebinds only sampler 0.
 	if (Passes <= 1 || ClearRenderTarget) {
 		for (UINT p = 0; p < Passes; p++) {
 			if (ClearRenderTarget) Device->Clear(0L, NULL, D3DCLEAR_TARGET, D3DCOLOR_ARGB(0, 0, 0, 0), 1.0f, 0L);
@@ -1021,21 +989,17 @@ void EffectRecord::Render(IDirect3DDevice9* Device, IDirect3DSurface9* RenderTar
 		return;
 	}
 
-	// Multi-pass ping-pong. Every pass reads the previous pass's output via
-	// TESR_RenderedBuffer (s0) -- the original code guaranteed this by copying the
-	// render target into RenderedSurface after each pass. Instead we alternate the
-	// render target between RenderedSurface (A, which also holds the s0 input) and the
-	// scratch PingSurface (B), rebinding s0 to whichever texture holds the latest output.
-	// This removes the per-pass full-screen FP16 StretchRect; only one reconciling copy
-	// remains. (Effects needing the pre-effect image use TESR_SourceBuffer, untouched.)
-	IDirect3DTexture9* texA = TheShaderManager->RenderedTexture; // backs RenderedSurface; holds the input
+	// Multi-pass ping-pong: alternate the render target between RenderedSurface
+	// (A, the s0 input) and PingSurface (B), rebinding s0 to the latest output, so
+	// one reconciling copy replaces the per-pass copies.
+	IDirect3DTexture9* texA = TheShaderManager->RenderedTexture;
 	IDirect3DSurface9* surfA = RenderedSurface;
 	IDirect3DTexture9* texB = TheShaderManager->PingTexture;
 	IDirect3DSurface9* surfB = TheShaderManager->PingSurface;
 
 	for (UINT p = 0; p < Passes; p++) {
-		// Pass p writes B when p is even, A when p is odd; it reads the buffer written by
-		// pass p-1 (texA for pass 0, the input).
+		// Pass p writes B when even, A when odd, reading pass p-1's output (the input
+		// texA for pass 0).
 		IDirect3DSurface9* dstSurf = (p & 1) ? surfA : surfB;
 		IDirect3DTexture9* srcTex  = (p == 0) ? texA : ((p & 1) ? texB : texA);
 		Device->SetTexture(0, srcTex);
@@ -1047,15 +1011,15 @@ void EffectRecord::Render(IDirect3DDevice9* Device, IDirect3DSurface9* RenderTar
 	}
 	Effect->End();
 
-	// Final image is in B when the last pass index (Passes - 1) is even, else in A.
-	if (!((Passes - 1) & 1)) {
-		Device->StretchRect(surfB, NULL, surfA, NULL, D3DTEXF_NONE); // make RenderedSurface (s0 input for next effect) final
+	bool FinalInB = !((Passes - 1) & 1);
+	if (FinalInB) {
+		Device->StretchRect(surfB, NULL, surfA, NULL, D3DTEXF_NONE);
 		EffCountBlit();
 	}
-	Device->StretchRect(surfA, NULL, RenderTarget, NULL, D3DTEXF_NONE); // restore the original contract: RenderTarget holds final
+	Device->StretchRect(surfA, NULL, RenderTarget, NULL, D3DTEXF_NONE);
 	EffCountBlit();
 
-	// Restore the inter-effect state the chain expects (device RT = RenderTarget, s0 = RenderedTexture).
+	// Restore the inter-effect state: RT = RenderTarget, s0 = RenderedTexture.
 	Device->SetRenderTarget(0, RenderTarget);
 	Device->SetTexture(0, texA);
 
@@ -1078,8 +1042,8 @@ void EffectRecord::RenderChained(IDirect3DDevice9* Device, bool ClearRenderTarge
 	Effect->Begin(&Passes, NULL);
 	if (!Passes) { Effect->End(); return; }
 
-	// The two buffers that are not currently live. Writing only these is the invariant the whole
-	// design rests on - it is what keeps the source image intact across a multi-pass effect.
+	// Write only the two buffers that are not live; that keeps the source image
+	// intact across a multi-pass effect.
 	const int Cur = SM->ChainCur;
 	const int A = (Cur + 1) % 3;
 	const int B = (Cur + 2) % 3;
@@ -1087,18 +1051,12 @@ void EffectRecord::RenderChained(IDirect3DDevice9* Device, bool ClearRenderTarge
 	for (UINT p = 0; p < Passes; p++) {
 		int Dst = (p & 1) ? B : A;
 		IDirect3DTexture9* Src = (p == 0) ? SM->ChainTex[Cur] : SM->ChainTex[(p & 1) ? A : B];
-		// Both bindings are refreshed every pass rather than set once outside the loop: Begin() was
-		// called with flags 0, so D3DX saves and restores device state around the technique and may
-		// put a sampler back between passes. The in-effect ping-pong in Render() rebinds per pass for
-		// the same reason.
-		//
-		// The source bind is required, not an optimization: SetCT pointed this sampler at
-		// SourceTexture, which the rotation never fills.
+		// Rebind every pass: D3DX may restore samplers between passes (Begin flags 0).
+		// The source bind is required: SetCT pointed it at the unfilled SourceTexture.
 		if (HasSB) Device->SetTexture(SBRegister, SM->ChainTex[Cur]);
 		if (HasRB) Device->SetTexture(RBRegister, Src);
 		Device->SetRenderTarget(0, SM->ChainSurf[Dst]);
-		// Per-pass clear (SMAA): the legacy path cleared the shared render target, this clears the
-		// scratch the pass is about to write. Same guarantee, no shared surface involved.
+		// Per-pass clear (SMAA) of the scratch the pass is about to write.
 		if (ClearRenderTarget) Device->Clear(0L, NULL, D3DCLEAR_TARGET, D3DCOLOR_ARGB(0, 0, 0, 0), 1.0f, 0L);
 		Effect->BeginPass(p);
 		Device->DrawPrimitive(D3DPT_TRIANGLESTRIP, 0, 2);
@@ -1129,14 +1087,14 @@ void ShaderManager::ChainBegin() {
 void ShaderManager::ChainEnd(IDirect3DSurface9* RenderTarget) {
 
 	IDirect3DDevice9* Device = TheRenderManager->device;
-	// In the pre-HDR chain the render target IS EffectSurface, so when the rotation happens to end
-	// there the copy would be a surface onto itself - skip it rather than ask the driver.
+	// In the pre-HDR chain the render target is EffectSurface, where the rotation
+	// may end; skip that self-copy.
 	if (ChainSurf[ChainCur] != RenderTarget) {
 		Device->StretchRect(ChainSurf[ChainCur], NULL, RenderTarget, NULL, D3DTEXF_NONE);
 		EffCountBlit();
 	}
-	// Effects downstream of the chain (and the next frame's seed) still expect RenderedSurface to
-	// hold the finished image.
+	// Downstream effects and the next frame's seed expect the finished image in
+	// RenderedSurface.
 	if (ChainCur != 0) {
 		Device->StretchRect(ChainSurf[ChainCur], NULL, RenderedSurface, NULL, D3DTEXF_NONE);
 		EffCountBlit();
@@ -1263,7 +1221,8 @@ ShaderManager::ShaderManager() {
 	EffectTexture->GetSurfaceLevel(0, &EffectSurface);
 	TAATexture->GetSurfaceLevel(0, &TAASurface);
 	PingTexture->GetSurfaceLevel(0, &PingSurface);
-	// 64-bit like the FP16 scene target, as D3D9 MRT requires; a failure just leaves POM shadows flat.
+	// 64-bit like the FP16 scene target, as D3D9 MRT requires; on failure POM
+	// shadows are just flat.
 	if (TheSettingManager->SettingsMain.Shaders.POM &&
 		SUCCEEDED(TheRenderManager->device->CreateTexture(TheRenderManager->width, TheRenderManager->height, 1, D3DUSAGE_RENDERTARGET, D3DFMT_G32R32F, D3DPOOL_DEFAULT, &POMDepthTexture, NULL)))
 		POMDepthTexture->GetSurfaceLevel(0, &POMDepthSurface);
@@ -1798,8 +1757,6 @@ void ShaderManager::UpdateInteriorLighting(ShaderConstants& ShaderConst, TESObje
 	ShaderConst.InteriorDimmer.x = dimmer;
 
 	if (TheSettingManager->SettingsMain.Main.InteriorDimmerCoeff < 1.0f) {
-		// araf InteriorDimmerCoeff is now a dimmer switch
-		// float dimmerAdj = std::clamp(dimmer, TheSettingManager->SettingsMain.Main.InteriorDimmerCoeff, 1.0f);
 		float dimmerAdj = TheSettingManager->SettingsMain.Main.InteriorDimmerCoeff;
 
 		LightData->ambient.r = InteriorLighting.r * dimmerAdj;
@@ -1885,18 +1842,18 @@ void ShaderManager::UpdateWetWorld(ShaderConstants& ShaderConst, TESWeather* cur
 }
 
 void ShaderManager::UpdatePrecipitation(ShaderConstants& ShaderConst, TESWeather* currentWeather, TESWeather* previousWeather, float weatherPercent) {
-	// araf Stretch out rain transition time from 1.0 - 0.8 to 1.0 - 0.5
+	const float RainRampStart = 0.5f;
 	if (currentWeather->weatherType == TESWeather::WeatherType::kType_Rainy) {
-		if (weatherPercent > 0.5f) {
-			ShaderConst.Precipitations.RainData.x = (weatherPercent - 0.5f) / (1.0f - 0.5f);
+		if (weatherPercent > RainRampStart) {
+			ShaderConst.Precipitations.RainData.x = (weatherPercent - RainRampStart) / (1.0f - RainRampStart);
 		}
 		else {
 			ShaderConst.Precipitations.RainData.x = 0.0f;
 		}
 	}
 	else if (!previousWeather || (previousWeather && previousWeather->weatherType == TESWeather::WeatherType::kType_Rainy)) {
-		if ((1.0f - weatherPercent) > 0.5f) {
-			ShaderConst.Precipitations.RainData.x = ((1.0f - weatherPercent) - 0.5f) / (1.0f - 0.5f);
+		if ((1.0f - weatherPercent) > RainRampStart) {
+			ShaderConst.Precipitations.RainData.x = ((1.0f - weatherPercent) - RainRampStart) / (1.0f - RainRampStart);
 		}
 		else {
 			ShaderConst.Precipitations.RainData.x = 0.0f;
@@ -1984,13 +1941,13 @@ static void BuildGrassViewCull(GrassViewCull& cull) {
 static bool GrassSphereInView(const GrassViewCull& cull, float x, float y, float z, float radius) {
 	if (!cull.valid) return true;
 	float dx = x - cull.px, dy = y - cull.py, dz = z - cull.pz;
-	float d  = dx * cull.fx + dy * cull.fy + dz * cull.fz;	// depth along the view direction
+	float depth = dx * cull.fx + dy * cull.fy + dz * cull.fz;
 	float cx = dx * cull.rx + dy * cull.ry + dz * cull.rz;
 	float cy = dx * cull.ux + dy * cull.uy + dz * cull.uz;
-	return (cx - cull.left * d)   * cull.invLeft   > -radius &&
-	       (cull.right * d - cx)  * cull.invRight  > -radius &&
-	       (cull.top * d - cy)    * cull.invTop    > -radius &&
-	       (cy - cull.bottom * d) * cull.invBottom > -radius;
+	return (cx - cull.left * depth)   * cull.invLeft   > -radius &&
+	       (cull.right * depth - cx)  * cull.invRight  > -radius &&
+	       (cull.top * depth - cy)    * cull.invTop    > -radius &&
+	       (cy - cull.bottom * depth) * cull.invBottom > -radius;
 }
 
 static void CollectActorsFromObjectList(TList<TESObjectREFR>::Entry* entry, TESObjectREFR* player,
@@ -2049,8 +2006,8 @@ static float GrassSpringWeight(float age, float recovery, float springiness) {
 	if (recovery <= 0.0f || age < 0.0f || age >= recovery) return 0.0f;
 	float t = age / recovery;
 	float s = springiness < 0.0f ? 0.0f : (springiness > 1.0f ? 1.0f : springiness);
-	// Springiness moves the zero crossing earlier, which is what deepens the overshoot: 0 puts it
-	// at the very end (no overshoot), 0.5 dips to roughly -11%, 1.0 to roughly -26%.
+	// An earlier zero crossing deepens the overshoot: springiness 0 gives none,
+	// 0.5 dips to about -11%, 1.0 to about -26%.
 	float omega = 3.14159274f * (0.5f + 0.7f * s);
 	return (1.0f - t) * cosf(omega * t);
 }
@@ -2058,14 +2015,14 @@ static float GrassSpringWeight(float age, float recovery, float springiness) {
 // Ages the existing footprints and plants a new one if the player has walked clear of the last.
 // `space` identifies the worldspace (or interior cell) the position is expressed in.
 static void UpdateGrassStamps(float px, float py, const void* space, float radius, float recovery) {
-	double now = TheFrameRateManager->GetPerformance();	// milliseconds since startup
-	float dt = (GrassStampLastMs < 0.0) ? 0.0f : (float)((now - GrassStampLastMs) * 0.001);
-	GrassStampLastMs = now;
+	double nowMs = TheFrameRateManager->GetPerformance();
+	float dt = (GrassStampLastMs < 0.0) ? 0.0f : (float)((nowMs - GrassStampLastMs) * 0.001);
+	GrassStampLastMs = nowMs;
 	if (dt < 0.0f) dt = 0.0f;
 	if (dt > kGrassMaxDeltaTime) dt = kGrassMaxDeltaTime;
 
-	// Stamps are world positions, so walking between cells keeps them valid. Only a discontinuity
-	// in the player's position or a change of worldspace makes them stale.
+	// Stamps are world positions and survive cell changes; only a position jump
+	// or a worldspace change makes them stale.
 	if (space != GrassStampLastSpace) {
 		GrassStampLastSpace = space;
 		ResetGrassStamps();
@@ -2085,13 +2042,9 @@ static void UpdateGrassStamps(float px, float py, const void* space, float radiu
 		if (GrassStamps[i].age >= recovery) GrassStamps[i].age = -1.0f;
 	}
 
-	// Plant only into a slot that has already expired. A footprint still carrying weight must never
-	// be evicted to make room: it would jump from a deep deformation to upright in a single frame.
-	// Planting was previously driven by distance while expiry is driven by time, so any speed above
-	// 2 * spacing / recovery oversubscribed the pool and evicted live footprints continuously.
-	// A slot expires at age >= recovery, where the spring weight is already exactly 0, so reusing
-	// one is always invisible. The stagger spreads the slots evenly across the recovery window so
-	// footprints are planted at a steady cadence instead of in pairs.
+	// Plant only into an expired slot, where the spring weight is already 0:
+	// evicting a live footprint would snap it upright. The stagger keeps planting
+	// at a steady cadence instead of in pairs.
 	float spacing = radius * kGrassStampSpacing;
 	float stagger = recovery / kGrassStampCount;
 	int newest = -1;
@@ -2103,7 +2056,7 @@ static void UpdateGrassStamps(float px, float py, const void* space, float radiu
 		}
 		if (newest < 0 || GrassStamps[i].age < GrassStamps[newest].age) newest = i;
 	}
-	if (freeSlot < 0) return;		// every footprint is still recovering; nothing may be displaced
+	if (freeSlot < 0) return;
 
 	bool plant = true;
 	if (newest >= 0) {
@@ -2148,7 +2101,7 @@ void ShaderManager::UpdateGrass(ShaderConstants& ShaderConst, GrassActorPos Gras
 		return;
 	}
 
-	// Source 0 is always the player, at full strength: grass underfoot is crushed on contact.
+	// Source 0 is always the player at full strength, crushing grass underfoot.
 	GrassCollisionSources[0].x = Player->pos.x;
 	GrassCollisionSources[0].y = Player->pos.y;
 	GrassCollisionSourceCount = 1;
@@ -2161,8 +2114,7 @@ void ShaderManager::UpdateGrass(ShaderConstants& ShaderConst, GrassActorPos Gras
 	int npcCount = 0;
 	float maxTrackDistSq = TheSettingManager->SettingsGrass.MaxDistance * TheSettingManager->SettingsGrass.MaxDistance;
 
-	// Only actors whose bent grass could be on screen compete for the two slots, so an off-screen
-	// actor never takes a slot from a visible one.
+	// Only actors whose bent grass could be on screen compete for the slots.
 	GrassViewCull cull;
 	BuildGrassViewCull(cull);
 	float cullRadius = radius + kGrassActorHalfHeight + kGrassViewMargin;
@@ -2184,8 +2136,8 @@ void ShaderManager::UpdateGrass(ShaderConstants& ShaderConst, GrassActorPos Gras
 		ActorDist swap = nearest[0]; nearest[0] = nearest[1]; nearest[1] = swap;
 	}
 
-	// Order the stamps newest first so the freshest footprint outranks the fainter one. The
-	// TrailSlots limit is applied after sorting, otherwise a limit of 1 could keep the older stamp.
+	// Newest stamps first so the freshest footprint wins; TrailSlots applies after
+	// sorting, or a limit of 1 could keep the older stamp.
 	int stampOrder[kGrassStampCount];
 	int stampCount = 0;
 	for (int i = 0; i < kGrassStampCount; i++) {
@@ -2201,8 +2153,8 @@ void ShaderManager::UpdateGrass(ShaderConstants& ShaderConst, GrassActorPos Gras
 	if (trailSlots > kGrassStampCount) trailSlots = kGrassStampCount;
 	if (stampCount > trailSlots) stampCount = trailSlots;
 
-	// Fill the two remaining sources with visible actors first, nearest first; the player's
-	// footprints, newest first, only take the slots the actors leave free.
+	// Visible actors take the remaining sources first, nearest first; the
+	// player's footprints, newest first, take whatever is left.
 	int stampIdx = 0, npcIdx = 0;
 	while (GrassCollisionSourceCount < 3 && (stampIdx < stampCount || npcIdx < npcCount)) {
 		bool useStamp = npcIdx >= npcCount;
@@ -2211,8 +2163,8 @@ void ShaderManager::UpdateGrass(ShaderConstants& ShaderConst, GrassActorPos Gras
 			const GrassStamp& stamp = GrassStamps[stampOrder[stampIdx++]];
 			GrassCollisionSources[slot].x = stamp.x;
 			GrassCollisionSources[slot].y = stamp.y;
-			// A stamp is planted underfoot, where source 0 is already crushing the grass. Fading it
-			// in as the player separates hands the deformation over instead of briefly doubling it.
+			// A stamp is planted underfoot where source 0 already crushes the grass, so
+			// fade it in as the player moves away rather than doubling the deformation.
 			float sdx = Player->pos.x - stamp.x;
 			float sdy = Player->pos.y - stamp.y;
 			float sep = (spacing > 0.0f) ? (sqrtf(sdx * sdx + sdy * sdy) / spacing) : 1.0f;
@@ -2458,7 +2410,7 @@ void ShaderManager::UpdateSharpening(ShaderConstants& ShaderConst) {
 void ShaderManager::UpdateVolumetricFog(ShaderConstants& ShaderConst, float weatherPercent) {
 	ShaderConst.VolumetricFog.Data.x = TheSettingManager->SettingsVolumetricFog.Exponent;
 	ShaderConst.VolumetricFog.Data.y = TheSettingManager->SettingsVolumetricFog.ColorCoeff;
-	// Data.w is a 0-1 weight: fog is off for weathers whose far fog exceeds MaxDistance, faded across transitions.
+	// Data.w: 0-1 fog weight, off for weathers whose far fog exceeds MaxDistance.
 	float MaxDistance = TheSettingManager->SettingsVolumetricFog.MaxDistance;
 	float FromWeight = ShaderConst.oldfogEnd > MaxDistance ? 0.0f : 1.0f;
 	float ToWeight = ShaderConst.currentfogEnd > MaxDistance ? 0.0f : 1.0f;
@@ -3370,7 +3322,7 @@ bool ShaderManager::LoadEffect(EffectRecord* TheEffect, char* Filename, char* Cu
 		}
 		else {
 			const char* base = strrchr(Filename, '\\');
-			TheEffect->ProfileName = base ? base + 1 : Filename; // file basename, e.g. "GodRays"
+			TheEffect->ProfileName = base ? base + 1 : Filename;
 		}
 	}
 	else
@@ -3421,9 +3373,8 @@ void ShaderManager::RenderEffects(IDirect3DSurface9* RenderTarget) {
 
 	EffectProfileChainBegin(Device);
 
-	// Buffer rotation (Main.EffectChainPingPong), on by default. Decided per chain rather than latched
-	// at startup so the INI can be reloaded mid-session and the next chain simply picks the other path;
-	// with it off, every call site below behaves exactly as it did before this existed.
+	// Decided per chain, not latched at startup, so an INI reload switches paths
+	// on the next chain.
 	if (TheSettingManager->SettingsMain.Main.EffectChainPingPong && RenderedTexture && PingTexture && EffectTexture)
 		ChainBegin();
 
@@ -3433,13 +3384,13 @@ void ShaderManager::RenderEffects(IDirect3DSurface9* RenderTarget) {
 	else if (Effects->SnowAccumulation && isExteriorLike && ShaderConst.SnowAccumulation.Params.w > 0.0f) {
 		RunEffect(SnowAccumulationEffect, Device, RenderTarget, true, false);
 	}
-	// Shadows are not part of this post chain — both the exterior sun apply and the point-light
-	// apply run MID-SCENE via RenderShadowsMidScene() (before the first near-water draw) so water
-	// and the Underwater effect composite over the shadows instead of being painted over by them.
+	// Shadows apply mid-scene (RenderShadowsMidScene), not in this chain, so
+	// water and the Underwater effect composite over them.
 	if (Effects->Bloom) {
 		RunEffect(BloomEffect, Device, RenderTarget, true, false);
 	}
-	if (Effects->Underwater && ShaderConst.HasWater && TheRenderManager->CameraPosition.z < ShaderConst.Water.waterSettings.x + 3.0f) { //  + 20.0f araf Bad offset with Enhanced Camera
+	// A 3-unit margin, not stock's 20, which misfires with Enhanced Camera.
+	if (Effects->Underwater && ShaderConst.HasWater && TheRenderManager->CameraPosition.z < ShaderConst.Water.waterSettings.x + 3.0f) {
 		if (TheRenderManager->CameraPosition.z < ShaderConst.Water.waterSettings.x) {
 			if (ShaderConst.WaterLens.Percent > -2.0f) ShaderConst.WaterLens.Percent = ShaderConst.WaterLens.Percent - 1.0f;
 		}
@@ -3470,8 +3421,7 @@ void ShaderManager::RenderEffects(IDirect3DSurface9* RenderTarget) {
 			RunEffect(MasserRaysEffect, Device, RenderTarget, true, false);
 		}
 		if (Effects->VolumetricFog && isExteriorLike && ShaderConst.VolumetricFog.Data.w) {
-			// VolumetricFog samples only TESR_RenderedBuffer/TESR_DepthBuffer, never
-			// TESR_SourceBuffer -- so the scene->SourceSurface blit was wasted work.
+			// No source blit: VolumetricFog never samples TESR_SourceBuffer.
 			RunEffect(VolumetricFogEffect, Device, RenderTarget, false, false);
 		}
 	}
@@ -3480,11 +3430,9 @@ void ShaderManager::RenderEffects(IDirect3DSurface9* RenderTarget) {
 	}
 	if (Effects->SMAA) {
 		if (ChainActive) {
-			// The rotation gives SMAA exactly what RenderSurfaceSMAA plus the per-pass copies were
-			// emulating: every pass clears and writes its own scratch buffer, and the next pass reads
-			// that buffer directly. The dedicated surface and all five of SMAA's blits fall away.
-			// Its TESR_RenderedBuffer is at s1, not s0 - RenderChained binds by RBRegister, which is
-			// the whole reason that lookup exists.
+			// Under the rotation every pass clears and writes its own scratch, replacing
+			// RenderSurfaceSMAA and its blits. Its TESR_RenderedBuffer is at s1, which
+			// RenderChained binds by RBRegister.
 			RunEffect(SMAAEffect, Device, RenderTarget, true, true);
 		}
 		else {
@@ -3499,8 +3447,8 @@ void ShaderManager::RenderEffects(IDirect3DSurface9* RenderTarget) {
 	}
 	if (Effects->TAA) {
 		RunEffect(TAAEffect, Device, RenderTarget, true, false);
-		// TAA's history buffer. Under the rotation the finished frame sits in whichever scratch the
-		// last pass wrote, not necessarily RenderedSurface, so take it from the live buffer.
+		// TAA history: under the rotation the finished frame is in the live buffer,
+		// not necessarily RenderedSurface.
 		Device->StretchRect(ChainActive ? ChainSurf[ChainCur] : RenderedSurface, NULL, TAASurface, NULL, D3DTEXF_NONE);
 		EffCountBlit();
 	}
@@ -3522,9 +3470,6 @@ void ShaderManager::RenderEffects(IDirect3DSurface9* RenderTarget) {
 	if (Effects->Extra) {
 		for (ExtraEffectsList::iterator iter = ExtraEffects.begin(); iter != ExtraEffects.end(); ++iter) {
 			if (iter->second->Enabled) {
-				// Every built-in effect above has its blit matched to a real TESR_SourceBuffer
-				// declaration (see the VolumetricFog note for the last one that did not). Extras were
-				// the one path still paying a full-screen FP16 copy unconditionally.
 				RunEffect(iter->second, Device, RenderTarget, iter->second->HasSB, false);
 			}
 		}
@@ -3533,13 +3478,8 @@ void ShaderManager::RenderEffects(IDirect3DSurface9* RenderTarget) {
 		RunEffect(CinemaEffect, Device, RenderTarget, false, false);
 	}
 
-	// Materialise the rotation before the profiler closes, so its remaining copies are counted in the
-	// chain's numbers rather than disappearing between them.
-	//
-	// Marked as its own bucket first. EffMark labels the interval that FOLLOWS it, so without this
-	// these two blits land in the last effect's bucket and read as that effect getting slower - which
-	// is exactly how the first measurement of this feature looked, with DepthOfField apparently
-	// rising 0.20 ms while every other effect fell.
+	// Close the rotation inside the profiled chain, marked as its own bucket so its
+	// copies are not billed to the last effect (EffMark labels what follows).
 	if (ChainActive) {
 		EffMark("(chain end)");
 		ChainEnd(RenderTarget);
@@ -3605,6 +3545,27 @@ void ShaderManager::RenderEffectsPostHdr(IDirect3DSurface9* RenderTargetParam) {
 	TheShaderManager->PrevWorldViewProjMatrix = TheRenderManager->WorldViewProjMatrix;
 }
 
+// Unbinds every sampler stage, so a texture about to become a render or depth target cannot also be
+// bound as a source, whichever stage holds it; the cached state block rebinds them. Load bearing:
+// narrowing it to fewer stages would need to keep unbinding that target by identity.
+static void UnbindAllTextures(IDirect3DDevice9* Device) {
+
+	for (DWORD i = 0; i < 16; i++) Device->SetTexture(i, NULL);
+
+}
+
+// Puts back the targets a mid-scene pass replaced, then the cached state block, and releases them.
+// In that order: SetRenderTarget resets the viewport, which the state block restores.
+static void RestoreTargets(IDirect3DDevice9* Device, IDirect3DStateBlock9* StateBlock, IDirect3DSurface9* RenderTarget, IDirect3DSurface9* DepthSurface) {
+
+	Device->SetRenderTarget(0, RenderTarget);
+	Device->SetDepthStencilSurface(DepthSurface);
+	StateBlock->Apply();
+	RenderTarget->Release();
+	if (DepthSurface) DepthSurface->Release();
+
+}
+
 // Snapshots the whole device state into CachedStateBlock, so a mid-scene pass can restore it exactly.
 // Replaces a per-call CreateStateBlock(D3DSBT_ALL): that allocates a block AND captures, and only the
 // capture is wanted after the first time. The state SET a block records is fixed when it is created,
@@ -3619,8 +3580,8 @@ bool ShaderManager::CaptureDeviceState() {
 	IDirect3DDevice9* Device = TheRenderManager->device;
 	if (!Device) return false;
 
-	// Every other D3D resource this manager caches assumes a device that outlives the plugin, and the
-	// game never resets one. This costs a compare to not silently depend on that.
+	// Rebuild the block if the device changed; the game never resets it, but this
+	// compare avoids silently depending on that.
 	if (CachedStateBlock && CachedStateBlockDevice != Device) {
 		CachedStateBlock->Release();
 		CachedStateBlock = NULL;
@@ -3677,8 +3638,8 @@ void ShaderManager::RenderShadowsMidScene() {
 	Device->SetRenderState(D3DRS_STENCILENABLE, FALSE);
 	Device->SetStreamSource(0, EffectVertex, 0, sizeof(EffectQuad));
 	Device->SetFVF(EFFECTQUADFORMAT);
-	// Seed TESR_RenderedBuffer for whichever effect runs first; each Render() re-blits for the next.
-	Device->StretchRect(SceneRT, NULL, RenderedSurface, NULL, D3DTEXF_NONE); // scene color -> TESR_RenderedBuffer
+	// Seed TESR_RenderedBuffer with the scene; each Render() re-blits for the next.
+	Device->StretchRect(SceneRT, NULL, RenderedSurface, NULL, D3DTEXF_NONE);
 	if (DoSun) {
 		ShadowsExteriorsEffect->SetCT();
 		ShadowsExteriorsEffect->Render(Device, SceneRT, RenderedSurface, false);
@@ -3738,9 +3699,8 @@ bool ShaderManager::CreateShellMask() {
 
 	if (ShellMaskTexture) return true;
 
-	// Format and size must match the depth textures it is resolved from: ResolveDepthInto's RESZ path
-	// requires an exact match, and its NvAPI path requires the resource to be registered - done here
-	// because that function's one-shot block has already run by the time this texture exists.
+	// Must match the depth textures it is resolved from (RESZ needs an exact
+	// match); NvAPI needs it registered, as ResolveDepthInto's setup already ran.
 	if (FAILED(TheRenderManager->device->CreateTexture(TheRenderManager->width, TheRenderManager->height, 1, D3DUSAGE_DEPTHSTENCIL, (D3DFORMAT)MAKEFOURCC('I','N','T','Z'), D3DPOOL_DEFAULT, &ShellMaskTexture, NULL))) {
 		Logger::Log("ERROR: Cannot create the near shell coverage buffer. The near shell depth flatten is disabled.");
 		return false;
@@ -3756,8 +3716,8 @@ bool ShaderManager::CreateShellQuadVertexShader() {
 
 	if (ShellFlattenVertexShader) return true;
 
-	// The record exists only to carry the bytecode into CreateVertexShader, so drop it again on
-	// failure rather than leaving it hanging off the member - same shape as ShaderManager::LoadShader.
+	// The record only carries the bytecode into CreateVertexShader; drop it on
+	// failure, as ShaderManager::LoadShader does.
 	ShellFlattenVertex = new ShaderRecord();
 	if (ShellFlattenVertex->LoadShader("ShellFlatten.vso")) TheRenderManager->device->CreateVertexShader((const DWORD*)ShellFlattenVertex->Function, &ShellFlattenVertexShader);
 	if (!ShellFlattenVertexShader) {
@@ -3782,10 +3742,8 @@ bool ShaderManager::CreateShellFlatten(IDirect3DTexture9* Target, IDirect3DSurfa
 		return false;
 	}
 
-	// The flatten writes into the target texture by binding it as the depth-stencil target. Both
-	// targets are INTZ textures created with D3DUSAGE_DEPTHSTENCIL at the backbuffer size in the same
-	// two lines of RenderManager::Initialize, so this is what they are for and they are
-	// interchangeable here.
+	// The flatten binds the target as its depth-stencil; both targets are INTZ
+	// depth-stencil textures at backbuffer size, so either works.
 	if (!*TargetSurface && FAILED(Target->GetSurfaceLevel(0, TargetSurface))) {
 		Logger::Log("ERROR: Cannot address the depth buffer surface. The near shell depth flatten is disabled.");
 		ShellFlattenFailed = true;
@@ -3897,12 +3855,12 @@ bool ShaderManager::CaptureShellRenderedBuffer() {
 
 	if (!SceneRT) return false;
 
-	// The scene target can be multisampled under HDR and so cannot be sampled directly. Resolve it into
-	// EffectTexture, free scratch mid-scene that the effect chain overwrites wholesale later.
+	// The scene target may be multisampled; resolve it into EffectTexture, which
+	// is free scratch mid-scene.
 	if (FAILED(Device->StretchRect(SceneRT, NULL, EffectSurface, NULL, D3DTEXF_NONE))) return false;
 
-	// Snapshot the shell's coverage. Must precede the target switch below, which takes the
-	// depth-stencil surface this reads out from under the device.
+	// Snapshot the shell's coverage before the target switch below takes the
+	// depth-stencil surface away from the device.
 	TheRenderManager->ResolveDepthInto(ShellMaskTexture);
 
 	if (FAILED(Device->GetRenderTarget(0, &PrevRenderTarget)) || !PrevRenderTarget) return false;
@@ -3913,13 +3871,10 @@ bool ShaderManager::CaptureShellRenderedBuffer() {
 		return false;
 	}
 
-	// LOAD BEARING: RenderedTexture backs the surface about to become the render target, and the water
-	// draws already down this pass had it bound as TESR_RenderedBuffer. Clear every stage
-	// unconditionally rather than by identity; the state block puts them all back.
-	for (DWORD i = 0; i < 16; i++) Device->SetTexture(i, NULL);
+	UnbindAllTextures(Device);
 
-	// Unbind depth rather than leave it bound with Z off: the shell's is multisampled whenever the
-	// scene target is, and D3D9 will not pair that with the non-multisampled RenderedSurface.
+	// Unbind depth rather than leave it bound with Z off: the shell's may be
+	// multisampled, and D3D9 will not pair it with RenderedSurface.
 	if (FAILED(Device->SetRenderTarget(0, RenderedSurface))) {
 		Device->SetRenderTarget(0, PrevRenderTarget);
 		CachedStateBlock->Apply();
@@ -3939,9 +3894,9 @@ bool ShaderManager::CaptureShellRenderedBuffer() {
 		Device->SetSamplerState(s, D3DSAMP_MAGFILTER, D3DTEXF_POINT);
 		Device->SetSamplerState(s, D3DSAMP_MINFILTER, D3DTEXF_POINT);
 		Device->SetSamplerState(s, D3DSAMP_MIPFILTER, D3DTEXF_NONE);
-		// This pass writes colour, so it must be bit-exact: an sRGB conversion on either end would tint
-		// the shell's pixels relative to the far pass's. Neither flag is ours by default - this one is
-		// per-shader from the texture INI, the write one below is the engine's. See the design doc.
+		// Bit-exact copy: an sRGB conversion on either end would tint the shell
+		// against the far pass, and neither flag can be assumed off (the texture INI
+		// sets the sampler one, the engine the write one).
 		Device->SetSamplerState(s, D3DSAMP_SRGBTEXTURE, FALSE);
 	}
 	Device->SetRenderState(D3DRS_SRGBWRITEENABLE, FALSE);
@@ -3960,15 +3915,9 @@ bool ShaderManager::CaptureShellRenderedBuffer() {
 	Device->SetFVF(EFFECTQUADFORMAT);
 	Device->DrawPrimitive(D3DPT_TRIANGLESTRIP, 0, 2);
 
-	// Order matters: SetRenderTarget resets the viewport, so the state block - which restores the
-	// engine's - has to be applied after the targets are back.
 	Device->SetTexture(0, NULL);
 	Device->SetTexture(1, NULL);
-	Device->SetRenderTarget(0, PrevRenderTarget);
-	Device->SetDepthStencilSurface(PrevDepthSurface);
-	CachedStateBlock->Apply();
-	PrevRenderTarget->Release();
-	if (PrevDepthSurface) PrevDepthSurface->Release();
+	RestoreTargets(Device, CachedStateBlock, PrevRenderTarget, PrevDepthSurface);
 	return true;
 
 }
@@ -4012,13 +3961,8 @@ void ShaderManager::FlattenShellPreWaterDepth(bool MaskResolved) {
 void ShaderManager::FlattenShellDepthInto(IDirect3DTexture9* Target, IDirect3DSurface9** TargetSurface, bool ResolveMask) {
 
 	if (!RenderManager::ShellActive) return;
-	// The shell submitted nothing that could write depth this frame - no coverage to flatten, so no
-	// reason to pay for the resolve, the state block or the quad. ShellDraws deliberately excludes the
-	// SKY* draws that the shell's sub-1.0 clear rejects, or the sky would hold this gate open in every
-	// exterior; it is still only an upper bound on coverage (a counted draw may be depth-rejected or
-	// have ZWRITE off), so this is a cheap degenerate-case guard rather than an exact one. When it does
-	// let a coverage-free frame through the result is still correct: ShellFlatten's clip() discards
-	// every pixel.
+	// Nothing in the shell could write depth, so skip the resolve and the quad.
+	// ShellDraws is only an upper bound; ShellFlatten's clip() handles the rest.
 	if (!RenderManager::ShellDraws) return;
 	if (!EffectVertex || !EffectSurface || !Target) return;
 	if (!CreateShellFlatten(Target, TargetSurface)) return;
@@ -4027,9 +3971,8 @@ void ShaderManager::FlattenShellDepthInto(IDirect3DTexture9* Target, IDirect3DSu
 	IDirect3DSurface9* PrevRenderTarget = NULL;
 	IDirect3DSurface9* PrevDepthSurface = NULL;
 
-	// Snapshot the shell's depth buffer. Must precede the target switch below, which takes the
-	// depth-stencil surface this reads out from under the device. Skipped only when the masked
-	// rendered-buffer capture just took the identical resolve (see FlattenShellPreWaterDepth).
+	// Snapshot the shell's depth before the target switch below takes it away,
+	// unless the masked rendered-buffer capture just took the same resolve.
 	if (ResolveMask) TheRenderManager->ResolveDepthInto(ShellMaskTexture);
 
 	if (FAILED(Device->GetRenderTarget(0, &PrevRenderTarget)) || !PrevRenderTarget) return;
@@ -4040,35 +3983,17 @@ void ShaderManager::FlattenShellDepthInto(IDirect3DTexture9* Target, IDirect3DSu
 		return;
 	}
 
-	// The hazard, named at the one place it exists: a texture cannot be a sampler source and the
-	// depth-stencil target at the same time, and Target is normally BOTH bound at this instant. For
-	// the pre-water clamp that is not a corner case but the standard path - RenderHook's per-draw swap
-	// binds TESR_DepthBufferPreWater into the sampler TESR_DepthBuffer occupies for every shell WATER
-	// draw, and the shell's LOD water (WATER012+) draws run through that swap BEFORE this clamp fires
-	// at the first NEAR water draw. Other scene textures can alias the target too, since the water
-	// shaders read TESR_DepthBuffer in both passes. So clear every stage, unconditionally; the state
-	// block puts them all back.
-	//
-	// LOAD BEARING, not tidiness: this is the only thing that unbinds Target. Anyone tempted to narrow
-	// it to "the stages that actually matter" has to keep unbinding Target by identity, or the flatten
-	// silently samples and writes the same surface.
-	for (DWORD i = 0; i < 16; i++) Device->SetTexture(i, NULL);
+	// Target is normally bound as a sampler here too: shell water binds it in
+	// place of TESR_DepthBuffer before this clamp fires.
+	UnbindAllTextures(Device);
 
-	// EffectSurface only stands in as a colour target of the right size and (unlike the scene target
-	// under HDR + MSAA) without multisampling, which the non-multisampled depth texture could not be
-	// paired with. Colour writes are off, so its contents are untouched; it is overwritten wholesale
-	// by the effect chain later anyway.
-	// Checked, not assumed: if the depth texture cannot be paired with this colour target on this
-	// hardware, the draw below would land in the depth-stencil surface still bound - the shell's own
-	// - and stamp zeroes through it. Bail out instead, once and for all.
+	// EffectSurface only serves as a right-sized, non-multisampled colour target
+	// with writes off. If the depth texture cannot pair with it, bail for good:
+	// the draw would otherwise stamp zeroes through the shell's own depth.
 	if (FAILED(Device->SetRenderTarget(0, EffectSurface)) || FAILED(Device->SetDepthStencilSurface(*TargetSurface))) {
 		Logger::Log("ERROR: Cannot bind the depth buffer as a render surface. The near shell depth flatten is disabled.");
 		ShellFlattenFailed = true;
-		Device->SetRenderTarget(0, PrevRenderTarget);
-		Device->SetDepthStencilSurface(PrevDepthSurface);
-		CachedStateBlock->Apply();
-		PrevRenderTarget->Release();
-		if (PrevDepthSurface) PrevDepthSurface->Release();
+		RestoreTargets(Device, CachedStateBlock, PrevRenderTarget, PrevDepthSurface);
 		return;
 	}
 	Device->SetVertexShader(ShellFlattenVertexShader);
@@ -4095,14 +4020,8 @@ void ShaderManager::FlattenShellDepthInto(IDirect3DTexture9* Target, IDirect3DSu
 	Device->SetFVF(EFFECTQUADFORMAT);
 	Device->DrawPrimitive(D3DPT_TRIANGLESTRIP, 0, 2);
 
-	// Order matters: SetRenderTarget resets the viewport, so the state block - which restores the
-	// engine's - has to be applied after the targets are back.
 	Device->SetTexture(0, NULL);
-	Device->SetRenderTarget(0, PrevRenderTarget);
-	Device->SetDepthStencilSurface(PrevDepthSurface);
-	CachedStateBlock->Apply();
-	PrevRenderTarget->Release();
-	if (PrevDepthSurface) PrevDepthSurface->Release();
+	RestoreTargets(Device, CachedStateBlock, PrevRenderTarget, PrevDepthSurface);
 
 }
 

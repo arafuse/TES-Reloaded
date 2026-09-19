@@ -93,9 +93,8 @@ SettingManager::SettingManager() {
 	SettingsMain.Main.NearShellEnabled = GetPrivateProfileIntA("Main", "NearShellEnabled", 1, Filename);
 	GetPrivateProfileStringA("Main", "NearShellBoundary", "15.0", value, SettingStringBuffer, Filename);
 	SettingsMain.Main.NearShellBoundary = atof(value);
-	// Fraction of each screen axis the volumetric-light ray-march covers. 0.5 (the default, and
-	// what the shader used to hardcode) marches a quarter of the pixels; 0.25 a sixteenth. Clamped
-	// because 0 would clip the ray-march away entirely and > 1 would run it off the buffer.
+	// Fraction of each screen axis the volumetric-light ray-march covers; clamped
+	// since 0 clips the march away and > 1 runs it off the buffer.
 	GetPrivateProfileStringA("Main", "VolumetricLightResolution", "0.5", value, SettingStringBuffer, Filename);
 	SettingsMain.Main.VolumetricLightResolution = max(0.05f, min(1.0f, (float)atof(value)));
 	GetPrivateProfileStringA("Main", "ScreenshotPath", CurrentPath, value, SettingStringBuffer, Filename);
@@ -1256,16 +1255,16 @@ void SettingManager::LoadSettings() {
 	SettingsShadows.Exteriors.deferredConstBias = atof(value);
 	GetPrivateProfileStringA("Exteriors", "deferredFarConstBias", "0.001", value, SettingStringBuffer, Filename);
 	SettingsShadows.Exteriors.deferredFarConstBias = atof(value);
-	// Defaults OFF: a Shadows.ini predating this feature must keep the legacy bias math. The
-	// shipped INI carries the enable, so fresh installs still get it.
+	// Defaults off so a Shadows.ini predating AdaptiveBias keeps the legacy bias
+	// math; the shipped INI enables it.
 	SettingsShadows.Exteriors.AdaptiveBias = GetPrivateProfileIntA("Exteriors", "AdaptiveBias", 0, Filename);
-	// 0 = terminator ramp off, the only value that does not flat-shade the scene (see Shadows.ini).
+	// 0 disables the terminator ramp, which otherwise flat-shades the scene.
 	GetPrivateProfileStringA("Exteriors", "BiasTerminatorWidth", "0.0", value, SettingStringBuffer, Filename);
 	SettingsShadows.Exteriors.BiasTerminatorWidth = atof(value);
 	GetPrivateProfileStringA("Exteriors", "BiasMaxSlope", "4.0", value, SettingStringBuffer, Filename);
 	SettingsShadows.Exteriors.BiasMaxSlope = atof(value);
 
-	// Unified point-light shadows: single [Point] section, identical behavior interiors/exteriors.
+	// One [Point] section drives point-light shadows in interiors and exteriors.
 	SettingsShadows.Point.Enabled = GetPrivateProfileIntA("Point", "Enabled", 1, Filename);
 	SettingsShadows.Point.UsePostProcessing = GetPrivateProfileIntA("Point", "UsePostProcessing", 1, Filename);
 	SettingsShadows.Point.AlphaEnabled = GetPrivateProfileIntA("Point", "AlphaEnabled", 1, Filename);
@@ -1297,8 +1296,8 @@ void SettingManager::LoadSettings() {
 	SettingsShadows.Point.Forms.Statics = GetPrivateProfileIntA("Point", "Statics", 1, Filename);
 	SettingsShadows.Point.Forms.Trees = GetPrivateProfileIntA("Point", "Trees", 0, Filename);
 
-	// Weather-driven darkness tiers: cloudy and precipitation copy every other exterior sun-shadow
-	// setting (map sizes/radii/bias/etc.) from the base Exteriors struct and only override Darkness.
+	// The cloudy and precipitation tiers copy every exterior sun-shadow setting and
+	// override only Darkness.
 	SettingsShadows.ExteriorsAlt = SettingsShadowStruct::ExteriorsStruct(SettingsShadows.Exteriors);
 	SettingsShadows.ExteriorsAlt.Darkness = DarknessCloudy;
 	SettingsShadows.ExteriorsPrecip = SettingsShadowStruct::ExteriorsStruct(SettingsShadows.Exteriors);
@@ -1333,8 +1332,7 @@ void SettingManager::LoadSettings() {
 					else
 						SettingsShadows.Exteriors.ExcludedForms.push_back(atoi(FormID));
 				}
-				// Unified point shadows honor every point-relevant prefix: X (all), I (interior
-				// point), N (exterior point) — the same form is excluded everywhere.
+				// Point shadows honor every point prefix: X (all), I (interior), N (exterior).
 				if (FormType[0] == 'X' || FormType[0] == 'I' || FormType[0] == 'N') {
 					if (i == 0)
 						PC += 1;
@@ -2975,11 +2973,8 @@ void SettingManager::SetMenuSetting(const char* Item, const char* Definition, co
 				else if (!strcmp(Setting, "ShadowMapFarPlane")) {
 					SettingsShadows.Exteriors.ShadowMapFarPlane = Value;
 				}
-				// The bias constants are republished every frame by
-				// ShadowManager::PublishShadowBiasConstants, so these only update the setting.
-				// Writing the shader constant here would be stomped on the next frame -- and
-				// routing through the publish is what makes live edits take effect under the
-				// cloudy/precipitation weather tiers too, which the old direct pokes did not.
+				// PublishShadowBiasConstants republishes these every frame, so only the
+				// setting changes here; that also applies live edits under the weather tiers.
 				else if (!strcmp(Setting, "deferredNormBias")) {
 					SettingsShadows.Exteriors.deferredNormBias = Value;
 				}

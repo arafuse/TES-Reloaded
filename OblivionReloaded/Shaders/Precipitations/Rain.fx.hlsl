@@ -89,9 +89,8 @@ float GetOrtho(float4 OrthoPos) {
     OrthoPos.x = OrthoPos.x *  0.5f + 0.5f;
     OrthoPos.y = OrthoPos.y * -0.5f + 0.5f;
 	Ortho = tex2D(TESR_OrthoMapBuffer, OrthoPos.xy).r;
-	// TESR_OrthoData.x biases the compare toward "occluded". Samples just under a ceiling sit within
-	// a texel of the stored depth, and at this map's resolution the unbiased test flips there, which
-	// leaked a few open steps into the march and drew rain through solid cover.
+	// TESR_OrthoData.x biases the compare toward "occluded": unbiased, samples
+	// just under a ceiling flip within a texel and draw rain through cover.
 	if (Ortho < OrthoPos.z + TESR_OrthoData.x) return 0.0f;
 	return 1.0f;
 	
@@ -106,9 +105,8 @@ float4 Rain( VSOUT IN ) : COLOR0
 	float marchDepth = min(depth, MAX_RAIN_DEPTH);
 	float stepSize = marchDepth / OCCLUSION_STEPS;
 
-	// Forward ray march: accumulate open-air fraction from camera to surface.
-	// The per-step transform is affine, so step the homogeneous ortho position by a
-	// constant delta each iteration instead of doing two matrix muls per step.
+	// March camera -> surface accumulating the open-air fraction. The ortho
+	// transform is affine, so step the projected position by a constant delta.
 	float4 stepOrtho = mul(float4(TESR_CameraPosition.xyz, 1.0f), OrthoCombined);
 	float4 stepOrthoDelta = mul(float4(world * stepSize, 0.0f), OrthoCombined);
 	float openSteps = 0.0f;
@@ -118,9 +116,8 @@ float4 Rain( VSOUT IN ) : COLOR0
 	}
 	float ortho = openSteps / OCCLUSION_STEPS;
 
-	// Fully occluded: pass the scene through unchanged. This must NOT be a discard -- the
-	// effect chain rotates render targets (ShaderManager::RenderChained), so the destination
-	// does not already hold the source image and a discarded pixel keeps stale buffer content.
+	// Fully occluded: return the scene unchanged. A discard would keep stale
+	// content, since the chained render target does not hold the source image.
 	if (ortho < 0.01f) return float4(color.rgb, 1.0f);
 	
 	float2 q;

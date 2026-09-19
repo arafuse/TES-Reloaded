@@ -18,7 +18,8 @@ struct PS_OUTPUT {
 PS_OUTPUT main(VS_OUTPUT IN) {
 	PS_OUTPUT OUT;
 
-	if (TESR_ShadowCubeBakeData.y == 1.0f) { // Alpha is required
+	bool alphaTested = TESR_ShadowCubeBakeData.y == 1.0f;
+	if (alphaTested) {
 		float4 diffuse = tex2D(DiffuseMap, IN.texcoord_1.xy);
 		if (diffuse.a <= 0.2f) discard;
 	}

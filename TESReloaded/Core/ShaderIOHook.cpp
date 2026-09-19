@@ -108,6 +108,14 @@ NiD3DVertexShader* ShaderIOHook::TrackCreateVertexShader(char* FileName, char* A
 
 }
 
+// Near water surfaces use WATER000-011. LOD water binds WATER012+, and the
+// height-map pre-pass shaders (WATERHMAP*) fail the digit test.
+static bool IsNearWaterShader(const char* Name) {
+
+	return !memcmp(Name, "WATER", 5) && Name[5] >= '0' && Name[5] <= '9' && atoi(Name + 5) < 12;
+
+}
+
 NiD3DPixelShader* (__thiscall ShaderIOHook::* CreatePixelShader)(char*, char*, char*, char*, UInt32, UInt32);
 NiD3DPixelShader* (__thiscall ShaderIOHook::* TrackCreatePixelShader)(char*, char*, char*, char*, UInt32, UInt32);
 NiD3DPixelShader* ShaderIOHook::TrackCreatePixelShader(char* FileName, char* Arg2, char* ShaderType, char* ShaderName, UInt32 Arg5, UInt32 Arg6) {
@@ -120,12 +128,7 @@ NiD3DPixelShader* ShaderIOHook::TrackCreatePixelShader(char* FileName, char* Arg
 	strcpy(PixelShader->ShaderName, ShaderName);
 	PixelShader->isSkin = strstr(SkinPixelShaders, PixelShader->ShaderName) != NULL;
 	PixelShader->isRefraction = strstr(RefractionPixelShaders, PixelShader->ShaderName) != NULL;
-	// Same discriminator the two near-water trigger blocks in RenderHook used to each rebuild: WATER
-	// prefix, a digit at index 5, number below 12. The digit test also excludes the height-map
-	// shaders (WATERHMAP*), which carry 'H' there.
-	PixelShader->isNearWater = !memcmp(PixelShader->ShaderName, "WATER", 5) &&
-		PixelShader->ShaderName[5] >= '0' && PixelShader->ShaderName[5] <= '9' &&
-		atoi(PixelShader->ShaderName + 5) < 12;
+	PixelShader->isNearWater = IsNearWaterShader(PixelShader->ShaderName);
 	TheShaderManager->LoadShader(PixelShader);
 	PixelShader->isPOMShadowWriter = PixelShader->ShaderProg && strstr(POMShadowPixelShaders, PixelShader->ShaderName) != NULL;
 	return (NiD3DPixelShader*)PixelShader;

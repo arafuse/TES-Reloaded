@@ -121,10 +121,6 @@ namespace FrameProfiler {
 					BucketNames[i], ms, gMaxMs[i], ms * pctInv, gCalls[i] * inv);
 			}
 
-			// The per-draw scopes are not free when armed: ShaderHook, Hook:Engine and
-			// Hook:SetCT put roughly six QueryPerformanceCounter calls on every draw,
-			// which at ~25 ns each lands ~0.15 us per draw inside ShaderHook. Multiply
-			// by the Draws counter below before reading ShaderHook as a regression.
 			Logger::Log("[FrameProfile]   -- counters (per frame; ShaderHook carries ~0.15 us/draw of profiler overhead) --");
 			for (int i = 0; i < Cnt_COUNT; i++)
 				Logger::Log("[FrameProfile]   %-18s %9.1f  (max %u)", CounterNames[i], gAccumCounters[i] * inv, gMaxCounters[i]);
@@ -466,8 +462,8 @@ void RenderHook::TrackRender(BSRenderedTexture* RenderedTexture) {
 	FrameProfiler::FrameBegin();
 	FrameProfiler::Scope FrameScope(FrameProfiler::Buck_FrameTotal);
 
-	// The sampler's phase boundary is deliberately the SAME envelope FrameProfiler
-	// measures, so "render" in one report means exactly what it means in the other.
+	// The sampler's phase boundary is the same envelope FrameProfiler measures,
+	// so "render" means the same thing in both reports.
 	SampleProfiler::CheckKey();
 	SampleProfiler::InRender = true;
 
@@ -507,9 +503,8 @@ void RenderHook::TrackHDRRender(NiScreenElements* ScreenElements, BSRenderedText
 	
 	//NOTE: textures are set here because applying surface changes directly to the RT interferes with the Refraction shader
 	
-	// Not for the savegame thumbnail: that render skips OR's effect chain, so EffectTexture holds
-	// the PREVIOUS frame's post-processed scene and pointing the tonemap at it would put the wrong
-	// moment in the save. Let the engine tonemap the scene it just rendered.
+	// Not for the savegame thumbnail: it skips OR's effect chain, so EffectTexture
+	// still holds the previous frame; let the engine tonemap its own render.
 	if (TheSettingManager->SettingsMain.Main.RenderEffectsBeforeHdr && !TheRenderManager->IsSaveGameScreenShot) {
 		BSRenderedTexture* rt1 = *RenderedTexture1;
 		rt1->RenderedTexture->rendererData->dTexture = TheShaderManager->EffectTexture;
@@ -588,8 +583,8 @@ static void GrassOrderLogTrace(const char* Tag, void* Ra, NiPropertyState* Prope
 	}
 	Logger::Log(Line);
 
-	// EBP-chain backtraces stop at the first FPO-compiled engine frame, so also dump every stack
-	// value that lands in Oblivion.exe's code range - a superset of the true call chain.
+	// EBP-chain backtraces stop at the first FPO engine frame, so also dump every
+	// stack value in Oblivion.exe's code range (a superset of the call chain).
 	UInt32* Stack = (UInt32*)&Tag;
 	int Hits = 0;
 	strcpy(Line, "[GrassOrderDbg]   scan:");
@@ -607,6 +602,111 @@ static void GrassOrderLogTrace(const char* Tag, void* Ra, NiPropertyState* Prope
 		}
 	}
 	Logger::Log(Line);
+
+}
+
+// SKY* vertex shaders write no depth in the near shell: they pin z == w, which the shell's sub-1.0
+// depth clear rejects, or sit far beyond its far plane at M.
+static bool IsSkyShader(NiD3DVertexShaderEx* VertexShader) {
+
+	return VertexShader && VertexShader->ShaderName && !memcmp(VertexShader->ShaderName, "SKY", 3);
+
+}
+
+// Logs one draw of the near-shell diagnostics, with the render state it inherits from the previous
+// draw. pin=1 marks the SKY* draws that are excluded from ShellDraws.
+static void LogShellPassDraw(const char* Tag, int Index, NiGeometry* Geometry, NiTransform* WorldTransform, NiD3DVertexShaderEx* VertexShader, NiD3DPixelShaderEx* PixelShader, NiDX9RenderState* RenderState) {
+
+	float Dist = 0.0f;
+	if (WorldTransform) {
+		NiPoint3& CamPos = WorldSceneGraph->camera->m_worldTransform.pos;
+		float dx = WorldTransform->pos.x - CamPos.x;
+		float dy = WorldTransform->pos.y - CamPos.y;
+		float dz = WorldTransform->pos.z - CamPos.z;
+		Dist = sqrtf(dx * dx + dy * dy + dz * dz);
+	}
+	Logger::Log("%s %04d VS=%s PS=%s Geo=%s pin=%d cweIn=%d dist=%.1f ZEnable=%d ZWrite=%d ZFunc=%d",
+		Tag, Index,
+		VertexShader && VertexShader->ShaderName ? VertexShader->ShaderName : "-",
+		PixelShader && PixelShader->ShaderName ? PixelShader->ShaderName : "-",
+		Geometry && Geometry->m_pcName ? Geometry->m_pcName : "-",
+		IsSkyShader(VertexShader) ? 1 : 0,
+		RenderState->GetRenderState(D3DRS_COLORWRITEENABLE),
+		Dist,
+		RenderState->GetRenderState(D3DRS_ZENABLE),
+		RenderState->GetRenderState(D3DRS_ZWRITEENABLE),
+		RenderState->GetRenderState(D3DRS_ZFUNC));
+
+}
+
+// Runs at the shell's first near-water draw and gives its water what the far pass gave its own: a
+// TESR_RenderedBuffer capture that contains the shell's geometry, masked to the shell's coverage,
+// and a TESR_DepthBufferPreWater clamped to M under that coverage. Without them, submerged
+// first-person arms vanish, or shade as if lying on the lake bottom.
+static void PrepareShellNearWater() {
+
+	FrameProfiler::Scope ShellWaterScope(FrameProfiler::Buck_HookShellWater);
+	bool MaskResolved = TheShaderManager->CaptureShellRenderedBuffer();
+	bool Captured = MaskResolved;
+	if (!Captured && TheRenderManager->currentRTGroup && TheShaderManager->RenderedSurface) {
+		TheRenderManager->device->StretchRect(TheRenderManager->currentRTGroup->RenderTargets[0]->data->Surface, NULL, TheShaderManager->RenderedSurface, NULL, D3DTEXF_NONE);
+		Captured = true;
+	}
+	// Close the SetCT colour latch only if something captured: a far pass with no
+	// water draw leaves it open, and a later fire would capture over the water.
+	if (Captured) TheShaderManager->RenderedBufferFilled = true;
+	TheShaderManager->FlattenShellPreWaterDepth(MaskResolved);
+
+}
+
+// Shell water must never sample TESR_DepthBuffer: it holds the far pass's own water surface, cut open
+// at M, and water's offset depth taps land on it along that edge. Rebinds those samplers to
+// TESR_DepthBufferPreWater (same (M, F) encoding, no water in it) for this draw. Per draw because
+// SetCT only runs when the shader handle changes. The WATER prefix test also matches WATERHMAP*,
+// harmlessly: those shaders do not declare the depth buffer.
+static void BindShellWaterPreWaterDepth(NiD3DPixelShaderEx* PixelShader) {
+
+	if (!PixelShader->ShaderProg || !TheRenderManager->DepthTexturePreWater || !PixelShader->ShaderName || memcmp(PixelShader->ShaderName, "WATER", 5)) return;
+	ShaderValue* Values = PixelShader->ShaderProg->TextureShaderValues;
+	for (UInt32 c = 0; c < PixelShader->ShaderProg->TextureShaderValuesCount; c++) {
+		if (Values[c].Texture && Values[c].Texture->Texture == TheRenderManager->DepthTexture && Values[c].RegisterIndex < 16) {
+			TheRenderManager->device->SetTexture(Values[c].RegisterIndex, TheRenderManager->DepthTexturePreWater);
+			ShellWaterDepthSamplers |= 1 << Values[c].RegisterIndex;
+		}
+	}
+
+}
+
+// Undoes BindShellWaterPreWaterDepth before anything else inherits the binding, notably the water
+// reflection render, which re-binds water shaders later without necessarily re-running SetCT.
+static void RestoreShellWaterDepthSamplers() {
+
+	for (UInt32 s = 0; s < 16; s++) {
+		if (ShellWaterDepthSamplers & (1 << s)) TheRenderManager->device->SetTexture(s, TheRenderManager->DepthTexture);
+	}
+	ShellWaterDepthSamplers = 0;
+
+}
+
+// Uploads the grass collision sources relative to this instance (c254/c255), the only grass constants
+// that change per draw; SetCT already uploads c253 at every grass shader bind. The vertex constant
+// space is full, so the two recovery weights ride in c255.zw, which is why there are three sources.
+static void SetGrassCollisionConstants(NiTransform* WorldTransform) {
+
+	float cx = WorldTransform->pos.x;
+	float cy = WorldTransform->pos.y;
+	D3DXVECTOR4 xy0(
+		TheShaderManager->GrassCollisionSources[0].x - cx,
+		TheShaderManager->GrassCollisionSources[0].y - cy,
+		TheShaderManager->GrassCollisionSources[1].x - cx,
+		TheShaderManager->GrassCollisionSources[1].y - cy);
+	D3DXVECTOR4 xy1(
+		TheShaderManager->GrassCollisionSources[2].x - cx,
+		TheShaderManager->GrassCollisionSources[2].y - cy,
+		TheShaderManager->GrassCollisionWeights[0],
+		TheShaderManager->GrassCollisionWeights[1]);
+	TheRenderManager->device->SetVertexShaderConstantF(254, (const float*)&xy0, 1);
+	TheRenderManager->device->SetVertexShaderConstantF(255, (const float*)&xy1, 1);
 
 }
 
@@ -634,86 +734,21 @@ UInt32 RenderHook::TrackSetupShaderPrograms(NiGeometry* Geometry, NiSkinInstance
 	NiD3DPixelShaderEx* PixelShader = (NiD3DPixelShaderEx*)Pass->PixelShader;
 	NiNode* RenderWindowRootNode = *RenderWindowNode;
 
-	// Between passes projMatrix belongs to whoever set it up; StampPassProjection is inert unless we
-	// are inside one of the two shell passes.
+	// StampPassProjection is inert outside the two shell passes, where projMatrix
+	// belongs to whoever set it up.
 	RenderManager::StampPassProjection(Proj);
 	if (RenderManager::CurrentPass == RenderManager::PassNear) {
 
-		// Sky, cloud and sun geometry IS submitted in the shell - that is the entire premise of the
-		// sub-1.0 depth clear - but SKY* shaders either pin z == w and fail the shell's depth test
-		// outright (SKYCLOUDS.vso, SKYT.vso) or sit tens of thousands of units out and are clipped by
-		// the shell's far plane at M (stock SKY.vso). Either way they write no depth and leave no
-		// coverage, so they must not count: ShellDraws is what gates the depth flatten on "the shell
-		// actually covered something" (ShaderManager::FlattenShellDepthInto), and counting the sky
-		// would make that gate permanently true in every exterior, paying for a full-resolution depth
-		// resolve, a D3DSBT_ALL state block and a full-screen quad in frames with nothing in the shell.
-		// This is a NECESSARY condition for coverage, not a sufficient one - a counted draw may still
-		// be depth-rejected, or have ZWRITEENABLE off - so the counter remains an upper bound. That is
-		// the safe direction: it can run the flatten when it was not needed, never skip one that was.
-		bool SkyPinned = VertexShader && VertexShader->ShaderName && !memcmp(VertexShader->ShaderName, "SKY", 3);
-		if (!SkyPinned) RenderManager::ShellDraws++;
-
-		// [ShellDraw] Retained diagnostic for the shell-pass defect class: what is drawn in the shell,
-		// and what colour-write/Z state does it see on entry - i.e. the state left behind by the
-		// PREVIOUS draw. This capture root-caused the sky paint-through, the vanishing submerged arms
-		// and the pre-water depth defect, and it is the only view of the shell's draw stream there is,
-		// so it stays. The 64-draw cap covers the whole stream with headroom (a full exterior shell
-		// near water measured 44 draws).
-		if (TheSettingManager->SettingsMain.Develop.NearShellDebug && ShellDrawLogCount < 64) {
-			ShellDrawLogCount++;
-			float Dist = 0.0f;
-			if (WorldTransform) {
-				NiPoint3& CamPos = WorldSceneGraph->camera->m_worldTransform.pos;
-				float dx = WorldTransform->pos.x - CamPos.x;
-				float dy = WorldTransform->pos.y - CamPos.y;
-				float dz = WorldTransform->pos.z - CamPos.z;
-				Dist = sqrtf(dx * dx + dy * dy + dz * dz);
-			}
-			// pin=1 marks the SKY* draws that leave no coverage and are therefore excluded from
-			// ShellDraws above (see that comment for why they cannot write depth in the shell).
-			bool Pin = SkyPinned;
-			Logger::Log("[ShellDraw] %04d VS=%s PS=%s Geo=%s pin=%d cweIn=%d dist=%.1f ZEnable=%d ZWrite=%d ZFunc=%d",
-				ShellDrawLogCount,
-				VertexShader && VertexShader->ShaderName ? VertexShader->ShaderName : "-",
-				PixelShader && PixelShader->ShaderName ? PixelShader->ShaderName : "-",
-				Geometry && Geometry->m_pcName ? Geometry->m_pcName : "-",
-				Pin ? 1 : 0,
-				RenderState->GetRenderState(D3DRS_COLORWRITEENABLE),
-				Dist,
-				RenderState->GetRenderState(D3DRS_ZENABLE),
-				RenderState->GetRenderState(D3DRS_ZWRITEENABLE),
-				RenderState->GetRenderState(D3DRS_ZFUNC));
-		}
+		// Only draws that can write depth hold the post-shell flatten gate open. An
+		// upper bound: a counted draw may still be depth-rejected.
+		if (!IsSkyShader(VertexShader)) RenderManager::ShellDraws++;
+		if (TheSettingManager->SettingsMain.Develop.NearShellDebug && ShellDrawLogCount < 64)
+			LogShellPassDraw("[ShellDraw]", ++ShellDrawLogCount, Geometry, WorldTransform, VertexShader, PixelShader, RenderState);
 	}
 	else if (RenderManager::CurrentPass == RenderManager::PassFar) {
-		// [ShellWater] Retained diagnostic, same shape as [ShellDraw] but for the far pass and gated to
-		// water draws only. Paired with [ShellDraw] it answers whether a given near-water draw appears
-		// in the far pass, the shell pass, both, or neither - the question every water defect on this
-		// feature turned on - so it stays alongside it.
 		if (TheSettingManager->SettingsMain.Develop.NearShellDebug && FarWaterLogCount < 12 &&
-			PixelShader && PixelShader->ShaderName && !memcmp(PixelShader->ShaderName, "WATER", 5)) {
-			FarWaterLogCount++;
-			float Dist = 0.0f;
-			if (WorldTransform) {
-				NiPoint3& CamPos = WorldSceneGraph->camera->m_worldTransform.pos;
-				float dx = WorldTransform->pos.x - CamPos.x;
-				float dy = WorldTransform->pos.y - CamPos.y;
-				float dz = WorldTransform->pos.z - CamPos.z;
-				Dist = sqrtf(dx * dx + dy * dy + dz * dz);
-			}
-			bool Pin = VertexShader && VertexShader->ShaderName && !memcmp(VertexShader->ShaderName, "SKY", 3);
-			Logger::Log("[ShellWater] %04d VS=%s PS=%s Geo=%s pin=%d cweIn=%d dist=%.1f ZEnable=%d ZWrite=%d ZFunc=%d",
-				FarWaterLogCount,
-				VertexShader && VertexShader->ShaderName ? VertexShader->ShaderName : "-",
-				PixelShader && PixelShader->ShaderName ? PixelShader->ShaderName : "-",
-				Geometry && Geometry->m_pcName ? Geometry->m_pcName : "-",
-				Pin ? 1 : 0,
-				RenderState->GetRenderState(D3DRS_COLORWRITEENABLE),
-				Dist,
-				RenderState->GetRenderState(D3DRS_ZENABLE),
-				RenderState->GetRenderState(D3DRS_ZWRITEENABLE),
-				RenderState->GetRenderState(D3DRS_ZFUNC));
-		}
+			PixelShader && PixelShader->ShaderName && !memcmp(PixelShader->ShaderName, "WATER", 5))
+			LogShellPassDraw("[ShellWater]", ++FarWaterLogCount, Geometry, WorldTransform, VertexShader, PixelShader, RenderState);
 	}
 
 	if (VertexShader && PixelShader) {
@@ -775,30 +810,15 @@ UInt32 RenderHook::TrackSetupShaderPrograms(NiGeometry* Geometry, NiSkinInstance
 		}
 
 #if defined(OBLIVION)
-		// POM shadow side channel: RT1 only under a depth-writing, unblended PAR first pass of the main
-		// scene; every other pass unbinds it (MUST stay ahead of the mid-scene shadow apply below).
+		// POM shadow side channel: RT1 only under a depth-writing, unblended PAR first
+		// pass of the main scene. Must precede the mid-scene shadow apply below.
 		TheShaderManager->BindPOMDepth(PixelShader->isPOMShadowWriter && TheShaderManager->InMainScenePass &&
 			RenderState->GetRenderState(D3DRS_ZWRITEENABLE) && !RenderState->GetRenderState(D3DRS_ALPHABLENDENABLE));
 #endif
 
-		// Sun-shadow apply + pre-water depth, fired at the first NEAR-water surface draw of the main
-		// pass. Engine pass order is: opaque -> LOD water -> sky -> LOD terrain -> grass -> NEAR water
-		// ([GrassOrderDbg] captures, 2026-07-15), so at this moment everything that should receive
-		// shadows (land, grass, submerged floor) is in the color and depth buffers, and the near water
-		// surface then composites OVER the shadowed scene. Resolve the depth-stencil into
-		// DepthTexturePreWater (the apply's receiver depth) and render the darkening quad.
-		// Near water is distinguished from the earlier LOD water planes by the pixel-shader NUMBER:
-		// the pre-sky LOD group always binds WATER012+, the post-grass near group always WATER000-011
-		// (confirmed by [GrassOrderDbg] captures incl. the close-camera water mode, where the near
-		// surface switches to WATER007 and its NiAlphaProperty flips to opaque — so alpha flags are
-		// NOT a usable discriminator). Match only the numbered water SURFACE shaders; exclude the
-		// height-map pre-pass shaders (WATERHMAP*, 'H' at index 5).
-		// InMainScenePass is REQUIRED, not just the PreWaterDepthBufferFilled latch: the water
-		// REFLECTION map renders AFTER the main pass, outside RenderObject(WorldSceneGraph), and the
-		// game's BeginScene for that off-screen render resets PreWaterDepthBufferFilled
-		// (ShaderManager::BeginScene). Numbered water shaders DO bind during the reflection render
-		// ([ReflDbg] log, 2026-07-17), so without this guard the apply fired again INTO the
-		// reflection map — camera-tracking caster silhouettes floating in the water.
+		// Apply shadows at the main pass's first near-water draw: every receiver is
+		// drawn by then and no near water yet. InMainScenePass keeps it out of the
+		// water reflection render, which binds the same shaders later.
 		if (TheShaderManager->InMainScenePass && !TheShaderManager->PreWaterDepthBufferFilled && PixelShader->isNearWater) {
 			FrameProfiler::Scope MidSceneScope(FrameProfiler::Buck_HookMidScene);
 			TheRenderManager->ResolvePreWaterDepthBuffer();
@@ -806,112 +826,14 @@ UInt32 RenderHook::TrackSetupShaderPrograms(NiGeometry* Geometry, NiSkinInstance
 			TheShaderManager->PreWaterDepthBufferFilled = true;
 		}
 
-		// Shell counterpart of the capture above, and the one point in the frame where the shell's own
-		// water draws can be prepared. Two things are fixed here; both need the same instant.
-		//
-		// (1) TESR_RenderedBuffer. Water refracts the scene BEHIND it by sampling
-		// TESR_RenderedBuffer (WATER*.pso: the centre tap plus the +0.01 UV refraction tap), so that
-		// texture has to hold the frame as it stands immediately before the water surface goes down.
-		// In the far pass it does: the ShaderRecord::SetCT latch fills it at the first water bind and
-		// RenderShadowsMidScene's blit (just above) refreshes it right before the first NEAR water.
-		// Neither happens again in the shell - the latch is closed for the rest of the frame
-		// (RenderedBufferFilled, forced true at the end of the far pass) and the mid-scene block is
-		// disarmed by InMainScenePass - so shell water refracts a buffer captured during the FAR pass,
-		// which by construction cannot contain anything nearer than M: the far pass's near plane
-		// clipped it away. Treading water, the player's own arms are inside M and are therefore drawn
-		// ONLY in the shell ([ShellDraw] 0004-0013 and 0033-0037), while the water surface covering
-		// their submerged half is also inside M and drawn only in the shell (0040, WATER007) - after
-		// them. That water then overwrote the arms with a refraction of a buffer they were not in, so
-		// the submerged part of the arms vanished while the fists above the waterline, which no water
-		// covers, stayed correct.
-		//
-		// Take the shell's own capture here, at its first NEAR water draw. That is the same draw the
-		// far pass's mid-scene blit fires on, so the capture lands at exactly the same point in the
-		// engine's draw order: after the shell's opaque geometry, its EQUAL-depth detail passes and
-		// its grass, and before any near water. Same WATER + digit + number < 12 discriminator as the
-		// block above (LOD water binds WATER012+, near water WATER000-011); LOD water is deliberately
-		// not a trigger, as it draws before the detail and grass passes and every one of its quads is
-		// tens of thousands of units away, hence clipped by the shell's far plane at M.
-		//
-		// MASKED to the shell's own coverage, which is load bearing: by now the FAR pass has shaded ITS
-		// water into the scene target beyond M, and shell water's +0.01 UV tap crosses the boundary into
-		// it and extinguishes it twice. See CaptureShellRenderedBuffer; on failure the blind blit runs.
-		//
-		// (2) TESR_DepthBufferPreWater, which the swap block below binds as those same water draws'
-		// DEPTH term. It is resolved during the far pass too, so at shell-covered pixels it holds what
-		// the far pass drew behind them - the lake bottom, treading water - and the arms that (1)
-		// restores then shade as if they were lying on it. Clamp the shell's coverage to depth 0,
-		// which decodes to exactly z = M: the arms shade as ~M units under water instead of ~200.
-		// See ShaderManager::FlattenShellPreWaterDepth for why the exact value is unreachable without
-		// moving the decode range, and why the clamp has to land HERE rather than after the shell like
-		// the TESR_DepthBuffer flatten: the shell's water draws read the texture while the shell is
-		// still running, and this is the last moment at which the shell's depth-stencil holds all of
-		// its geometry and none of its water.
-		//
-		// Once per shell and only when the shell actually contains near water, so the added cost is
-		// one full-resolution StretchRect, one depth resolve and one full-screen quad in exactly the
-		// frames that exhibit the defects and nothing at all otherwise. PassNear implies ShellActive,
-		// so this is inert with the near shell off and the far pass is left byte-identical.
 		if (RenderManager::CurrentPass == RenderManager::PassNear && !ShellNearWaterPrepDone && PixelShader->isNearWater) {
 			ShellNearWaterPrepDone = true;
-			FrameProfiler::Scope ShellWaterScope(FrameProfiler::Buck_HookShellWater);
-			bool MaskResolved = TheShaderManager->CaptureShellRenderedBuffer();
-			bool Captured = MaskResolved;
-			if (!Captured && TheRenderManager->currentRTGroup && TheShaderManager->RenderedSurface) {
-				TheRenderManager->device->StretchRect(TheRenderManager->currentRTGroup->RenderTargets[0]->data->Surface, NULL, TheShaderManager->RenderedSurface, NULL, D3DTEXF_NONE);
-				Captured = true;
-			}
-			// Close the SetCT colour latch, but only if something captured. The far pass normally closes
-			// it already, but it need not have contained a single HasRB draw (an interior water feature
-			// wholly within M), and a later fire would re-capture after the water is already down.
-			if (Captured) TheShaderManager->RenderedBufferFilled = true;
-			// After the capture, so the mask resolve it takes is handed on rather than repeated. The
-			// clamp restores every target and state it touches, so the water draw being set up here is
-			// unaffected.
-			TheShaderManager->FlattenShellPreWaterDepth(MaskResolved);
+			PrepareShellNearWater();
 		}
 
 		if (PixelShader->ShaderProg && TheRenderManager->renderState->GetPixelShader() != PixelShader->ShaderHandle) PixelShader->ShaderProg->SetCT();
 
-		// Water must never sample a depth buffer that contains water. TESR_DepthBuffer is the far
-		// pass's END-of-pass resolve, so during the shell it carries the far pass's own near-water
-		// SURFACES - with a hole punched in them below the band boundary, where that surface was
-		// clipped away by the far pass's near plane at M. WATER*.pso reconstructs world positions
-		// from readDepth() at OFFSET texture coordinates (refract at +0.01 UV, reflect at +0.05), so
-		// for pixels within that offset of the boundary the sample lands on the far pass's water
-		// surface instead of the lake bottom: the reconstructed point sits at water level, the
-		// extinction and volume-colour terms (both keyed on refract_uw_pos) collapse to nothing, and
-		// the water renders as if it were not there. The offset is a SCREEN-space constant, which is
-		// why the strip measured the same pixel height at M = 8, 15 and 30 - the observation that
-		// ruled out every geometric explanation.
-		//
-		// TESR_DepthBufferPreWater is resolved during the far pass BEFORE any near water is drawn
-		// (the first near-water bind above, or the end-of-main-pass fallback in TrackRenderObject),
-		// so it holds the scene behind the water with no surface in it and no cliff at M. It is
-		// resolved from the same far-pass depth-stencil, so it carries the same (M, F) encoding as
-		// TESR_DepthBuffer and the fa7f347 decode through TESR_DepthProjectionTransform stays
-		// correct unchanged. It is always this frame's content by the time the shell runs, because
-		// the fallback fills it before the shell starts.
-		//
-		// Per-draw rather than inside SetCT: SetCT only runs when the pixel shader handle changes,
-		// and the shell can re-issue the same water shader the far pass ended with.
-		// PassNear implies ShellActive, so this is inert with the near shell off, and the far pass
-		// is left byte-identical.
-		// The name test matches WATERHMAP* as well as the numbered water surface shaders, unlike every
-		// other water discriminator on this feature. That is deliberate and inert: the swap is keyed on
-		// a sampler actually holding TESR_DepthBuffer, and the height-map shaders do not declare it, so
-		// the identity test never matches and no register is touched. Widening it costs nothing and
-		// keeps the block correct if a height-map shader ever does bind the depth buffer.
-		if (RenderManager::CurrentPass == RenderManager::PassNear && PixelShader->ShaderProg &&
-			TheRenderManager->DepthTexturePreWater && PixelShader->ShaderName && !memcmp(PixelShader->ShaderName, "WATER", 5)) {
-			ShaderValue* Values = PixelShader->ShaderProg->TextureShaderValues;
-			for (UInt32 c = 0; c < PixelShader->ShaderProg->TextureShaderValuesCount; c++) {
-				if (Values[c].Texture && Values[c].Texture->Texture == TheRenderManager->DepthTexture && Values[c].RegisterIndex < 16) {
-					TheRenderManager->device->SetTexture(Values[c].RegisterIndex, TheRenderManager->DepthTexturePreWater);
-					ShellWaterDepthSamplers |= 1 << Values[c].RegisterIndex;
-				}
-			}
-		}
+		if (RenderManager::CurrentPass == RenderManager::PassNear) BindShellWaterPreWaterDepth(PixelShader);
 
 		if (RenderWindowRootNode) {
 			char Name[256];
@@ -943,43 +865,7 @@ UInt32 RenderHook::TrackSetupShaderPrograms(NiGeometry* Geometry, NiSkinInstance
 		result = (this->*SetupShaderPrograms)(Geometry, SkinInstance, SkinPartition, GeometryBufferData, PropertyState, EffectState, WorldTransform, WorldBound);
 	}
 
-	// Only c254/c255 belong here: they carry the collision sources made relative to THIS instance's
-	// world position, so they genuinely change per draw.
-	//
-	// c253 (TESR_GrassCollisionParams) used to be re-uploaded here too and no longer is. The grass
-	// vertex shaders declare it at register(c253), it is mapped in SetConstantTableValue1, and it
-	// survives into their compiled constant table - so ShaderRecord::SetCT already uploads it, from
-	// the same ShaderConst.Grass.CollisionParams, at every grass shader bind. UpdateGrass writes that
-	// value once a frame, so the per-draw copy was writing identical bytes over themselves.
-	//
-	// The reason this is safe rather than merely redundant-looking: SetCT runs BEFORE the engine's
-	// SetupShaderPrograms call, so it would only be insufficient if the engine clobbered c253 while
-	// setting up the draw. It does not touch that band. TESR_GrassScale (c248) and
-	// TESR_ShadowCameraToLightTransformNear (c249-c252) sit in the same high registers, have no
-	// post-engine re-upload at all, and work - grass scaling and grass shadows would both be broken
-	// if the engine wrote there.
-	//
-	// The vertex constant space is full - c0-c19 belong to the engine, InstanceData[228] covers
-	// c20-c247, and c248-c255 are ours - so the two recovery weights ride in c255.zw rather than in
-	// a register of their own. That is why there are three collision sources and not four: source 0
-	// is the player at an implicit weight of 1.0, leaving exactly two weights to store.
-	if (VertexShader && VertexShader->ShaderProg && VertexShader->isGrass) {
-		float cx = WorldTransform->pos.x;
-		float cy = WorldTransform->pos.y;
-		D3DXVECTOR4 xy0(
-			TheShaderManager->GrassCollisionSources[0].x - cx,
-			TheShaderManager->GrassCollisionSources[0].y - cy,
-			TheShaderManager->GrassCollisionSources[1].x - cx,
-			TheShaderManager->GrassCollisionSources[1].y - cy);
-		D3DXVECTOR4 xy1(
-			TheShaderManager->GrassCollisionSources[2].x - cx,
-			TheShaderManager->GrassCollisionSources[2].y - cy,
-			TheShaderManager->GrassCollisionWeights[0],
-			TheShaderManager->GrassCollisionWeights[1]);
-		TheRenderManager->device->SetVertexShaderConstantF(254, (const float*)&xy0, 1);
-		TheRenderManager->device->SetVertexShaderConstantF(255, (const float*)&xy1, 1);
-
-	}
+	if (VertexShader && VertexShader->ShaderProg && VertexShader->isGrass) SetGrassCollisionConstants(WorldTransform);
 
 	return result;
 }
@@ -1008,8 +894,8 @@ NiPixelData* __cdecl TrackSaveGameScreenshot(int* pWidth, int* pHeight) {
 
 	NiPixelData* r = NULL;
 
-	// Hold the visible frame's image across the screenshot render, which rasterises into this very
-	// buffer. Best-effort: if the backup cannot be created the save still proceeds, it just flashes.
+	// Hold the visible frame across the screenshot render, which rasterises into
+	// this buffer. Best-effort: without the backup the save just flashes.
 	bool Restore = false;
 	if (SceneHdrSurface) {
 		D3DSURFACE_DESC Desc;
@@ -1051,17 +937,12 @@ void __cdecl TrackSetShaderPackage(int Arg1, int Arg2, UInt8 Force1XShaders, int
 void (__cdecl * RenderObject)(NiCamera*, NiNode*, NiCullingProcess*, NiVisibleArray*) = (void (__cdecl *)(NiCamera*, NiNode*, NiCullingProcess*, NiVisibleArray*))0x0070C0B0;
 void __cdecl TrackRenderObject(NiCamera* Camera, NiNode* Object, NiCullingProcess* CullingProcess, NiVisibleArray* VisibleArray) {
 
-	// Main-pass detection, hardened: the observed main-scene render ([ReflDbg] capture, 2026-07-17)
-	// always arrives with Camera == WorldSceneGraph->camera and 0xB42E86 clear. The camera check and
-	// engine reflection flag guard against other renders of the same root (the game CAN render
-	// WorldSceneGraph off-screen — e.g. the water function at 0x4D040B/0x4D04A8 passes its own
-	// camera, and only its first call sets 0xB42E86). Note the 1024x1024 water-reflection map seen
-	// in captures renders AFTER the main pass without hitting this hook at all — its protection is
-	// the InMainScenePass gate on the water-bind trigger, not these checks.
+	// The camera and reflection-flag checks reject off-screen renders of the same
+	// root (the water function at 0x4D040B/0x4D04A8 passes its own camera).
 	bool MainScenePass = (Object == WorldSceneGraph) && (Camera == WorldSceneGraph->camera) && !*kIsRenderingWaterReflections;
 	if (MainScenePass) {
 		TheShaderManager->InMainScenePass = true;
-		TheShaderManager->PreWaterDepthBufferFilled = false; // reset before the main pass so only main-pass water binds populate the pre-water depth
+		TheShaderManager->PreWaterDepthBufferFilled = false;
 		TheShaderManager->ClearPOMDepth();
 		if (TheSettingManager->SettingsMain.Develop.LogShaders && TheKeyboardManager->OnKeyDown(TheSettingManager->SettingsMain.Develop.LogShaders)) { // [GrassOrderDbg]
 			GrassOrderCapture = true;
@@ -1074,16 +955,9 @@ void __cdecl TrackRenderObject(NiCamera* Camera, NiNode* Object, NiCullingProces
 		RenderManager::ApplyPass(RenderManager::PassFar);
 	}
 	RenderObject(Camera, Object, CullingProcess, VisibleArray);
-	// Load-bearing HERE, before the shell render below - not just bookkeeping. Two things depend on it
-	// being false for everything that follows the far pass:
-	//  - it disarms the near-water mid-scene trigger (line ~510), which would otherwise re-fire on the
-	//    shell's copy of the water surface and run a second shadow apply over an already-applied frame;
-	//  - it closes ShaderRecord::SetCT's depth resolve for the rest of the FRAME, which is what stops a
-	//    HasDB bind inside the shell, in the first-person node render, or in the off-screen water
-	//    reflection render from re-resolving the cleared depth-stencil over the far pass's resolve (and
-	//    over the post-shell flatten). Unlike the DepthBufferFilled latch it protects, this flag is not
-	//    reset by BeginScene, which is the whole point.
-	// Do not move this after the shell block.
+	// Clear before the shell renders: this disarms the mid-scene shadow trigger and
+	// SetCT's depth resolve for the rest of the frame (shell, first-person and
+	// reflection renders). Unlike the latches, BeginScene does not reset it.
 	if (MainScenePass) TheShaderManager->InMainScenePass = false;
 	if (MainScenePass) TheShaderManager->BindPOMDepth(false);
 	if (Object == WorldSceneGraph && GrassOrderCapture) { // [GrassOrderDbg]
@@ -1092,65 +966,33 @@ void __cdecl TrackRenderObject(NiCamera* Camera, NiNode* Object, NiCullingProces
 	}
 	if (MainScenePass) {
 		if (!TheShaderManager->PreWaterDepthBufferFilled) {
-			// No near-water draw this frame (the common case in interiors): resolve the receiver depth
-			// (== full scene depth) and run the shadow apply now, at the end of the main scene render.
+			// No near-water draw this frame (common in interiors): resolve the receiver
+			// depth and apply shadows now, at the end of the main scene render.
 			TheRenderManager->ResolvePreWaterDepthBuffer();
 			TheShaderManager->RenderShadowsMidScene();
 			TheShaderManager->PreWaterDepthBufferFilled = true;
 		}
-		// Resolves the FAR pass depth - deliberately before the clear, because the clear destroys it.
-		// What post-processing therefore gets is the [M, F] band only: shell pixels carry the depth
-		// of whatever is behind them, and anything the far pass never covered stays at 1.0. That is
-		// the accepted ~20 cm limitation. The buffer is encoded with near = M, which is why
-		// SetupSceneCamera republishes the (M, F) depth row at PassFull.
+		// Resolve the far pass's depth before the shell clears it, so post-processing
+		// sees only [M, F]. SetCT cannot resolve over it later: InMainScenePass is
+		// already cleared.
 		TheRenderManager->ResolveDepthBuffer();
-		// This resolve is the only valid one for the rest of the frame, and nothing here has to say so:
-		// SetCT's depth resolve is gated on TheShaderManager->InMainScenePass, cleared just above, so a
-		// HasDB bind inside the shell (a water body wholly within M, an interior water feature), in the
-		// first-person node render, or in the off-screen reflection render cannot resolve the cleared
-		// depth-stencil over it. Deliberately NOT closing DepthBufferFilled by hand here: that latch is
-		// per-scene, BeginScene reopens it, and writing it would also fire with the shell disabled,
-		// where the requirement is that this path stay byte-identical to vanilla.
 
 		if (RenderManager::ShellActive) {
 			UInt8 Debug = TheSettingManager->SettingsMain.Develop.NearShellDebug;
 
-			// Debug 2 skips the shell, rendering it as a hole - the quickest way to see what it holds.
+			// NearShellDebug 2 skips the shell, leaving a hole that shows what it holds.
 			if (Debug != 2) {
-				// Arm the shell's own near-water preparation - its TESR_RenderedBuffer capture and its
-				// TESR_DepthBufferPreWater clamp (TrackSetupShaderPrograms). Here rather than at
-				// far-pass entry, so it can only ever be armed for a shell that runs.
+				// Armed here, not at far-pass entry, so it only arms for a shell that runs.
 				ShellNearWaterPrepDone = false;
 				RenderManager::ApplyPass(RenderManager::PassNear);
-				// Clear to one ULP below 1.0, not 1.0. Sky, cloud and sun shaders pin z == w
-				// (SKYCLOUDS.vso, SKYT.vso), landing at depth exactly 1.0 (D24 0xFFFFFF); against a
-				// 1.0 clear their LESSEQUAL test passes and they paint over the entire far pass.
-				// 0xFFFFFE rejects them with no name matching, and catches ANY z == w shader rather
-				// than a hardcoded list. Cost to real geometry: depth in the shell is
-				// d(z) = M/(M-n) * (1 - n/z), so d = 0.99999994 is z ~ 14.99999 at n=1, M=15 - the
-				// shell loses its final 0.00001 units, far below the depth buffer's resolution there.
-				// The engine's Clear() gives no control of the clear value, hence the device call.
+				// Clear to one ULP below 1.0 so z == w sky shaders fail LESSEQUAL instead of
+				// painting over the far pass; the shell loses only ~0.00001 units of depth.
+				// The engine's Clear() cannot set the value, hence the device call.
 				TheRenderManager->device->Clear(0, NULL, D3DCLEAR_ZBUFFER, 0, RenderManager::ShellClearDepth, 0);
 				RenderObject(Camera, Object, CullingProcess, VisibleArray);
-				// Shell water draws leave TESR_DepthBufferPreWater bound to the sampler that
-				// TESR_DepthBuffer normally occupies (TrackSetupShaderPrograms). Put it back before
-				// anything else can inherit that binding - notably the water REFLECTION render, which
-				// runs after the main pass with its own camera and re-binds water shaders, and where
-				// SetCT does not necessarily re-run.
-				if (ShellWaterDepthSamplers) {
-					for (UInt32 s = 0; s < 16; s++) {
-						if (ShellWaterDepthSamplers & (1 << s)) TheRenderManager->device->SetTexture(s, TheRenderManager->DepthTexture);
-					}
-					ShellWaterDepthSamplers = 0;
-				}
-				// Flatten TESR_DepthBuffer to "exactly at M" wherever the shell drew. HERE and nowhere
-				// earlier: water pixel shaders sample TESR_DepthBuffer DURING the shell and need the
-				// untouched far-pass resolve to compute water depth (commit fa7f347) - flattening before
-				// the last shell draw would undo that fix and make near water shallow again. And it must
-				// happen before TrackProcessImageSpaceShaders, which is where the ~16 image-space effects
-				// that sample the buffer actually run. Nothing between the two touches the texture: the
-				// SetCT resolve is closed for the rest of the frame (InMainScenePass, cleared above) and
-				// the first-person node branch below skips its own resolve while the shell is active.
+				RestoreShellWaterDepthSamplers();
+				// Flatten only after the last shell draw, since shell water reads the untouched
+				// far-pass depth, and before the image-space effects that sample it.
 				TheShaderManager->FlattenShellDepth();
 			}
 
@@ -1164,11 +1006,8 @@ void __cdecl TrackRenderObject(NiCamera* Camera, NiNode* Object, NiCullingProces
 		}
 	}
 	else if (Object == Player->firstPersonNiNode) {
-		// This is a separate, LATER top-level call: the main pass has already resolved and then
-		// cleared depth, and the depth buffer now holds only the shell (1.0 almost everywhere at
-		// M = 15). Re-resolving it would overwrite the good far-pass depth with a blank one and blind
-		// every image-space effect in first person. Before the shell existed this was a harmless
-		// duplicate of the main-pass resolve; the clear is what made it destructive.
+		// With the shell active, depth was already resolved and then cleared, so a
+		// resolve here would replace the far-pass depth with the near-blank shell.
 		if (!RenderManager::ShellActive) TheRenderManager->ResolveDepthBuffer();
 		TheRenderManager->Clear(NULL, NiRenderer::kClear_ZBUFFER);
 		RenderObject(Camera, Object, CullingProcess, VisibleArray);
@@ -1341,12 +1180,8 @@ void __cdecl TrackProcessImageSpaceShaders(NiDX9Renderer* Renderer, BSRenderedTe
 		}
 	}
 	else if (TheRenderManager->IsSaveGameScreenShot) {
-		// Both calls above are inside the gate, and the gate is false for exactly this case:
-		// RenderedTexture2 is the save's thumbnail texture and no menu is open. The engine's
-		// image-space chain is what writes that texture, so skipping it left the thumbnail at
-		// whatever the pooled texture already held - the black quicksave screenshot. OR's own
-		// effect chain stays out of it (it is built around the full-resolution screen buffers,
-		// not this render's narrowed viewport); the engine's chain alone produces the thumbnail.
+		// The engine's image-space chain writes the save thumbnail, so run it; OR's
+		// effect chain is built for full-resolution buffers and stays out.
 		ProcessImageSpaceShaders(Renderer, RenderedTexture1, RenderedTexture2);
 	}
 
@@ -1357,7 +1192,8 @@ void __cdecl TrackProcessImageSpaceShaders(NiDX9Renderer* Renderer, BSRenderedTe
 			TheRenderManager->device->StretchRect(TheRenderManager->defaultRTGroup->RenderTargets[0]->data->Surface, NULL, TheRenderManager->currentRTGroup->RenderTargets[0]->data->Surface, &TheRenderManager->SaveGameScreenShotRECT, D3DTEXF_NONE);
 	}
 
-	// Latch the engine's shared scene buffer from normal frames, so a save knows what to preserve.
+	// Latch the engine's shared scene buffer from normal frames, so a save knows
+	// what to preserve.
 	if (!RenderedTexture2 && RenderedTexture1 && RenderedTexture1->RenderedTexture && RenderedTexture1->RenderedTexture->buffer)
 		SceneHdrSurface = RenderedTexture1->RenderedTexture->buffer->data->Surface;
 
