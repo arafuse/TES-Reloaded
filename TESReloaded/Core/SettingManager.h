@@ -101,6 +101,11 @@ struct SettingsMainStruct {
 		UInt8	AnisotropicFilter;
 		UInt16	ScreenshotKey;
 		int		WaterReflectionMapSize;
+		// Smallest an object's world bound may appear and still be drawn into the water
+		// reflection map, as a share of screen area: the product of its two NDC half-extents
+		// times 100, so roughly 100 for a bound filling the view and falling as 1/distance^2.
+		// Useful values are well under 1. 0 disables the cull entirely.
+		float	WaterReflectionCullMinSize;
 		float	FarPlaneDistance;
 		float	FoV;
 		bool	NearShellEnabled;

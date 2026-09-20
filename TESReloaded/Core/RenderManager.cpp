@@ -123,6 +123,45 @@ void RenderManager::GetSceneCameraData() {
 
 }
 
+// Apparent size of a world bound, as its half-extent in normalised device coordinates on each
+// axis - 1.0 spans half the viewport. Multiply the two for a share of screen area. Used to cull
+// objects too small on screen to be worth drawing into an offscreen pass.
+//
+// MUST stay a function of camera POSITION only, never of camera orientation. The engine's
+// projection is Proj._11 = 2 / (Right - Left) with _34 = 1 (see SetupSceneCamera), so the frustum
+// extents are measured at unit distance and tan(hfov/2) is (Right - Left) / 2; a bound of radius R
+// at distance d therefore covers R / d / tan(hfov/2) of the half-viewport. Distance, not the depth
+// along the camera's forward axis: a forward-axis projection is d * cos(theta), which changes as
+// the camera pans over a stationary object and sends the size to infinity as theta approaches a
+// right angle, so objects off to the side escape the cull and then pop as they swing forward.
+//
+// llde/TESReloaded10's version of this helper projects the bound offset onto ITSELF, making its
+// "distance" the SQUARED distance, so its sizes fall off as 1/d^2 and its thresholds are not
+// comparable to these. It is rotation-invariant, though, which is the property that matters most
+// here and the one worth keeping.
+void RenderManager::GetScreenSpaceBoundSize(NiPoint2* BoundSize, NiBound* Bound, NiCamera* Camera, float ZeroTolerance) {
+
+	NiPoint3* WorldTranslate = &Camera->m_worldTransform.pos;
+	NiPoint3 BoundPos = { Bound->Center.x - WorldTranslate->x, Bound->Center.y - WorldTranslate->y, Bound->Center.z - WorldTranslate->z };
+	float ViewDistSq = BoundPos * BoundPos;
+	float Ratio = Bound->Radius;
+
+	// On top of the camera: no meaningful size, and a caller thresholding on "too small" must not
+	// cull it. An orthographic camera has no distance falloff at all.
+	if (!Camera->Frustum.Ortho) {
+		if (ViewDistSq < ZeroTolerance) {
+			BoundSize->x = FLT_MAX;
+			BoundSize->y = FLT_MAX;
+			return;
+		}
+		Ratio /= sqrt(ViewDistSq);
+	}
+
+	BoundSize->x = Ratio * 2.0f / (Camera->Frustum.Right - Camera->Frustum.Left);
+	BoundSize->y = Ratio * 2.0f / (Camera->Frustum.Top - Camera->Frustum.Bottom);
+
+}
+
 void RenderManager::SetupSceneCamera() {
 
 	NiCamera* Camera = WorldSceneGraph->camera;

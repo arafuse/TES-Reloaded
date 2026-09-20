@@ -291,6 +291,7 @@ public:
 	void	TrackHDRRender(NiScreenElements*, BSRenderedTexture**, BSRenderedTexture**, UInt8);
 	UInt32	TrackSetupShaderPrograms(NiGeometry*, NiSkinInstance*, NiSkinPartition::Partition*, NiGeometryBufferData*, NiPropertyState*, NiDynamicEffectState*, NiTransform*, UInt32);
 	void	TrackCullingBSFadeNode(NiCullingProcess*);
+	void	TrackWaterReflectionCull(NiAVObject*);
 	float	TrackFarPlane();
 	HRESULT TrackSetSamplerState(UInt32, D3DSAMPLERSTATETYPE, UInt32, UInt8);
 #elif defined(SKYRIM)
@@ -517,6 +518,58 @@ void RenderHook::TrackHDRRender(NiScreenElements* ScreenElements, BSRenderedText
 	}
 
 }
+
+#if defined(OBLIVION)
+// Vtables used to recognise the scene-graph node types the reflection cull may drop. Own copies:
+// ShadowManager.cpp's set is file-static, and only the three container node types matter here.
+static const void* VFTNiNodeRefl			= (void*)0x00A7E38C;
+static const void* VFTBSFadeNodeRefl		= (void*)0x00A3F944;
+static const void* VFTBSFaceGenNiNodeRefl	= (void*)0x00A64F5C;
+
+// TESWaterCullingProcess_ReflectionCull (0x0049CBF0), the per-object entry point of the culling
+// process that fills the water reflection map. The reflection pass re-renders the scene into a
+// separate target after the main pass (see memory water-reflection-pass-detection), so anything
+// dropped here is a draw saved outright.
+//
+// Two rejections, both cheap and both conservative:
+//   * the bound is too small on screen to survive the reflection map's downscale, and
+//   * the whole bound sits below the water plane, so it cannot appear in a reflection of it.
+// Only container nodes are tested; geometry and anything else is passed straight through, which
+// keeps the cull at the subtree granularity the engine already walks.
+//
+// The size test is taken against the main scene camera, not the mirrored reflection camera. That
+// is deliberate and approximate: the two see the same world at nearly the same distance, so an
+// object too small to matter in the player's view is too small in the reflection as well, and the
+// scene camera is the one already published here.
+//
+// Off unless Main.WaterReflectionCullMinSize is set: the threshold is a share of screen area
+// (see GetScreenSpaceBoundSize for the scale) and the useful value depends on reflection map size
+// and view distance, so it wants tuning in game rather than a guessed default.
+void (__thiscall RenderHook::* WaterReflectionCull)(NiAVObject*);
+void (__thiscall RenderHook::* TrackWaterReflectionCull)(NiAVObject*);
+void RenderHook::TrackWaterReflectionCull(NiAVObject* Object) {
+
+	float MinScreenPercent = TheSettingManager->SettingsMain.Main.WaterReflectionCullMinSize;
+
+	if (MinScreenPercent > 0.0f && Object && WorldSceneGraph) {
+		const void* VFT = *(const void**)Object;
+		if (VFT == VFTNiNodeRefl || VFT == VFTBSFadeNodeRefl || VFT == VFTBSFaceGenNiNodeRefl) {
+			NiCamera* Camera = WorldSceneGraph->camera;
+			NiBound* Bound = Object->GetWorldBound();
+			if (Camera && Bound && Bound->Radius > 0.0f) {
+				// Bound top, not the node pivot: the pivot can sit arbitrarily far from the mesh.
+				if (Bound->Center.z + Bound->Radius < TheShaderManager->ShaderConst.Water.waterSettings.x) return;
+
+				NiPoint2 BoundSize = { 0.0f, 0.0f };
+				TheRenderManager->GetScreenSpaceBoundSize(&BoundSize, Bound, Camera);
+				if (BoundSize.x * BoundSize.y * 100.0f < MinScreenPercent) return;
+			}
+		}
+	}
+	(this->*WaterReflectionCull)(Object);
+
+}
+#endif
 
 float (__thiscall RenderHook::* FarPlane)();
 float (__thiscall RenderHook::* TrackFarPlane)();
@@ -1318,6 +1371,8 @@ void CreateRenderHook() {
 	TrackHDRRender							= &RenderHook::TrackHDRRender;
 	*((int*)&FarPlane)						= 0x00410EE0;
 	TrackFarPlane							= &RenderHook::TrackFarPlane;
+	*((int*)&WaterReflectionCull)			= 0x0049CBF0;
+	TrackWaterReflectionCull				= &RenderHook::TrackWaterReflectionCull;
 	*((int*)&SetSamplerState)				= 0x0077B610;
 	TrackSetSamplerState					= &RenderHook::TrackSetSamplerState;
 #elif defined(SKYRIM)
@@ -1344,6 +1399,7 @@ void CreateRenderHook() {
 	DetourAttach(&(PVOID&)EndTargetGroup,				*((PVOID*)&TrackEndTargetGroup));
 	DetourAttach(&(PVOID&)HDRRender,					*((PVOID*)&TrackHDRRender));
 	DetourAttach(&(PVOID&)FarPlane,						*((PVOID*)&TrackFarPlane));
+	DetourAttach(&(PVOID&)WaterReflectionCull,			*((PVOID*)&TrackWaterReflectionCull));
 	DetourAttach(&(PVOID&)SetSamplerState,				*((PVOID*)&TrackSetSamplerState));
 	DetourAttach(&(PVOID&)SaveGameScreenshot,					  &TrackSaveGameScreenshot);
 	//DetourAttach(&(PVOID&)SetShaderPackage,						  &TrackSetShaderPackage);

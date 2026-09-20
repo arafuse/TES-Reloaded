@@ -49,6 +49,7 @@ public:
 	void				GetSceneCameraData();
 	void				SetupSceneCamera();
 	void				SetSceneGraph();
+	void				GetScreenSpaceBoundSize(NiPoint2* BoundSize, NiBound* Bound, NiCamera* Camera, float ZeroTolerance = 1e-5f);
 
 	// --- Near shell via depth clear ------------------------------------------------------------
 	// Pass 1 renders frustum [M, F] with the depth range untouched; depth is resolved; the depth
