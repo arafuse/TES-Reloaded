@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to coding agents when working with code in this repository.
 
 ## Project Overview
 
@@ -117,10 +117,10 @@ Set `#define WaitForDebugger 1` in `Main.cpp` to spin until a debugger attaches.
 ### Coding style
 
 - Public symbols should have appropriate documentation comments.
-- Code should be self-documenting; avoid inline code comments unless absolutely necessary. Inline comments must be kept to 1-3 lines maximum, at 80 characters per line.
+- Code should be self-documenting; avoid inline code comments unless absolutely necessary. Inline comments must be kept to 1-3 lines maximum.
 
 ## Design docs and memory
 
 The agent's memory directory is a symbolic link to `memory/` in this repo, so agent memory gets committed.
 
-We do not track design documents or implementation plans in history; anything worth persisting across tasks is committed to memory.
+Changes to memory and design documents must be self-contained in their own `docs:` commits.
