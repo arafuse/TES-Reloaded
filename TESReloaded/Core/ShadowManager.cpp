@@ -1218,11 +1218,12 @@ bool ShadowManager::OrthoNeeded() {
 // Directional sun shadows only make sense in an exterior worldspace with the sun above the
 // horizon. ShadowLightDir.z is the sun's vertical component (published by ShaderManager); below a
 // small threshold (dusk/dawn/night) there is effectively no sun to cast shadows, so skip the whole
-// pass and pay nothing. UsePostProcessing gates on the feature being enabled at all.
+// pass and pay nothing. UsePostProcessing gates on the feature being enabled at all. Interiors
+// flagged BehaveLikeExterior are excluded: they have no sky exposure, so the sun casts nothing.
 bool ShadowManager::SunShadowNeeded() {
 	if (!TheSettingManager->SettingsShadows.Exteriors.UsePostProcessing) return false;
 	if (!TheShaderManager->isFullyInitialized) return false;
-	if (!Player->IsExteriorLike()) return false;
+	if (!Player->GetWorldSpace()) return false;
 	return TheShaderManager->ShaderConst.ShadowMap.ShadowLightDir.z > TheSettingManager->SettingsShadows.Exteriors.SunUpThreshold;
 }
 

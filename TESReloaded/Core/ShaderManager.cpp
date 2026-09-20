@@ -3615,7 +3615,7 @@ bool ShaderManager::CaptureDeviceState() {
 // block, restoring the exact device state the engine's state caches believe is current.
 void ShaderManager::RenderShadowsMidScene() {
 
-	bool DoSun = TheSettingManager->SettingsShadows.Exteriors.UsePostProcessing && ShadowsExteriorsEffect && Player->IsExteriorLike();
+	bool DoSun = TheSettingManager->SettingsShadows.Exteriors.UsePostProcessing && ShadowsExteriorsEffect && Player->GetWorldSpace();
 	bool DoPoint = TheSettingManager->SettingsShadows.Point.UsePostProcessing && ShadowsPointEffect
 		&& TheShadowManager && TheShadowManager->PointSlotsShaded > 0;
 	if (!DoSun && !DoPoint) return;
