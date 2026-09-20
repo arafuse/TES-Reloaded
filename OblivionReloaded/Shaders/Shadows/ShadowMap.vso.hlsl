@@ -101,6 +101,14 @@ VS_OUTPUT main(VS_INPUT IN) {
 		q28.xyzw = mul(float4x4(WindMatrices[0 + offset.x].xyzw, WindMatrices[1 + offset.x].xyzw, WindMatrices[2 + offset.x].xyzw, WindMatrices[3 + offset.x].xyzw), q59.xyzw);
 		r0.xyzw = (IN.blendindexes.x * (q28.xyzw - q59.xyzw)) + q59.xyzw;
 	}
+	else if (TESR_ShadowData.x == 3.0f) { // Branches/trunk (Speedtrees)
+		// Same bend the stock branch shaders apply (STB2005 and friends): blend the vertex toward
+		// its wind-matrix transform. Without it the trunk shadow stays at rest pose while the
+		// visible tree sways. Leaves above do this too, after their billboard expansion.
+		offset.x = IN.blendindexes.y;
+		q28.xyzw = mul(float4x4(WindMatrices[0 + offset.x].xyzw, WindMatrices[1 + offset.x].xyzw, WindMatrices[2 + offset.x].xyzw, WindMatrices[3 + offset.x].xyzw), r0.xyzw);
+		r0.xyzw = (IN.blendindexes.x * (q28.xyzw - r0.xyzw)) + r0.xyzw;
+	}
     r0 = mul(r0, TESR_ShadowWorldTransform);
 	r0 = mul(r0, TESR_ShadowViewProjTransform);
 	OUT.position = r0;

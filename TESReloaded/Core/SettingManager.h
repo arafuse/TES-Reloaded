@@ -340,6 +340,7 @@ struct SettingsShadowStruct {
 		float				RebakeMarginFar;
 		float				RebakeSunInterval;
 		bool				CacheStaticShadows;
+		bool				DynamicTrees;			// [Exteriors] DynamicTrees: redraw trees every frame so they sway
 		float				FadeTime;				// [Exteriors] FadeTime: static-map crossfade seconds (0 = off)
 		bool                UsePostProcessing;
 		bool				UseIntervalUpdate;
