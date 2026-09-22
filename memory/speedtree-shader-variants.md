@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 2d5bf1ce-a619-4141-b064-9b3913855781
-  modified: 2026-09-22T23:07:04.599Z
+  modified: 2026-09-22T23:49:17.393Z
 ---
 
 Spike findings (2026-09-22) on bending small SpeedTree trees/shrubs away from actors, like grass
@@ -27,16 +27,28 @@ the collision bend weight. Vertices are MODEL space, so actor XY must be taken i
 (inverse rot/scale of the WorldTransform). Leaves: displace `IN.position` (cluster centre) before the
 LeafBase billboard offset. Wind palette is one global (`kWindMatrixes` 0xB467B8), not per tree.
 
-**Per-tree lookup:** `TrackSetupShaderPrograms` sees every tree draw; walk `m_parent` to the node
-with vtable `0x00A65854` (BSTreeNode; `Geo->m_parent->m_parent` for leaves) and use its
-`m_kWorldBound.Radius` so branch/frond/leaf draws of one tree agree on "small".
+**Tree draws are BATCHED — `TrackSetupShaderPrograms` does NOT see each tree** (capture-measured:
+one call per ST variant per frame, carrying the first tree only). Drivers like `sub_7F6FC0` (siblings
+at 0x7F7680/7EE0/86C0/8DB0/9410) call vtable slots 12/13/14 for a batch's first geometry, then loop
+(0x7F73B0) calling only slot 13 `SetupTransformations` (+0x34) and slot 15 (+0x3C) per geometry.
+Slot 13 is 8-arg thiscall, `ret 0x20`, same args as SetupShaderPrograms (Geometry, …, NiTransform*
+world, NiBound*): branch = 0x7C9230 (BSShader base, shared — do not Detour it), leaf = 0x7F15E0,
+frond = 0x80DDA0. Per-tree hook = patch slot 13 in the three vtables (branch 0xA9459C, leaf
+0xA92844, frond 0xA9443C). Branch slot 14 (0x80FC20) just forwards to base 0x77A1F0.
 
-**Main risk:** branches are multipass. Any variant left stock won't bend, and if follow-up passes use
-ZFUNC EQUAL (as PAR's do) their displacement must be bit-identical to the first pass. Plan: same
-include call in EVERY variant that draws (13 new STB + 4 STFROND overrides). Shadows:
-`ShadowMap.vso` already has leaf (`ShadowData.x == 2`) and branch-wind (`== 3`) paths to extend.
+**Per-tree lookup:** walk `m_parent` to vtable `0x00A65854` (BSTreeNode; depth 2 for both leaves
+and branches in the capture) and use its `m_kWorldBound.Radius` so a tree's draws agree on "small".
+Measured: ShrubBoxwood 206, ShrubGenericInkberry 221 (both scale 1.31), TreeSilverBirchForest01
+4369 (scale 2.32) — a threshold of a few hundred cleanly separates shrubs.
 
-**How to apply:** before building, run the `[TreeCapDbg]` capture (RenderHook.cpp, rides the
-`[GrassOrderDbg]` one-frame capture on the `Develop.LogShaders` key) by day and at night by a torch:
-it logs every ST* pass with override flags (`*`), zfunc/zwrite/blend and the BSTreeNode bound. Record
-the results here. Related: [[speedtree-property-not-pp-lighting]], [[shader-pipeline-facts]].
+**Multipass is real (capture-measured):** first passes STB2005/2007/2009 are zfunc LESSEQUAL, zwrite
+on. Follow-ups are **ZFUNC EQUAL, zwrite off**: STB2015 (sun specular, additive ONE/ONE), STB2016
+(point specular, additive, STOCK today), STB1009 (fog, SRCALPHA/INVSRCALPHA, STOCK vs_1_1). So
+every pass must displace bit-identically — any variant left stock will z-fail on bent geometry.
+Leaves are single-pass (STLEAF001, alpha test ref 84). Shadows: `ShadowMap.vso` already has leaf
+(`ShadowData.x == 2`) and branch-wind (`== 3`) paths to extend.
+
+**How to apply:** the `[TreeCapDbg]` instrumentation in RenderHook.cpp (temporary; rides the
+`[GrassOrderDbg]` one-frame capture on the `Develop.LogShaders` key; `xform` lines come from the slot-13
+vtable wrap) is the ground truth for which variants draw. Related:
+[[speedtree-property-not-pp-lighting]], [[shader-pipeline-facts]], [[oblivion-pdb-symbols]].
