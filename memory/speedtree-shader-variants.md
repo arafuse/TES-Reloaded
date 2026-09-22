@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 2d5bf1ce-a619-4141-b064-9b3913855781
-  modified: 2026-09-22T23:49:17.393Z
+  modified: 2026-09-22T23:55:48.155Z
 ---
 
 Spike findings (2026-09-22) on bending small SpeedTree trees/shrubs away from actors, like grass
@@ -33,13 +33,28 @@ at 0x7F7680/7EE0/86C0/8DB0/9410) call vtable slots 12/13/14 for a batch's first 
 (0x7F73B0) calling only slot 13 `SetupTransformations` (+0x34) and slot 15 (+0x3C) per geometry.
 Slot 13 is 8-arg thiscall, `ret 0x20`, same args as SetupShaderPrograms (Geometry, …, NiTransform*
 world, NiBound*): branch = 0x7C9230 (BSShader base, shared — do not Detour it), leaf = 0x7F15E0,
-frond = 0x80DDA0. Per-tree hook = patch slot 13 in the three vtables (branch 0xA9459C, leaf
-0xA92844, frond 0xA9443C). Branch slot 14 (0x80FC20) just forwards to base 0x77A1F0.
+frond = 0x80DDA0. Branch slot 14 (0x80FC20) just forwards to base 0x77A1F0.
+- **Branches:** patch slot 13 in the branch vtable 0xA9459C. CAPTURE-VERIFIED: fires once per tree
+  (18 trees in one STB2005 batch), its NiTransform matches the BSTreeNode exactly, and it fires in
+  the EQUAL follow-up batches too.
+- **Leaves: slot 13 does NOT fire per tree** (once per frame, measured). The leaf loop in
+  `sub_7F86C0` skips slot 13 and calls 0x7F0BC0 directly per tree (0x7F8B51/0x7F8C66); the first
+  tree reaches it via leaf slot 11 (0x7F13B0 = UpdatePipeline wrapper). 0x7F0BC0 = leaf
+  UpdatePipeline body, thiscall 7 args `ret 0x1c` (Geometry, Skin, BuffData, PropertyState,
+  EffectState, NiTransform*, NiBound*); leaf-only callers → Detour it for per-tree leaves (static
+  evidence, not yet capture-verified). 0x7F0100 (leaf-only) takes the tree's INVERSE world matrix
+  and writes model-space light vectors to globals 0xB46738+.
+- Order trap: for a batch's first geometry, UpdatePipeline/SetupTransformations run BEFORE
+  SetupShaderPrograms, whose SetCT re-uploads every declared TESR_ constant — so per-tree collision
+  registers must NOT be TESR_-named or SetCT overwrites the first tree's values.
+- Fronds: none drawn in vanilla Great Forest captures (no STFROND pass, no frond xform).
 
 **Per-tree lookup:** walk `m_parent` to vtable `0x00A65854` (BSTreeNode; depth 2 for both leaves
-and branches in the capture) and use its `m_kWorldBound.Radius` so a tree's draws agree on "small".
-Measured: ShrubBoxwood 206, ShrubGenericInkberry 221 (both scale 1.31), TreeSilverBirchForest01
-4369 (scale 2.32) — a threshold of a few hundred cleanly separates shrubs.
+and branches) and use its `m_kWorldBound.Radius` so a tree's draws agree on "small". Measured
+bounds: shrubs 190-617 (AzaleaPink 190, Boxwood 206, Inkberry 210-221, MugoPine 253, Azalea 317,
+Euonymus 471, JapHoneysuckle 617); young trees 1331-1475 (SugarMapleYoung, WillowOakYoung,
+WhitePineYoung); forest trees 1597-4369. Shrub-only threshold ≈ 700; young trees would need ≈ 1500,
+uncomfortably close to EnglishOakForest 1597.
 
 **Multipass is real (capture-measured):** first passes STB2005/2007/2009 are zfunc LESSEQUAL, zwrite
 on. Follow-ups are **ZFUNC EQUAL, zwrite off**: STB2015 (sun specular, additive ONE/ONE), STB2016
