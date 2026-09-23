@@ -21,6 +21,8 @@ float4 WindMatrices[16] : register(c18);
 row_major float4x4 TESR_ShadowCameraToLightTransform[2] : register(c100);
 row_major float4x4 TESR_InvViewProjectionTransform : register(c150);
 
+#include "Includes/TreeCollision.hlsl"
+
 //
 //
 // Registers:
@@ -136,7 +138,9 @@ VS_OUTPUT main(VS_INPUT IN) {
     r0.y = dot(r3.wxz, BillboardUp.xyz);
     r0.x = dot(r3.xyz, BillboardUp.xyz);
     r0.zw = BillboardUp.zw;
-    q59.xyzw = ((r4.x * r0.xyzw) + (r5.x * r1.xyzw)) + IN.position.xyzw;
+    float4 leafPos = IN.position;
+    leafPos.xyz += TreeCollisionDisplacement(leafPos.xyz);
+    q59.xyzw = ((r4.x * r0.xyzw) + (r5.x * r1.xyzw)) + leafPos.xyzw;
     q28.xyzw = mul(float4x4(WindMatrices[0 + q12.x].xyzw, WindMatrices[1 + q12.x].xyzw, WindMatrices[2 + q12.x].xyzw, WindMatrices[3 + q12.x].xyzw), q59.xyzw);
     OUT.position.xyzw = mul(ModelViewProj, (IN.blendindices.x * (q28.xyzw - q59.xyzw)) + q59.xyzw);
     OUT.texcoord_0.xy = IN.texcoord_0.xy;

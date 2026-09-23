@@ -137,7 +137,7 @@ void EquipmentSetupScript::EquipItems(StepType From, StepType To) {
 			}
 		}
 	}
-	for each (TESForm* Form in Items[To - Normal]) {
+	for (TESForm* Form : Items[To - Normal]) {
 		if (LeftWeapon[To - Normal] && Form == LeftWeapon[To - Normal]) {
 			LeftWeapon[To - Normal] = NULL;
 			Process->LeftEquippingState = HighProcessEx::State::In;

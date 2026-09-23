@@ -82,6 +82,7 @@ public:
 	void					DrawGeoArrays(NiGeometryBufferData* GeoData, D3DPRIMITIVETYPE PrimitiveType, UINT VertCount);
 	void					GetCubeFaceAtUp(int Face, D3DXVECTOR3& At, D3DXVECTOR3& Up);
 	void					SetupSpeedTreeLeafShader(NiGeometry* Geo, D3DXVECTOR4* ShadowData);
+	void					SetupSpeedTreeBranchShader(NiGeometry* Geo, D3DXVECTOR4* ShadowData);
 	void					SetupAlphaTexture(NiGeometry* Geo, BSShaderProperty* LProp, D3DXVECTOR4* ShadowData);
 	void					RenderSkinnedGeo(NiGeometry* Geo, D3DXVECTOR4* ShadowData);
 	void					SetupShadowMapMatrices(ShadowMapTypeEnum ShadowMapType, SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors, D3DXVECTOR3* At, D3DXVECTOR4* ShadowLightDir);
@@ -92,7 +93,7 @@ public:
 	void					RenderActorOverlay(SettingsShadowStruct::ExteriorsStruct* S, D3DXVECTOR4* SunDir);
 	void					RenderShadowMapCellTerrain(TESObjectCELL* Cell, ShadowMapTypeEnum ShadowMapType, D3DXVECTOR4* ShadowData);
 	void					BuildExteriorGeoItems(SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors, ShadowMapTypeEnum ShadowMapType);
-	void					CollectExteriorGeo(NiAVObject* Object, bool HasWater, ShadowMapTypeEnum ShadowMapType, bool IsActorRef);
+	void					CollectExteriorGeo(NiAVObject* Object, bool HasWater, ShadowMapTypeEnum ShadowMapType, bool IsActorRef, bool IsTreeRef);
 	void					SetupCubeMapRenderState();
 	RefLightInfo			BuildRefLightInfo(TESObjectREFR* Ref);
 	void					ClearCubeMapNodeLists();
@@ -281,6 +282,7 @@ public:
 		bool                   BaseInstanceable; // instanceable ignoring the per-pass AlphaEnabled
 		bool                   HasAlphaMask;     // alpha blend/test present (blocks instancing when AlphaEnabled)
 		bool                   IsActor;          // ref is an actor/creature => dynamic caster (Stage 2 split)
+		bool                   IsTree;           // ref is a Tree form => dynamic caster while DynamicTrees is on
 	};
 	// Pooled across frames; only the *Count fields reset each frame so capacity is retained.
 	std::vector<ShadowGeoItem>  ShadowGeoPool;
@@ -295,6 +297,16 @@ public:
 	// When true (the per-frame actor overlay), CollectExteriorGeo skips rigid non-actor geometry during
 	// collection so the walk doesn't build+store matrices for statics that the overlay would only discard.
 	bool                        CollectSkinnedOnly;
+	// [Exteriors] DynamicTrees, latched once per exterior frame. When set, Tree-form refs are pulled out
+	// of the cached MapNear bake and redrawn into the per-frame MapSkin overlay instead, so their shadows
+	// follow the SpeedTree wind animation. MapFar keeps them baked: the apply shader's out-of-bounds
+	// branch returns the far term WITHOUT min-combining the skin overlay, so receivers past the near
+	// cascade have no other source of tree shadow.
+	bool                        DynamicTrees;
+	// True only while the MapSkin overlay is drawing with DynamicTrees on. Gates the branch-wind path in
+	// Render(): the cube-map passes share Render() but use ShadowCubeMap.vso, which has no such path and
+	// reads c63 as its light position.
+	bool                        TreeWindPass;
 };
 
 void CreateShadowsHook();

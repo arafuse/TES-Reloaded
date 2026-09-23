@@ -15,6 +15,8 @@ float4 ShadowProjTransform : register(c33);
 float4 WindMatrices[16] : register(c38);
 row_major float4x4 TESR_ShadowCameraToLightTransform[2] : register(c54);
 row_major float4x4 TESR_InvViewProjectionTransform : register(c70);
+
+#include "Includes/TreeCollision.hlsl"
 //
 //
 // Registers:
@@ -85,8 +87,7 @@ VS_OUTPUT main(VS_INPUT IN) {
     float4 r0;
 
     q0.x = IN.blendindices.y;
-    q6.xyzw = mul(float4x4(WindMatrices[0 + q0.x].xyzw, WindMatrices[1 + q0.x].xyzw, WindMatrices[2 + q0.x].xyzw, WindMatrices[3 + q0.x].xyzw), IN.position.xyzw);
-    r0.xyzw = (IN.blendindices.x * (q6.xyzw - IN.position.xyzw)) + IN.position.xyzw;
+    r0.xyzw = TreeBranchPosition(IN.position, IN.blendindices);
     OUT.position.xyzw = mul(ModelViewProj, r0.xyzw);
     lit1.xyz = LightPosition[2].xyz - r0.xyz;
     lit7.xyz = LightPosition[1].xyz - r0.xyz;

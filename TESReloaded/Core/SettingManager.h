@@ -53,7 +53,7 @@ static const char* IntroMovie = "";
 static const char* MainMenuMovie = "";
 static const char* MainMenuMusic = "";
 #endif
-#define WeatherColorsSize TESWeather::kNumColorTypes * TESWeather::kNumTimeOfDay * 4
+#define WeatherColorsSize ((UInt32)TESWeather::kNumColorTypes * TESWeather::kNumTimeOfDay * 4)
 #define SettingStringBuffer 80
 
 static const UInt32*	SettingGridsToLoad				= (UInt32*)kSettingGridsToLoad;
@@ -340,6 +340,7 @@ struct SettingsShadowStruct {
 		float				RebakeMarginFar;
 		float				RebakeSunInterval;
 		bool				CacheStaticShadows;
+		bool				DynamicTrees;			// [Exteriors] DynamicTrees: redraw trees every frame so they sway
 		float				FadeTime;				// [Exteriors] FadeTime: static-map crossfade seconds (0 = off)
 		bool                UsePostProcessing;
 		bool				UseIntervalUpdate;
@@ -423,6 +424,11 @@ struct SettingsGrassStruct {
 	float CollisionRecoveryTime;
 	float CollisionSpringiness;
 	int CollisionTrailSlots;
+	bool TreeCollision;					///< Bend small SpeedTree trees and shrubs away from nearby actors
+	float TreeCollisionMaxBound;		///< BSTreeNode world bound radius at or below which a tree bends
+	float TreeCollisionRadius;			///< World units around an actor that push foliage
+	float TreeCollisionStrength;		///< Maximum sideways push, world units
+	float TreeCollisionFlattenStrength;	///< Maximum downward push, world units
 };
 
 /// Parallax settings from POM\POM.ini.

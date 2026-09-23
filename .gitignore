@@ -21,3 +21,5 @@ ScreenShot*.png
 .codex/
 .worktrees/
 
+compile_commands.json
+.cache/

@@ -590,6 +590,15 @@ void SettingManager::LoadSettings() {
 	GetPrivateProfileStringA("Default", "CollisionSpringiness", "0.5", value, SettingStringBuffer, Filename);
 	SettingsGrass.CollisionSpringiness = atof(value);
 	SettingsGrass.CollisionTrailSlots = GetPrivateProfileIntA("Default", "CollisionTrailSlots", 2, Filename);
+	SettingsGrass.TreeCollision = GetPrivateProfileIntA("Default", "TreeCollision", 0, Filename);
+	GetPrivateProfileStringA("Default", "TreeCollisionMaxBound", "700.0", value, SettingStringBuffer, Filename);
+	SettingsGrass.TreeCollisionMaxBound = atof(value);
+	GetPrivateProfileStringA("Default", "TreeCollisionRadius", "100.0", value, SettingStringBuffer, Filename);
+	SettingsGrass.TreeCollisionRadius = atof(value);
+	GetPrivateProfileStringA("Default", "TreeCollisionStrength", "30.0", value, SettingStringBuffer, Filename);
+	SettingsGrass.TreeCollisionStrength = atof(value);
+	GetPrivateProfileStringA("Default", "TreeCollisionFlattenStrength", "10.0", value, SettingStringBuffer, Filename);
+	SettingsGrass.TreeCollisionFlattenStrength = atof(value);
 
 	strcpy(Filename, CurrentPath);
 	strcat(Filename, SettingsPath);
@@ -1231,6 +1240,7 @@ void SettingManager::LoadSettings() {
 	SettingsShadows.Exteriors.UseIntervalUpdate = GetPrivateProfileIntA("Exteriors", "UseIntervalUpdate", 1, Filename);
 	SettingsShadows.Exteriors.UseInstancing = GetPrivateProfileIntA("Exteriors", "UseInstancing", 1, Filename);
 	SettingsShadows.Exteriors.CacheStaticShadows = GetPrivateProfileIntA("Exteriors", "CacheStaticShadows", 1, Filename);
+	SettingsShadows.Exteriors.DynamicTrees = GetPrivateProfileIntA("Exteriors", "DynamicTrees", 0, Filename);
 	GetPrivateProfileStringA("Exteriors", "FadeTime", "1.0", value, SettingStringBuffer, Filename);
 	SettingsShadows.Exteriors.FadeTime = atof(value);
 	GetPrivateProfileStringA("Exteriors", "Darkness", "0.2", value, SettingStringBuffer, Filename);
@@ -1553,6 +1563,11 @@ void SettingManager::SaveSettings(const char* Item, const char* Definition, cons
 			WritePrivateProfileStringA("Default", "CollisionRecoveryTime", ToString(SettingsGrass.CollisionRecoveryTime).c_str(), Filename);
 			WritePrivateProfileStringA("Default", "CollisionSpringiness", ToString(SettingsGrass.CollisionSpringiness).c_str(), Filename);
 			WritePrivateProfileStringA("Default", "CollisionTrailSlots", ToString(SettingsGrass.CollisionTrailSlots).c_str(), Filename);
+			WritePrivateProfileStringA("Default", "TreeCollision", ToString(SettingsGrass.TreeCollision).c_str(), Filename);
+			WritePrivateProfileStringA("Default", "TreeCollisionMaxBound", ToString(SettingsGrass.TreeCollisionMaxBound).c_str(), Filename);
+			WritePrivateProfileStringA("Default", "TreeCollisionRadius", ToString(SettingsGrass.TreeCollisionRadius).c_str(), Filename);
+			WritePrivateProfileStringA("Default", "TreeCollisionStrength", ToString(SettingsGrass.TreeCollisionStrength).c_str(), Filename);
+			WritePrivateProfileStringA("Default", "TreeCollisionFlattenStrength", ToString(SettingsGrass.TreeCollisionFlattenStrength).c_str(), Filename);
 		}
 		else if (!strcmp(Definition, "MotionBlur")) {
 			WritePrivateProfileStringA("Effects", "MotionBlur", ToString(SettingsMain.Effects.MotionBlur).c_str(), SettingsMain.Main.MainFile);
@@ -2217,6 +2232,11 @@ SettingsList SettingManager::GetMenuSettings(const char* Item, const char* Defin
 			Settings["CollisionRecoveryTime"] = SettingsGrass.CollisionRecoveryTime;
 			Settings["CollisionSpringiness"] = SettingsGrass.CollisionSpringiness;
 			Settings["CollisionTrailSlots"] = SettingsGrass.CollisionTrailSlots;
+			Settings["TreeCollision"] = SettingsGrass.TreeCollision;
+			Settings["TreeCollisionMaxBound"] = SettingsGrass.TreeCollisionMaxBound;
+			Settings["TreeCollisionRadius"] = SettingsGrass.TreeCollisionRadius;
+			Settings["TreeCollisionStrength"] = SettingsGrass.TreeCollisionStrength;
+			Settings["TreeCollisionFlattenStrength"] = SettingsGrass.TreeCollisionFlattenStrength;
 		}
 		else if (!strcmp(Definition, "MotionBlur")) {
 			SettingsMotionBlurStruct* sms = GetSettingsMotionBlur(Section);
@@ -2945,6 +2965,16 @@ void SettingManager::SetMenuSetting(const char* Item, const char* Definition, co
 				SettingsGrass.CollisionSpringiness = Value;
 			else if (!strcmp(Setting, "CollisionTrailSlots"))
 				SettingsGrass.CollisionTrailSlots = Value;
+			else if (!strcmp(Setting, "TreeCollision"))
+				SettingsGrass.TreeCollision = Value;
+			else if (!strcmp(Setting, "TreeCollisionMaxBound"))
+				SettingsGrass.TreeCollisionMaxBound = Value;
+			else if (!strcmp(Setting, "TreeCollisionRadius"))
+				SettingsGrass.TreeCollisionRadius = Value;
+			else if (!strcmp(Setting, "TreeCollisionStrength"))
+				SettingsGrass.TreeCollisionStrength = Value;
+			else if (!strcmp(Setting, "TreeCollisionFlattenStrength"))
+				SettingsGrass.TreeCollisionFlattenStrength = Value;
 		}
 		else if (!strcmp(Definition, "MotionBlur")) {
 			SettingsMotionBlurStruct* sms = GetSettingsMotionBlur(Section);

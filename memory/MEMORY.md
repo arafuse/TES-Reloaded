@@ -9,6 +9,7 @@
 - [DistantLOD .lod file format](distantlod-file-format.md) — RE'd record layout; engine steals the fractional bits of LOD instance positions for a packed normal, so distant statics/trees sit on a 1-unit grid
 - [Distant LOD scene graph](distant-lod-scene-graph.md) — Tes->LODRoot is MISNAMED (it's LandLOD, 12 quadrants); distant statics live under DistantRefLOD via m_parent; ObjectLODRoot is the loaded grid, not LOD
 - [CellInfo::niNode is the water node](cellinfo-ninode-is-water-node.md) — the cell's OBJECTS hang off Tes->ObjectLODRoot, not CellInfo::niNode (a culled water node); how to diff loaded cells
+- [clangd / compile_commands.json](clangd-compile-commands.md) — Tools/GenerateCompileCommands.ps1 regenerates it; why i686 + -ferror-limit=0; never use MSVC `for each` (clang can't parse it)
 - [Build via PowerShell, not Bash](build-via-powershell-not-bash.md) — Bash's TEMP is literal "%TEMP%", producing a fake MSB3073 that mimics a DLL lock
 - [Verify shader edits with fxc](fxc-verify-shader-edits.md) — fxc paths and flags, /I for nested includes, byte-comparing .fxo vs HEAD to prove a gated edit is inert, BOM trap
 - [BeginScene pre-init window](beginscene-pre-init-window.md) — Player/Tes are NULL at the main menu; guard any per-frame hook that touches them
@@ -25,3 +26,5 @@
 - [Weather transition engine](weather-transition-engine.md) — weatherPercent is GAME-HOUR based (fWeatherTransMin/Max × transDelta/255); seam at call 0x543004; every snap-to-1.0 path; WeatherSmoothing's Detached rule
 - [Near-shell frame order](near-shell-frame-order.md) — load-bearing order after the far pass: clear InMainScenePass, resolve depth, shell, restore water samplers, flatten; first-person must not re-resolve
 - [Many actors = Havok, not AI](many-actors-havok-cost.md) — MEASURED: character-proxy collision (closestPointSegmentSegment 0x8D1A30, O(n²) contact prune 0x8CE770), ~3.2ms/s per actor; Calc_DetectionLevel is NOT implicated; fixed-timestep feedback loop; our shadow overlay costs +3.65ms/frame off-camera
+- [SpeedTree shader variants](speedtree-shader-variants.md) — tree draws are BATCHED: per-tree hook = branch vtable slot 13, leaf UpdatePipeline 0x7F0BC0 (NOT SetupShaderPrograms); follow-up passes are ZFUNC EQUAL; measured bounds (shrubs <700); variant map, free c240+
+- [SpeedTree props aren't PP-lighting](speedtree-property-not-pp-lighting.md) — SpeedTreeShaderLightingProperty is a SIBLING of BSShaderPPLightingProperty, so SetupAlphaTexture's textures[0] at +0xBC is OOB for tree branches whenever a pass has AlphaEnabled = 1
