@@ -51,7 +51,7 @@ void SetTreeCollisionConstants(NiGeometry* Geometry, const NiTransform* WorldTra
 	SettingsGrassStruct* Settings = &TheSettingManager->SettingsGrass;
 	bool Eligible = Active && Settings->TreeCollision && Player && WorldTransform && WorldTransform->scale > 0.0f;
 	NiNode* Tree = Eligible ? FindTreeNode(Geometry) : NULL;
-	if (Tree && Tree->m_kWorldBound.Radius <= Settings->TreeCollisionMaxBound) {
+	if (Tree && Tree->m_kWorldBound.Radius > 0.0f && Tree->m_kWorldBound.Radius <= Settings->TreeCollisionMaxBound) {
 		float Bound = Tree->m_kWorldBound.Radius;
 		float InvScale = 1.0f / WorldTransform->scale;
 		float Reach = Bound + Settings->TreeCollisionRadius;
