@@ -4,6 +4,7 @@
 #include <string>
 #include <thread>
 #include <sstream>
+#include "TreeCollision.h"
 #if defined(NEWVEGAS)
 #define RenderStateArgs 0, 0
 #define kRockParams 0x01200658
@@ -654,7 +655,7 @@ void ShadowManager::Render(NiGeometry* Geo, D3DXVECTOR4* ShadowData, const D3DMA
 		} else {
 			BSShaderProperty* LProp = (BSShaderProperty*)Geo->GetProperty(NiProperty::PropertyType::kType_Lighting);
 			if (!LProp || !LProp->IsLightingProperty()) return;
-			if (TreeWindPass && *(void**)LProp == VFTSpeedTreeBranchShaderProperty) SetupSpeedTreeBranchShader(ShadowData);
+			if (TreeWindPass && *(void**)LProp == VFTSpeedTreeBranchShaderProperty) SetupSpeedTreeBranchShader(Geo, ShadowData);
 			if (AlphaEnabled) SetupAlphaTexture(Geo, LProp, ShadowData);
 		}
 		TheRenderManager->PackGeometryBuffer(GeoData, ModelData, SkinInstance, ShaderDeclaration);
@@ -1965,6 +1966,7 @@ void ShadowManager::SetupSpeedTreeLeafShader(NiGeometry* Geo, D3DXVECTOR4* Shado
 	RenderState->SetSamplerState(0, D3DSAMP_MAGFILTER, D3DTEXF_POINT, false);
 	RenderState->SetSamplerState(0, D3DSAMP_MINFILTER, D3DTEXF_POINT, false);
 	RenderState->SetSamplerState(0, D3DSAMP_MIPFILTER, D3DTEXF_POINT, false);
+	SetTreeCollisionConstants(Geo, &Geo->m_worldTransform, TreeWindPass);
 }
 
 // Branch/trunk counterpart of SetupSpeedTreeLeafShader, for geometry carrying a
@@ -1973,9 +1975,11 @@ void ShadowManager::SetupSpeedTreeLeafShader(NiGeometry* Geo, D3DXVECTOR4* Shado
 // BLENDINDICES.x; ShadowMap.vso.hlsl reproduces that under TESR_ShadowData.x == 3. Only the matrix
 // palette is needed here -- no per-leaf table, no billboard vectors -- so this costs one
 // SetVertexShaderConstantF per branch draw.
-void ShadowManager::SetupSpeedTreeBranchShader(D3DXVECTOR4* ShadowData) {
+// It also uploads the tree collision constants, which bend only in the per-frame overlay.
+void ShadowManager::SetupSpeedTreeBranchShader(NiGeometry* Geo, D3DXVECTOR4* ShadowData) {
 	ShadowData->x = 3.0f;
 	TheRenderManager->device->SetVertexShaderConstantF(67, (float*)kWindMatrixes, 16);
+	SetTreeCollisionConstants(Geo, &Geo->m_worldTransform, TreeWindPass);
 }
 
 void ShadowManager::SetupAlphaTexture(NiGeometry* Geo, BSShaderProperty* LProp, D3DXVECTOR4* ShadowData) {

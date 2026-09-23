@@ -10,6 +10,8 @@ float4 RustleParams : register(c66);
 float4 WindMatrices[16] : register(c67);
 float4 LeafBase[48] : register(c83);
 
+#include "../ExtraShaders/Includes/TreeCollision.hlsl"
+
 struct VS_INPUT {
     float4 position : POSITION;
 	float4 texcoord_0 : TEXCOORD0;
@@ -68,6 +70,7 @@ VS_OUTPUT main(VS_INPUT IN) {
 		r0.xyz = ((1 - weight(IN.blendweight.xyz)) * q8.xyz) + q7.xyz;
 	}
 	else if (TESR_ShadowData.x == 2.0f) { // Leaves (Speedtrees)
+		r0.xyz += TreeCollisionDisplacement(r0.xyz);
 		q1.x = sqr(angler(frac((((IN.blendindexes.z / 48)) * 0.499999553) + 0.25)));
 		q6.x = angler(frac((((IN.blendindexes.z / 48)) * 0.499999553) + 0.25));
 		q7.x = sqr(q6.x);
@@ -105,6 +108,7 @@ VS_OUTPUT main(VS_INPUT IN) {
 		// Same bend the stock branch shaders apply (STB2005 and friends): blend the vertex toward
 		// its wind-matrix transform. Without it the trunk shadow stays at rest pose while the
 		// visible tree sways. Leaves above do this too, after their billboard expansion.
+		r0.xyz += TreeCollisionDisplacement(r0.xyz);
 		offset.x = IN.blendindexes.y;
 		q28.xyzw = mul(float4x4(WindMatrices[0 + offset.x].xyzw, WindMatrices[1 + offset.x].xyzw, WindMatrices[2 + offset.x].xyzw, WindMatrices[3 + offset.x].xyzw), r0.xyzw);
 		r0.xyzw = (IN.blendindexes.x * (q28.xyzw - r0.xyzw)) + r0.xyzw;
