@@ -1177,7 +1177,7 @@ void ShadowManager::FlushInstanceGroups(D3DXVECTOR4* ShadowData) {
 void ShadowManager::RenderShadowMap(ShadowMapTypeEnum ShadowMapType, SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors, D3DXVECTOR3* At, D3DXVECTOR4* ShadowLightDir, D3DXVECTOR4* ShadowData, bool SkipTerrain) {
 	IDirect3DDevice9* Device = TheRenderManager->device;
 	NiDX9RenderState* RenderState = TheRenderManager->renderState;
-	ScopeTimer profile((ShadowPhase)(Phase_PassNear + ShadowMapType)); // enum order matches Near/Far/Ortho/Skin
+	ScopeTimer profile((ShadowPhase)(Phase_PassNear + (int)ShadowMapType)); // enum order matches Near/Far/Ortho/Skin
 
 	AlphaEnabled = ShadowsExteriors->AlphaEnabled[ShadowMapType];
 	// The caller set up the matrices and culled the pool to this map's frustum.
@@ -1287,7 +1287,7 @@ void ShadowManager::RenderExteriorShadows() {
 		&& ShadowsExteriors->Forms[MapSkin].Trees;
 	D3DXVECTOR4* ShadowData = &TheShaderManager->ShaderConst.Shadow.Data;
 	D3DXVECTOR4* OrthoData  = &TheShaderManager->ShaderConst.Shadow.OrthoData;
-	D3DXVECTOR4  OrthoDir   = D3DXVECTOR3(0.05f, 0.05f, 1.0f);
+	D3DXVECTOR4  OrthoDir   = D3DXVECTOR4(0.05f, 0.05f, 1.0f, 0.0f);
 
 	CurrentVertex = ShadowMapVertex;
 	CurrentPixel  = ShadowMapPixel;
@@ -1730,7 +1730,8 @@ bool ShadowManager::PointSlotNeedsRebake(int Slot, double Checksum) {
 	NiPoint3* P = &Slot_.Light->m_worldTransform.pos;
 	D3DXVECTOR3 Pos(P->x, P->y, P->z);
 	// Covers carried torches too: a moving light is simply a moved light.
-	if (D3DXVec3Length(&(Pos - Slot_.BakedLightPos)) > PointLightMoveEpsilon) return true;
+	D3DXVECTOR3 Moved = Pos - Slot_.BakedLightPos;
+	if (D3DXVec3Length(&Moved) > PointLightMoveEpsilon) return true;
 	return Checksum != Slot_.Checksum;      // a caster within reach moved
 }
 
@@ -2058,7 +2059,8 @@ void ShadowManager::ComputeExteriorLookAt(D3DXVECTOR3& At, D3DXVECTOR3& SkinAt, 
 	At.y = LookAtPosition.y - TheRenderManager->CameraPosition.y;
 	At.z = LookAtPosition.z - TheRenderManager->CameraPosition.z;
 	D3DXVECTOR3 newPos(PlayerNode->m_worldTransform.pos.x, PlayerNode->m_worldTransform.pos.y, PlayerNode->m_worldTransform.pos.z);
-	if (D3DXVec3Length(&(newPos - LookAtPosition)) > ShadowsExteriors->ShadowMapRadius[MapNear] / 2.0f)
+	D3DXVECTOR3 Drift = newPos - LookAtPosition;
+	if (D3DXVec3Length(&Drift) > ShadowsExteriors->ShadowMapRadius[MapNear] / 2.0f)
 		LookAtPosition = newPos;
 }
 

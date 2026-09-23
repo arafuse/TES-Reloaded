@@ -53,7 +53,7 @@ static const char* IntroMovie = "";
 static const char* MainMenuMovie = "";
 static const char* MainMenuMusic = "";
 #endif
-#define WeatherColorsSize TESWeather::kNumColorTypes * TESWeather::kNumTimeOfDay * 4
+#define WeatherColorsSize ((UInt32)TESWeather::kNumColorTypes * TESWeather::kNumTimeOfDay * 4)
 #define SettingStringBuffer 80
 
 static const UInt32*	SettingGridsToLoad				= (UInt32*)kSettingGridsToLoad;

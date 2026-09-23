@@ -1,13 +1,13 @@
 char	Logger::MessageBuffer[4096];
 FILE*	Logger::LogFile;
 
-void Logger::CreateLog(char* FileName) {
+void Logger::CreateLog(const char* FileName) {
 
 	LogFile = _fsopen(FileName, "w", _SH_DENYWR);
 
 }
 
-void Logger::Log(char* Message, ...) {
+void Logger::Log(const char* Message, ...) {
 
 	va_list Args;
 

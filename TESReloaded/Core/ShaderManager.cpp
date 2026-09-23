@@ -847,7 +847,7 @@ void ShaderManager::CompileEffect(char* FileName, char* FileNameBinary, char* So
 void ShaderManager::CompileShaders(const std::filesystem::path& path){
 	for (const auto& entry : std::filesystem::directory_iterator(path)) {
 		if (entry.is_directory()) {
-			Logger::Log("Compiling Directory: %s", entry.path().string());
+			Logger::Log("Compiling Directory: %s", entry.path().string().c_str());
 			CompileShaders(entry.path()); 
 		}
 		else if (entry.is_regular_file()) {
@@ -872,7 +872,7 @@ void ShaderManager::CompileShaders(const std::filesystem::path& path){
 
 			if (validFile) {
 				char* FileName = FileNameStr.data();
-				Logger::Log("Compiling File: %s", entry.path().string());
+				Logger::Log("Compiling File: %s", entry.path().string().c_str());
 				std::ifstream FileSource(FileName, std::ios::in | std::ios::binary | std::ios::ate);
 				if (FileSource.is_open()) {
 					size_t size = FileSource.tellg();

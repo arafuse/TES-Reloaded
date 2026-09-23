@@ -63,11 +63,8 @@ $runtimeLibraries = @{
 
 # No error limit: a header opened on its own is skipped inside the forced Framework.h chain,
 # and the resulting cascade must not abort the parse before the header's own body.
-# The two warnings are constructs cl.exe accepts that clang rejects by default.
 $clangCompatibility = @(
-    '/clang:-ferror-limit=0',
-    '-Wno-enum-enum-conversion',
-    '-Wno-address-of-temporary'
+    '/clang:-ferror-limit=0'
 )
 
 $entries = foreach ($item in $evaluation.Items.ClCompile) {
