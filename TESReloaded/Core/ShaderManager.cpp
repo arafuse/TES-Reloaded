@@ -2734,8 +2734,8 @@ void ShaderManager::CreateShader(const char* Name) {
 	BSShader* (__cdecl * GetShaderDefinition)(UInt32) = (BSShader* (__cdecl *)(UInt32))0x00B55560;
 	if (!strcmp(Name, "Water")) {
 		WaterShader* WS = (WaterShader*)GetShaderDefinition(17);
-		for each (NiD3DVertexShader* VS in WS->Vertex) LoadShader(VS);
-		for each (NiD3DPixelShader* PS in WS->Pixel) LoadShader(PS);
+		for (NiD3DVertexShader* VS : WS->Vertex) LoadShader(VS);
+		for (NiD3DPixelShader* PS : WS->Pixel) LoadShader(PS);
 		LoadShader(WaterHeightMapVertexShader);
 		LoadShader(WaterHeightMapPixelShader);
 	}
@@ -2750,19 +2750,19 @@ void ShaderManager::CreateShader(const char* Name) {
 
 	if (!strcmp(Name, "Water")) {
 		WaterShader* WS = (WaterShader*)GetShaderDefinition(17)->Shader;
-		for each (NiD3DVertexShader* VS in WS->Vertex) LoadShader(VS);
-		for each (NiD3DPixelShader* PS in WS->Pixel) LoadShader(PS);
+		for (NiD3DVertexShader* VS : WS->Vertex) LoadShader(VS);
+		for (NiD3DPixelShader* PS : WS->Pixel) LoadShader(PS);
 		WaterShaderHeightMap* WSHM = (WaterShaderHeightMap*)GetShaderDefinition(19)->Shader;
 		LoadShader(WSHM->Vertex);
-		for each (NiD3DPixelShader* PS in WSHM->Pixel) LoadShader(PS);
+		for (NiD3DPixelShader* PS : WSHM->Pixel) LoadShader(PS);
 		WaterShaderDisplacement* WSD = (WaterShaderDisplacement*)GetShaderDefinition(20)->Shader;
-		for each (NiD3DVertexShader* VS in WSD->Vertex) LoadShader(VS);
-		for each (NiD3DPixelShader* PS in WSD->Pixel) LoadShader(PS);
+		for (NiD3DVertexShader* VS : WSD->Vertex) LoadShader(VS);
+		for (NiD3DPixelShader* PS : WSD->Pixel) LoadShader(PS);
 	}
 	else if (!strcmp(Name, "Grass")) {
 		TallGrassShader* TGS = (TallGrassShader*)GetShaderDefinition(2)->Shader;
-		for each (NiD3DVertexShader* VS in TGS->Vertex2) LoadShader(VS);
-		for each (NiD3DPixelShader* PS in TGS->Pixel2) LoadShader(PS);
+		for (NiD3DVertexShader* VS : TGS->Vertex2) LoadShader(VS);
+		for (NiD3DPixelShader* PS : TGS->Pixel2) LoadShader(PS);
 	}
 	else if (!strcmp(Name, "Precipitations")) {
 		for (int i = 0; i < 4; i++) LoadShader(PrecipitationVertexShaders[i]);
@@ -2770,13 +2770,13 @@ void ShaderManager::CreateShader(const char* Name) {
 	}
 	else if (!strcmp(Name, "POM")) {
 		ParallaxShader* PRS = (ParallaxShader*)GetShaderDefinition(15)->Shader;
-		for each (NiD3DVertexShader* VS in PRS->Vertex) LoadShader(VS);
-		for each (NiD3DPixelShader* PS in PRS->Pixel) LoadShader(PS);
+		for (NiD3DVertexShader* VS : PRS->Vertex) LoadShader(VS);
+		for (NiD3DPixelShader* PS : PRS->Pixel) LoadShader(PS);
 	}
 	else if (!strcmp(Name, "Skin")) {
 		SkinShader* SS = (SkinShader*)GetShaderDefinition(14)->Shader;
-		for each (NiD3DVertexShader * VS in SS->Vertex) LoadShader(VS);
-		for each (NiD3DPixelShader * PS in SS->Pixel) LoadShader(PS);
+		for (NiD3DVertexShader* VS : SS->Vertex) LoadShader(VS);
+		for (NiD3DPixelShader* PS : SS->Pixel) LoadShader(PS);
 	}
 	else if (!strcmp(Name, "Terrain")) {
 		for (int i = 0; i < 130; i++) {
@@ -2794,8 +2794,8 @@ void ShaderManager::CreateShader(const char* Name) {
 	}
 	else if (!strcmp(Name, "Blood")) {
 		GeometryDecalShader* GDS = (GeometryDecalShader*)GetShaderDefinition(16)->Shader;
-		for each (NiD3DVertexShader* VS in GDS->Vertex) LoadShader(VS);
-		for each (NiD3DPixelShader* PS in GDS->Pixel) LoadShader(PS);
+		for (NiD3DVertexShader* VS : GDS->Vertex) LoadShader(VS);
+		for (NiD3DPixelShader* PS : GDS->Pixel) LoadShader(PS);
 	}
 	else if (!strcmp(Name, "InteriorShadows")) {
 		for (int i = 0; i < 130; i++) {
@@ -2833,7 +2833,8 @@ void ShaderManager::CreateShader(const char* Name) {
 		}
 
 		ParallaxShader* PRS = (ParallaxShader*)GetShaderDefinition(15)->Shader;
-		for each (NiD3DPixelShaderEx * PS in PRS->Pixel) {
+		for (NiD3DPixelShader* Shader : PRS->Pixel) {
+			NiD3DPixelShaderEx* PS = (NiD3DPixelShaderEx*)Shader;
 			if (PS && strstr(InteriorShadowShaders, PS->ShaderName)) {
 				LoadShader(PS);
 			}
@@ -2862,7 +2863,8 @@ void ShaderManager::CreateShader(const char* Name) {
 		}
 
 		SkinShader* SS = (SkinShader*)GetShaderDefinition(14)->Shader;
-		for each (NiD3DPixelShaderEx * PS in SS->Pixel) {
+		for (NiD3DPixelShader* Shader : SS->Pixel) {
+			NiD3DPixelShaderEx* PS = (NiD3DPixelShaderEx*)Shader;
 			if (PS && strstr(ExteriorDialogShaders, PS->ShaderName)) {
 				LoadShader(PS, "Dialog");
 			}
@@ -2877,7 +2879,8 @@ void ShaderManager::CreateShader(const char* Name) {
 		}
 
 		SkinShader* SS = (SkinShader*)GetShaderDefinition(14)->Shader;
-		for each (NiD3DPixelShaderEx * PS in SS->Pixel) {
+		for (NiD3DPixelShader* Shader : SS->Pixel) {
+			NiD3DPixelShaderEx* PS = (NiD3DPixelShaderEx*)Shader;
 			if (PS && strstr(ExteriorDialogShaders, PS->ShaderName)) {
 				LoadShader(PS);
 			}
@@ -2885,8 +2888,8 @@ void ShaderManager::CreateShader(const char* Name) {
 	}
 #elif defined(SKYRIM)
 	if (!strcmp(Name, "Water")) {
-		for each (NiD3DVertexShader* VS in WaterVertexShaders) LoadShader(VS);
-		for each (NiD3DPixelShader* PS in WaterPixelShaders) LoadShader(PS);
+		for (NiD3DVertexShader* VS : WaterVertexShaders) LoadShader(VS);
+		for (NiD3DPixelShader* PS : WaterPixelShaders) LoadShader(PS);
 	}
 #endif
 
@@ -2924,34 +2927,38 @@ void ShaderManager::LoadShader(NiD3DPixelShader* Shader, const char* DirPostFix)
 
 }
 
+void ShaderManager::UnloadShader(NiD3DVertexShader* Shader) {
+
+	NiD3DVertexShaderEx* VertexShader = (NiD3DVertexShaderEx*)Shader;
+
+	if (VertexShader->ShaderProg) {
+		VertexShader->ShaderHandle = VertexShader->ShaderHandleBackup;
+		delete VertexShader->ShaderProg; VertexShader->ShaderProg = NULL;
+	}
+
+}
+
+void ShaderManager::UnloadShader(NiD3DPixelShader* Shader) {
+
+	NiD3DPixelShaderEx* PixelShader = (NiD3DPixelShaderEx*)Shader;
+
+	if (PixelShader->ShaderProg) {
+		PixelShader->ShaderHandle = PixelShader->ShaderHandleBackup;
+		delete PixelShader->ShaderProg; PixelShader->ShaderProg = NULL;
+	}
+
+}
+
 void ShaderManager::DisposeShader(const char* Name) {
 
 #if defined(NEWVEGAS)
 	BSShader* (__cdecl * GetShader)(UInt32) = (BSShader* (__cdecl *)(UInt32))0x00B55560;
 	if (!strcmp(Name, "Water")) {
 		WaterShader* WS = (WaterShader*)GetShader(17);
-		for each (NiD3DVertexShaderEx* VS in WS->Vertex) {
-			if (VS->ShaderProg) {
-				VS->ShaderHandle = VS->ShaderHandleBackup;
-				delete VS->ShaderProg; VS->ShaderProg = NULL;
-			}
-		}
-		for each (NiD3DPixelShaderEx* PS in WS->Pixel) {
-			if (PS->ShaderProg) {
-				PS->ShaderHandle = PS->ShaderHandleBackup;
-				delete PS->ShaderProg; PS->ShaderProg = NULL;
-			}
-		}
-		NiD3DVertexShaderEx* VS = (NiD3DVertexShaderEx*)WaterHeightMapVertexShader;
-		if (VS->ShaderProg) {
-			VS->ShaderHandle = VS->ShaderHandleBackup;
-			delete VS->ShaderProg; VS->ShaderProg = NULL;
-		}
-		NiD3DPixelShaderEx* PS = (NiD3DPixelShaderEx*)WaterHeightMapPixelShader;
-		if (PS->ShaderProg) {
-			PS->ShaderHandle = PS->ShaderHandleBackup;
-			delete PS->ShaderProg; PS->ShaderProg = NULL;
-		}
+		for (NiD3DVertexShader* VS : WS->Vertex) UnloadShader(VS);
+		for (NiD3DPixelShader* PS : WS->Pixel) UnloadShader(PS);
+		UnloadShader(WaterHeightMapVertexShader);
+		UnloadShader(WaterHeightMapPixelShader);
 	}
 #elif defined(OBLIVION)
 	ShaderDefinition* (__cdecl * GetShaderDefinition)(UInt32) = (ShaderDefinition* (__cdecl *)(UInt32))0x007B4290;
@@ -2963,88 +2970,29 @@ void ShaderManager::DisposeShader(const char* Name) {
 
 	if (!strcmp(Name, "Water")) {
 		WaterShader* WS = (WaterShader*)GetShaderDefinition(17)->Shader;
-		for each (NiD3DVertexShaderEx* VS in WS->Vertex) {
-			if (VS->ShaderProg) {
-				VS->ShaderHandle = VS->ShaderHandleBackup;
-				delete VS->ShaderProg; VS->ShaderProg = NULL;
-			}
-		}
-		for each (NiD3DPixelShaderEx* PS in WS->Pixel) {
-			if (PS->ShaderProg) {
-				PS->ShaderHandle = PS->ShaderHandleBackup;
-				delete PS->ShaderProg; PS->ShaderProg = NULL;
-			}
-		}
+		for (NiD3DVertexShader* VS : WS->Vertex) UnloadShader(VS);
+		for (NiD3DPixelShader* PS : WS->Pixel) UnloadShader(PS);
 		WaterShaderHeightMap* WSHM = (WaterShaderHeightMap*)GetShaderDefinition(19)->Shader;
-		NiD3DVertexShaderEx* VS = (NiD3DVertexShaderEx*)WSHM->Vertex;
-		if (VS->ShaderProg) {
-			VS->ShaderHandle = VS->ShaderHandleBackup;
-			delete VS->ShaderProg; VS->ShaderProg = NULL;
-		}
-		for each (NiD3DPixelShaderEx* PS in WSHM->Pixel) {
-			if (PS->ShaderProg) {
-				PS->ShaderHandle = PS->ShaderHandleBackup;
-				delete PS->ShaderProg; PS->ShaderProg = NULL;
-			}
-		}
+		UnloadShader(WSHM->Vertex);
+		for (NiD3DPixelShader* PS : WSHM->Pixel) UnloadShader(PS);
 		WaterShaderDisplacement* WSD = (WaterShaderDisplacement*)GetShaderDefinition(20)->Shader;
-		for each (NiD3DVertexShaderEx* VS in WSD->Vertex) {
-			if (VS->ShaderProg) {
-				VS->ShaderHandle = VS->ShaderHandleBackup;
-				delete VS->ShaderProg; VS->ShaderProg = NULL;
-			}
-		}
-		for each (NiD3DPixelShaderEx* PS in WSD->Pixel) {
-			if (PS->ShaderProg) {
-				PS->ShaderHandle = PS->ShaderHandleBackup;
-				delete PS->ShaderProg; PS->ShaderProg = NULL;
-			}
-		}
+		for (NiD3DVertexShader* VS : WSD->Vertex) UnloadShader(VS);
+		for (NiD3DPixelShader* PS : WSD->Pixel) UnloadShader(PS);
 	}
 	else if (!strcmp(Name, "Grass")) {
 		TallGrassShader* TGS = (TallGrassShader*)GetShaderDefinition(2)->Shader;
-		for each (NiD3DVertexShaderEx* VS in TGS->Vertex2) {
-			if (VS->ShaderProg) {
-				VS->ShaderHandle = VS->ShaderHandleBackup;
-				delete VS->ShaderProg; VS->ShaderProg = NULL;
-			}
-		}
-		for each (NiD3DPixelShaderEx* PS in TGS->Pixel2) {
-			if (PS->ShaderProg) {
-				PS->ShaderHandle = PS->ShaderHandleBackup;
-				delete PS->ShaderProg; PS->ShaderProg = NULL;
-			}
-		}
+		for (NiD3DVertexShader* VS : TGS->Vertex2) UnloadShader(VS);
+		for (NiD3DPixelShader* PS : TGS->Pixel2) UnloadShader(PS);
 	}
 	else if (!strcmp(Name, "POM")) {
 		ParallaxShader* PRS = (ParallaxShader*)GetShaderDefinition(15)->Shader;
-		for each (NiD3DVertexShaderEx* VS in PRS->Vertex) {
-			if (VS->ShaderProg) {
-				VS->ShaderHandle = VS->ShaderHandleBackup;
-				delete VS->ShaderProg; VS->ShaderProg = NULL;
-			}
-		}
-		for each (NiD3DPixelShaderEx* PS in PRS->Pixel) {
-			if (PS->ShaderProg) {
-				PS->ShaderHandle = PS->ShaderHandleBackup;
-				delete PS->ShaderProg; PS->ShaderProg = NULL;
-			}
-		}
+		for (NiD3DVertexShader* VS : PRS->Vertex) UnloadShader(VS);
+		for (NiD3DPixelShader* PS : PRS->Pixel) UnloadShader(PS);
 	}
 	else if (!strcmp(Name, "Skin")) {
 		SkinShader* SS = (SkinShader*)GetShaderDefinition(14)->Shader;
-		for each (NiD3DVertexShaderEx* VS in SS->Vertex) {
-			if (VS->ShaderProg) {
-				VS->ShaderHandle = VS->ShaderHandleBackup;
-				delete VS->ShaderProg; VS->ShaderProg = NULL;
-			}
-		}
-		for each (NiD3DPixelShaderEx* PS in SS->Pixel) {
-			if (PS->ShaderProg) {
-				PS->ShaderHandle = PS->ShaderHandleBackup;
-				delete PS->ShaderProg; PS->ShaderProg = NULL;
-			}
-		}
+		for (NiD3DVertexShader* VS : SS->Vertex) UnloadShader(VS);
+		for (NiD3DPixelShader* PS : SS->Pixel) UnloadShader(PS);
 	}
 	else if (!strcmp(Name, "Terrain")) {
 		for (int i = 0; i < 130; i++) {
@@ -3064,18 +3012,8 @@ void ShaderManager::DisposeShader(const char* Name) {
 	}
 	else if (!strcmp(Name, "Blood")) {
 		GeometryDecalShader* GDS = (GeometryDecalShader*)GetShaderDefinition(16)->Shader;
-		for each (NiD3DVertexShaderEx* VS in GDS->Vertex) {
-			if (VS->ShaderProg) {
-				VS->ShaderHandle = VS->ShaderHandleBackup;
-				delete VS->ShaderProg; VS->ShaderProg = NULL;
-			}
-		}
-		for each (NiD3DPixelShaderEx* PS in GDS->Pixel) {
-			if (PS->ShaderProg) {
-				PS->ShaderHandle = PS->ShaderHandleBackup;
-				delete PS->ShaderProg; PS->ShaderProg = NULL;
-			}
-		}
+		for (NiD3DVertexShader* VS : GDS->Vertex) UnloadShader(VS);
+		for (NiD3DPixelShader* PS : GDS->Pixel) UnloadShader(PS);
 	}
 	else if (!strcmp(Name, "InteriorShadows")) {
 		for (int i = 0; i < 130; i++) {
@@ -3117,7 +3055,8 @@ void ShaderManager::DisposeShader(const char* Name) {
 		}
 
 		ParallaxShader* PRS = (ParallaxShader*)GetShaderDefinition(15)->Shader;
-		for each (NiD3DPixelShaderEx * PS in PRS->Pixel) {
+		for (NiD3DPixelShader* Shader : PRS->Pixel) {
+			NiD3DPixelShaderEx* PS = (NiD3DPixelShaderEx*)Shader;
 			if (PS && PS->ShaderProg && strstr(InteriorShadowShaders, PS->ShaderName)) {
 				PS->ShaderHandle = PS->ShaderHandleBackup;
 				delete PS->ShaderProg; PS->ShaderProg = NULL;
@@ -3134,7 +3073,8 @@ void ShaderManager::DisposeShader(const char* Name) {
 		}
 
 		SkinShader* SS = (SkinShader*)GetShaderDefinition(14)->Shader;
-		for each (NiD3DPixelShaderEx * PS in SS->Pixel) {
+		for (NiD3DPixelShader* Shader : SS->Pixel) {
+			NiD3DPixelShaderEx* PS = (NiD3DPixelShaderEx*)Shader;
 			if (PS && PS->ShaderProg && strstr(ExteriorDialogShaders, PS->ShaderName)) {
 				PS->ShaderHandle = PS->ShaderHandleBackup;
 				delete PS->ShaderProg; PS->ShaderProg = NULL;
@@ -3143,18 +3083,8 @@ void ShaderManager::DisposeShader(const char* Name) {
 	}
 #elif defined(SKYRIM)
 	if (!strcmp(Name, "Water")) {
-		for each (NiD3DVertexShaderEx* VS in WaterVertexShaders) {
-			if (VS->ShaderProg) {
-				VS->ShaderHandle = VS->ShaderHandleBackup;
-				delete VS->ShaderProg; VS->ShaderProg = NULL;
-			}
-		}
-		for each (NiD3DPixelShaderEx* PS in WaterPixelShaders) {
-			if (PS->ShaderProg) {
-				PS->ShaderHandle = PS->ShaderHandleBackup;
-				delete PS->ShaderProg; PS->ShaderProg = NULL;
-			}
-		}
+		for (NiD3DVertexShader* VS : WaterVertexShaders) UnloadShader(VS);
+		for (NiD3DPixelShader* PS : WaterPixelShaders) UnloadShader(PS);
 	}
 #endif
 

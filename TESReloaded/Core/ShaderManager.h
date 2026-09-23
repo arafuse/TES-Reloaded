@@ -440,6 +440,10 @@ public:
 	void					CreateShader(const char *Name);
 	void					LoadShader(NiD3DVertexShader* Shader, const char* DirPostFix = "");
 	void					LoadShader(NiD3DPixelShader* Shader, const char* DirPostFix = "");
+	/// Reverts a shader replaced by LoadShader to its vanilla handle; no-op if it was never replaced.
+	void					UnloadShader(NiD3DVertexShader* Shader);
+	/// Reverts a shader replaced by LoadShader to its vanilla handle; no-op if it was never replaced.
+	void					UnloadShader(NiD3DPixelShader* Shader);
 	void					DisposeShader(const char* Name);
 	void					CreateEffect(EffectRecordType EffectType);
 	bool					LoadEffect(EffectRecord* TheEffect, char* Filename, char* CustomEffectName);
