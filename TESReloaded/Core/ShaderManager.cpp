@@ -1146,6 +1146,9 @@ ShaderManager::ShaderManager() {
 	DepthBufferFilled = false;
 	PreWaterDepthBufferFilled = false;
 	InMainScenePass = false;
+	GrassCollisionSourceCount = 0;
+	GrassCollisionWeights[0] = GrassCollisionWeights[1] = 0.0f;
+	for (int i = 0; i < 3; i++) GrassCollisionSources[i].x = GrassCollisionSources[i].y = 0.0f;
 	EffectVertex = NULL;
 	ShellMaskTexture = NULL;
 	ShellFlattenDepthSurface = NULL;

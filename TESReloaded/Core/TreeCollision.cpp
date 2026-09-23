@@ -59,7 +59,8 @@ void SetTreeCollisionConstants(NiGeometry* Geometry, const NiTransform* WorldTra
 		float* Slots[3] = { &Constants[1].x, &Constants[1].z, &Constants[2].x };
 		float* Weights = &Constants[3].x;
 		int Count = 0;
-		for (int i = 0; i < TheShaderManager->GrassCollisionSourceCount; i++) {
+		int SourceCount = min(TheShaderManager->GrassCollisionSourceCount, 3);
+		for (int i = 0; i < SourceCount; i++) {
 			NiPoint3 Offset;
 			Offset.x = TheShaderManager->GrassCollisionSources[i].x - WorldTransform->pos.x;
 			Offset.y = TheShaderManager->GrassCollisionSources[i].y - WorldTransform->pos.y;

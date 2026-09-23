@@ -55,7 +55,7 @@ extern "C" {
 			if (TheSettingManager->SettingsMain.Main.RagdollActorCollision) CreateRagdollCollisionHook();
 			if (TheSettingManager->SettingsMain.Main.WeatherMinTransitionTime > 0.0f) CreateWeatherSmoothingHook();
 			if (TheSettingManager->SettingsMain.GrassMode.Enabled) CreateGrassHook();
-			if (TheSettingManager->SettingsMain.Shaders.Grass) CreateTreeCollisionHook();
+			CreateTreeCollisionHook();
 			if (TheSettingManager->SettingsMain.CameraMode.Enabled) CreateCameraModeHook();
 
 			if (TheSettingManager->SettingsMain.EquipmentMode.Enabled) {

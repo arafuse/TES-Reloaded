@@ -4,7 +4,9 @@
 #include <string>
 #include <thread>
 #include <sstream>
+#if defined(OBLIVION)
 #include "TreeCollision.h"
+#endif
 #if defined(NEWVEGAS)
 #define RenderStateArgs 0, 0
 #define kRockParams 0x01200658
@@ -1966,7 +1968,9 @@ void ShadowManager::SetupSpeedTreeLeafShader(NiGeometry* Geo, D3DXVECTOR4* Shado
 	RenderState->SetSamplerState(0, D3DSAMP_MAGFILTER, D3DTEXF_POINT, false);
 	RenderState->SetSamplerState(0, D3DSAMP_MINFILTER, D3DTEXF_POINT, false);
 	RenderState->SetSamplerState(0, D3DSAMP_MIPFILTER, D3DTEXF_POINT, false);
+#if defined(OBLIVION)
 	SetTreeCollisionConstants(Geo, &Geo->m_worldTransform, TreeWindPass);
+#endif
 }
 
 // Branch/trunk counterpart of SetupSpeedTreeLeafShader, for geometry carrying a
@@ -1979,7 +1983,9 @@ void ShadowManager::SetupSpeedTreeLeafShader(NiGeometry* Geo, D3DXVECTOR4* Shado
 void ShadowManager::SetupSpeedTreeBranchShader(NiGeometry* Geo, D3DXVECTOR4* ShadowData) {
 	ShadowData->x = 3.0f;
 	TheRenderManager->device->SetVertexShaderConstantF(67, (float*)kWindMatrixes, 16);
+#if defined(OBLIVION)
 	SetTreeCollisionConstants(Geo, &Geo->m_worldTransform, TreeWindPass);
+#endif
 }
 
 void ShadowManager::SetupAlphaTexture(NiGeometry* Geo, BSShaderProperty* LProp, D3DXVECTOR4* ShadowData) {
