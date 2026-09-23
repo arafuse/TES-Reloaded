@@ -24,6 +24,9 @@ float SunDimmer : register(c10);
 float4 WindMatrices[16] : register(c18);
 row_major float4x4 TESR_ShadowCameraToLightTransform[2] : register(c100);
 row_major float4x4 TESR_InvViewProjectionTransform : register(c150);
+
+#include "Includes/TreeCollision.hlsl"
+
 //
 //
 // Registers:
@@ -147,7 +150,9 @@ VS_OUTPUT main(VS_INPUT IN) {
     r1.y = dot(r3.wxz, BillboardUp.xyz);
     r1.x = dot(r3.xyz, BillboardUp.xyz);
     r1.zw = BillboardUp.zw;
-    q68.xyzw = ((r4.x * r1.xyzw) + (r5.x * r2.xyzw)) + IN.position.xyzw;
+    float4 leafPos = IN.position;
+    leafPos.xyz += TreeCollisionDisplacement(leafPos.xyz);
+    q68.xyzw = ((r4.x * r1.xyzw) + (r5.x * r2.xyzw)) + leafPos.xyzw;
     q32.xyzw = mul(float4x4(WindMatrices[0 + q12.x].xyzw, WindMatrices[1 + q12.x].xyzw, WindMatrices[2 + q12.x].xyzw, WindMatrices[3 + q12.x].xyzw), q68.xyzw);
     r1.xyzw = (SunDimmer.x * (shades(q14.xyz, LightVector.xyz) * DiffColor.rgba)) + AmbientColor.rgba;
     r1.xyz = r1.xyz * frac(IN.blendindices.z);
