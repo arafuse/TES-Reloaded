@@ -9,7 +9,7 @@
 - [DistantLOD .lod file format](distantlod-file-format.md) — RE'd record layout; engine steals the fractional bits of LOD instance positions for a packed normal, so distant statics/trees sit on a 1-unit grid
 - [Distant LOD scene graph](distant-lod-scene-graph.md) — Tes->LODRoot is MISNAMED (it's LandLOD, 12 quadrants); distant statics live under DistantRefLOD via m_parent; ObjectLODRoot is the loaded grid, not LOD
 - [CellInfo::niNode is the water node](cellinfo-ninode-is-water-node.md) — the cell's OBJECTS hang off Tes->ObjectLODRoot, not CellInfo::niNode (a culled water node); how to diff loaded cells
-- [clangd / compile_commands.json](clangd-compile-commands.md) — Tools/GenerateCompileCommands.ps1 regenerates it; why i686 + -ferror-limit=0; `for each` loops don't parse in clang; two latent bugs clang caught
+- [clangd / compile_commands.json](clangd-compile-commands.md) — Tools/GenerateCompileCommands.ps1 regenerates it; why i686 + -ferror-limit=0; never use MSVC `for each` (clang can't parse it)
 - [Build via PowerShell, not Bash](build-via-powershell-not-bash.md) — Bash's TEMP is literal "%TEMP%", producing a fake MSB3073 that mimics a DLL lock
 - [Verify shader edits with fxc](fxc-verify-shader-edits.md) — fxc paths and flags, /I for nested includes, byte-comparing .fxo vs HEAD to prove a gated edit is inert, BOM trap
 - [BeginScene pre-init window](beginscene-pre-init-window.md) — Player/Tes are NULL at the main menu; guard any per-frame hook that touches them
