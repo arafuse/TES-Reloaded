@@ -2337,23 +2337,22 @@ void ShaderManager::UpdateDepthOfField(ShaderConstants& ShaderConst, bool IsThir
 
 void ShaderManager::UpdateCinema(ShaderConstants& ShaderConst) {
 	UInt8 Mode = TheSettingManager->SettingsCinema.Mode;
+	bool InDialog = MenuManager->IsActive(Menu::MenuType::kMenuType_Dialog);
+	bool InPersuasion = MenuManager->IsActive(Menu::MenuType::kMenuType_Persuasion);
+	bool Hidden = false;
 
 	ShaderConst.Cinema.Data.x = TheSettingManager->SettingsCinema.AspectRatio;
 	ShaderConst.Cinema.Data.y = TheSettingManager->SettingsCinema.VignetteRadius;
 	ShaderConst.Cinema.Data.w = TheSettingManager->SettingsCinema.ChromaticAberrationPower;
-	if (Mode == 1) {
-		if (MenuManager->IsActive(Menu::MenuType::kMenuType_Dialog) || MenuManager->IsActive(Menu::MenuType::kMenuType_Persuasion)) Mode = -1;
-	}
-	else if (Mode == 2) {
-		if (!MenuManager->IsActive(Menu::MenuType::kMenuType_Dialog)) Mode = -1;
-	}
-	else if (Mode == 3) {
-		if (!MenuManager->IsActive(Menu::MenuType::kMenuType_Persuasion)) Mode = -1;
-	}
-	else if (Mode == 4) {
-		if (!MenuManager->IsActive(Menu::MenuType::kMenuType_Dialog) && !MenuManager->IsActive(Menu::MenuType::kMenuType_Persuasion)) Mode = -1;
-	}
-	if (Mode == -1) {
+	if (Mode == 1)
+		Hidden = InDialog || InPersuasion;
+	else if (Mode == 2)
+		Hidden = !InDialog;
+	else if (Mode == 3)
+		Hidden = !InPersuasion;
+	else if (Mode == 4)
+		Hidden = !InDialog && !InPersuasion;
+	if (Hidden) {
 		ShaderConst.Cinema.Data.x = 0.0f;
 		ShaderConst.Cinema.Data.y = 0.0f;
 	}
