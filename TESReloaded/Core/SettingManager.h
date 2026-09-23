@@ -424,6 +424,11 @@ struct SettingsGrassStruct {
 	float CollisionRecoveryTime;
 	float CollisionSpringiness;
 	int CollisionTrailSlots;
+	bool TreeCollision;					///< Bend small SpeedTree trees and shrubs away from nearby actors
+	float TreeCollisionMaxBound;		///< BSTreeNode world bound radius at or below which a tree bends
+	float TreeCollisionRadius;			///< World units around an actor that push foliage
+	float TreeCollisionStrength;		///< Maximum sideways push, world units
+	float TreeCollisionFlattenStrength;	///< Maximum downward push, world units
 };
 
 /// Parallax settings from POM\POM.ini.
