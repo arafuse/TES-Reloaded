@@ -17,6 +17,8 @@ float4 ShadowProjTransform : register(c33);
 float4 WindMatrices[16] : register(c38);
 row_major float4x4 TESR_ShadowCameraToLightTransform[2] : register(c54);
 row_major float4x4 TESR_InvViewProjectionTransform : register(c70);
+
+#include "Includes/TreeCollision.hlsl"
 //
 //
 // Registers:
@@ -85,17 +87,15 @@ VS_OUTPUT main(VS_INPUT IN) {
     float4 r0;
 
     q0.x = IN.blendindices.y;
-    q6.xyzw = mul(float4x4(WindMatrices[0 + q0.x].xyzw, WindMatrices[1 + q0.x].xyzw, WindMatrices[2 + q0.x].xyzw, WindMatrices[3 + q0.x].xyzw), IN.position.xyzw);
     OUT.color_0.rgba = (IN.blendindices.z * const_4.xxxy) + const_4.yyyx;
-    r0.xyzw = (IN.blendindices.x * (q6.xyzw - IN.position.xyzw)) + IN.position.xyzw;
-    mdl19.xyz = mul(float3x4(ModelViewProj[0].xyzw, ModelViewProj[1].xyzw, ModelViewProj[2].xyzw), r0.xyzw);
+    r0.xyzw = TreeBranchPosition(IN.position, IN.blendindices);
+    OUT.position = mul(ModelViewProj, r0);
+    mdl19.xyz = OUT.position.xyz;
     m28.xy = mul(float2x4(ShadowProj[0].xyzw, ShadowProj[1].xyzw), r0.xyzw);
     eye18.xyz = mul(TanSpaceProj, normalize(normalize(EyePosition.xyz - r0.xyz) + LightDirection[0].xyz));
     q2.x = dot(ShadowProj[3].xyzw, r0.xyzw);
     OUT.color_1.rgb = FogColor.rgb;
     OUT.color_1.a = 1 - saturate((FogParam.x - length(mdl19.xyz)) / FogParam.y);
-    OUT.position.w = dot(ModelViewProj[3].xyzw, r0.xyzw);
-    OUT.position.xyz = mdl19.xyz;
     OUT.texcoord_0.xy = IN.texcoord_0.xy;
     OUT.texcoord_1.xyz = normalize(mul(TanSpaceProj, LightDirection[0].xyz));
     OUT.texcoord_3.xyz = normalize(eye18.xyz);
