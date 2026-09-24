@@ -1,0 +1,38 @@
+---
+name: sneak-detection-formula
+description: "RE'd sneak detection: Actor_GetDetectionLevel 0x5F6540 → single call to cdecl Calc_DetectionLevel 0x5463F0 at 0x5F68DB; full 16-arg map; chameleon arg is the concealment lever; threaded AI caveat"
+metadata:
+  node_type: memory
+  type: project
+  originSessionId: 5774dcbb-bbee-4a7a-8aac-e9b8b163f7e7
+  modified: 2026-09-24T01:02:55.558Z
+---
+
+Statically RE'd 2026-09-23 (capstone + [[oblivion-pdb-symbols]]) for the shrub-cover sneak feature.
+Not yet capture-verified.
+
+**`Actor_GetDetectionLevel` 0x5F6540** — thiscall, `this` = observer (kept in `ebx`), target
+Actor* = 2nd stack arg (kept in `ebp`, never reassigned), 3rd arg = out byte (detection state).
+Returns the cached level from the detection list unless forced. Invisibility > 0 or chameleon ≥ 100
+short-circuit to -100 before the formula. 12 callers (AI_GetDetected, Actor_MagicHit, the detection
+update in sub_5F7900/5F7A80, …) — all funnel through it.
+
+**`Calc_DetectionLevel` 0x5463F0** — pure cdecl over scalars, NO actor pointers, exactly ONE
+caller: `call` at **0x5F68DB** (`add esp, 0x40` after). Args (arg0 pushed last):
+0 observer sneak (luck-modified) · 1 target sneak · 2 hasLOS (sub_5F2820 Havok LOS) ·
+3 distance (float) · 4 observer Blindness (AV 0x2D) · 5 target light level (process vfunc 0x3AC,
+night-eye applied) · 6 target Chameleon (AV 0x2E) · 7 boot weight · 8 target moving ·
+9 target sneaking · 10 target attacking (bypasses max range) · 11 in combat · 12 running ·
+13 swimming · 14 observer asleep · 15 exterior (fSneakExteriorDistanceMult).
+
+Light term = (light + fDetectionSneakLightMod) × LOS-mult × (100−blind)/100 × (100−chameleon)/100
+× fSneakLightMult; the sound term (boots, running) is separate. So raising arg 6 hides the target
+VISUALLY only — the natural lever for foliage concealment: cham' = 100 − (100−cham)(1−cover).
+
+**Hook shape:** `WriteRelCall(0x5F68DB, stub)` — naked stub pushes `ebx`/`ebp` + pointer to the arg
+block, calls an adjuster, then jumps to 0x5463F0. No Detour needed.
+
+**Threading:** `bUseThreadedAI=1` in the user's Oblivion.ini, and which thread runs detection is
+UNVERIFIED — the adjuster must not walk cells or the scene graph; read a main-thread snapshot.
+Render-side tree data ([[speedtree-shader-variants]]) is frustum-only, so it can't serve as the
+shrub source.
