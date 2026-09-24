@@ -26,6 +26,8 @@ powershell -Command "& 'C:\Development\Microsoft\Visual Studio\18\Community\MSBu
 
 There are no tests or linting tools configured.
 
+For clangd (the clangd-lsp plugin), generate the gitignored `compile_commands.json` with `powershell -File Tools\GenerateCompileCommands.ps1`; re-run it after adding source files (see memory `clangd-compile-commands`).
+
 Shaders are not copied by the build: the game's `Data\Shaders\OblivionReloaded` is a directory symlink to `OblivionReloaded\Shaders`. Edited `.hlsl` only takes effect after a recompile (`[Develop] CompileShaders = 1`).
 
 ## Architecture
@@ -124,3 +126,9 @@ Set `#define WaitForDebugger 1` in `Main.cpp` to spin until a debugger attaches.
 The agent's memory directory is a symbolic link to `memory/` in this repo, so agent memory gets committed.
 
 Changes to memory and design documents must be self-contained in their own `docs:` commits.
+
+## Tooling
+
+Use `clangd-lsp` when possible for code navigation. 
+
+Re-run `tools\GenerateCompileCommands.ps1` after adding source files.
