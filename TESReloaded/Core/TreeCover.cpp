@@ -9,8 +9,49 @@ static const UInt32	kDetectionLevelCall		= 0x005F68DB; // the only call to Calc_
 static const UInt32	kCalcDetectionLevel		= 0x005463F0;
 static const int	kDetectionArgLight		= 5;
 static const int	kDetectionArgSneaking	= 9;
+static const UInt32	kDetectionLosCall		= 0x005F6647; // the detection call to the actor LOS test
+static const UInt32	kActorHasLineOfSight	= 0x005F2820;
+static const float	kTreeCoverEyeHeight		= 110.0f;
+static const int	kTreeCoverMaxShrubs		= 8;
+static const int	kSnapshotReadTries		= 4;
+
+/// The shrubs containing the sneaking player's torso this frame, for the line-of-sight hook.
+struct TreeCoverSnapshot {
+	int				Count;
+	float			TorsoX, TorsoY, TorsoZ;
+	TreeCoverInput	Shrubs[kTreeCoverMaxShrubs];
+};
+
+static volatile LONG		SnapshotSequence = 0;
+static TreeCoverSnapshot	Snapshot = {};
 
 static volatile float PlayerTreeCover = 0.0f;
+
+// Seqlock: odd while writing. Detection may run on the threaded-AI thread.
+static void PublishSnapshot(const TreeCoverSnapshot& Next) {
+
+	InterlockedIncrement(&SnapshotSequence);
+	Snapshot = Next;
+	InterlockedIncrement(&SnapshotSequence);
+
+}
+
+static bool ReadSnapshot(TreeCoverSnapshot& Out) {
+
+	for (int Try = 0; Try < kSnapshotReadTries; Try++) {
+		LONG Before = SnapshotSequence;
+		_ReadWriteBarrier();
+		if (Before & 1) {
+			YieldProcessor();
+			continue;
+		}
+		Out = Snapshot;
+		_ReadWriteBarrier();
+		if (SnapshotSequence == Before) return true;
+	}
+	return false;
+
+}
 
 static NiNode* FindRefTreeNode(NiNode* Root) {
 
@@ -23,7 +64,7 @@ static NiNode* FindRefTreeNode(NiNode* Root) {
 
 }
 
-static void AccumulateTreeCover(TList<TESObjectREFR>::Entry* Entry, TreeCoverInput& In, float MaxBound, float& Exposure) {
+static void AccumulateTreeCover(TList<TESObjectREFR>::Entry* Entry, TreeCoverInput& In, float MaxBound, float& Exposure, TreeCoverSnapshot& Shrubs) {
 
 	for (; Entry; Entry = Entry->next) {
 		TESObjectREFR* Ref = Entry->item;
@@ -43,22 +84,22 @@ static void AccumulateTreeCover(TList<TESObjectREFR>::Entry* Entry, TreeCoverInp
 		In.CY = Bound->Center.y;
 		In.CZ = Bound->Center.z;
 		In.R = Bound->Radius;
-		Exposure *= 1.0f - TreeCoverAt(In);
+		float Cover = TreeCoverAt(In);
+		Exposure *= 1.0f - Cover;
+		if (Cover > 0.0f && Shrubs.Count < kTreeCoverMaxShrubs) Shrubs.Shrubs[Shrubs.Count++] = In;
 	}
 
 }
 
-void UpdateTreeCover() {
+static float ScanTreeCover(TreeCoverSnapshot& Shrubs) {
 
 	SettingsGrassStruct* Settings = &TheSettingManager->SettingsGrass;
 	if (!Settings->TreeCover || !Player || !Player->process || !Player->parentCell) {
-		PlayerTreeCover = 0.0f;
-		return;
+		return 0.0f;
 	}
 	UInt32 Movement = Player->process->GetMovementFlags();
 	if (!(Movement & kMovementSneak) || (Movement & kMovementSwim)) {
-		PlayerTreeCover = 0.0f;
-		return;
+		return 0.0f;
 	}
 
 	TreeCoverInput In = {};
@@ -68,19 +109,31 @@ void UpdateTreeCover() {
 	bool Bending = Settings->TreeCollision && TheShaderManager->GrassCollisionSourceCount > 0;
 	In.PushStrength = Bending ? Settings->TreeCollisionStrength : 0.0f;
 
+	Shrubs.TorsoX = In.QX;
+	Shrubs.TorsoY = In.QY;
+	Shrubs.TorsoZ = In.QZ;
+
 	float Exposure = 1.0f;
 	if (Player->GetWorldSpace()) {
 		for (UInt32 x = 0; x < *SettingGridsToLoad; x++) {
 			for (UInt32 y = 0; y < *SettingGridsToLoad; y++) {
 				TESObjectCELL* Cell = Tes->gridCellArray->GetCell(x, y);
-				if (Cell) AccumulateTreeCover(&Cell->objectList.First, In, Settings->TreeCollisionMaxBound, Exposure);
+				if (Cell) AccumulateTreeCover(&Cell->objectList.First, In, Settings->TreeCollisionMaxBound, Exposure, Shrubs);
 			}
 		}
 	}
 	else {
-		AccumulateTreeCover(&Player->parentCell->objectList.First, In, Settings->TreeCollisionMaxBound, Exposure);
+		AccumulateTreeCover(&Player->parentCell->objectList.First, In, Settings->TreeCollisionMaxBound, Exposure, Shrubs);
 	}
-	PlayerTreeCover = 1.0f - Exposure;
+	return 1.0f - Exposure;
+
+}
+
+void UpdateTreeCover() {
+
+	TreeCoverSnapshot Shrubs = {};
+	PlayerTreeCover = ScanTreeCover(Shrubs);
+	PublishSnapshot(Shrubs);
 
 }
 
@@ -93,6 +146,25 @@ static void __stdcall AdjustDetectionLight(Actor* Target, SInt32* Args) {
 	if (Scale < 0.0f) Scale = 0.0f;
 	if (Scale > 1.0f) Scale = 1.0f;
 	Args[kDetectionArgLight] = (SInt32)(Args[kDetectionArgLight] * Scale);
+
+}
+
+// Replaces the detection call to the actor LOS test; thiscall with callee cleanup, so __fastcall fits.
+static bool __fastcall DetectionLineOfSightHook(Actor* Observer, void* Edx, UInt32 Arg1, TESObjectREFR* Target, UInt32 Arg3, UInt32* Reason, UInt32 Arg5) {
+
+	bool Visible = (UInt8)ThisCall(kActorHasLineOfSight, Observer, Arg1, Target, Arg3, Reason, Arg5);
+	if (!Visible || Target != (TESObjectREFR*)Player || !TheSettingManager->SettingsGrass.TreeCoverBlockLOS) return Visible;
+
+	TreeCoverSnapshot Shrubs;
+	if (!ReadSnapshot(Shrubs) || !Shrubs.Count) return Visible;
+
+	float EyeX = Observer->pos.x;
+	float EyeY = Observer->pos.y;
+	float EyeZ = Observer->pos.z + kTreeCoverEyeHeight * Observer->scale;
+	float Depth = 0.0f;
+	for (int i = 0; i < Shrubs.Count; i++)
+		Depth += TreeCoverRayDepth(Shrubs.Shrubs[i], EyeX, EyeY, EyeZ, Shrubs.TorsoX, Shrubs.TorsoY, Shrubs.TorsoZ);
+	return Depth < TheSettingManager->SettingsGrass.TreeCoverLOSDepth;
 
 }
 
@@ -114,5 +186,6 @@ static __declspec(naked) void DetectionLevelHook() {
 void CreateTreeCoverHook() {
 
 	WriteRelCall(kDetectionLevelCall, (UInt32)DetectionLevelHook);
+	WriteRelCall(kDetectionLosCall, (UInt32)DetectionLineOfSightHook);
 
 }
