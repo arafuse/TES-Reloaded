@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <iostream>
 #include <filesystem>
+#include "TreeCover.h"
 #define EFFECTQUADFORMAT D3DFVF_XYZ | D3DFVF_TEX1
 
 #if defined(NEWVEGAS)
@@ -2655,6 +2656,8 @@ void ShaderManager::UpdateConstants() {
 		if (TheSettingManager->SettingsMain.Shaders.Grass)
 			UpdateGrass(ShaderConst, GrassCollisionSources, GrassCollisionWeights, GrassCollisionSourceCount);
 	}
+
+	UpdateTreeCover();
 
 	if (TheSettingManager->SettingsMain.Shaders.POM)     UpdatePOM(ShaderConst);
 	if (TheSettingManager->SettingsMain.Shaders.Terrain) UpdateTerrain(ShaderConst);
