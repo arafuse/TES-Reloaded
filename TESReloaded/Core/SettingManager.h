@@ -429,6 +429,8 @@ struct SettingsGrassStruct {
 	float TreeCollisionRadius;			///< World units around an actor that push foliage
 	float TreeCollisionStrength;		///< Maximum sideways push, world units
 	float TreeCollisionFlattenStrength;	///< Maximum downward push, world units
+	bool TreeCover;						///< Scale the sneaking player's detection light level by small-tree cover
+	float TreeCoverLightReduction;		///< Fraction of the light level removed at full cover
 };
 
 /// Parallax settings from POM\POM.ini.
