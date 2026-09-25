@@ -431,6 +431,8 @@ struct SettingsGrassStruct {
 	float TreeCollisionFlattenStrength;	///< Maximum downward push, world units
 	bool TreeCover;						///< Scale the sneaking player's detection light level by small-tree cover
 	float TreeCoverLightReduction;		///< Fraction of the light level removed at full cover
+	bool TreeCoverBlockLOS;				///< Shrubs the sneaking player is inside block observers' line of sight
+	float TreeCoverLOSDepth;			///< Effective foliage depth, world units, along a sight line that blocks it
 };
 
 /// Parallax settings from POM\POM.ini.
