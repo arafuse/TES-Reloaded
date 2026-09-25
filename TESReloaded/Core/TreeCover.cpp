@@ -88,9 +88,10 @@ static void __stdcall AdjustDetectionLight(Actor* Target, SInt32* Args) {
 
 	float Cover = PlayerTreeCover;
 	SettingsGrassStruct* Settings = &TheSettingManager->SettingsGrass;
-	if (Cover <= 0.0f || !Settings->TreeCover || Target != Player || !(UInt8)Args[kDetectionArgSneaking]) return;
+	if (!(Cover > 0.0f) || !Settings->TreeCover || Target != Player || !(UInt8)Args[kDetectionArgSneaking]) return;
 	float Scale = 1.0f - Cover * Settings->TreeCoverLightReduction;
 	if (Scale < 0.0f) Scale = 0.0f;
+	if (Scale > 1.0f) Scale = 1.0f;
 	Args[kDetectionArgLight] = (SInt32)(Args[kDetectionArgLight] * Scale);
 
 }

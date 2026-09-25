@@ -13,7 +13,7 @@ struct TreeCoverInput {
 
 /// Peak of smoothstep(1,0,t) * smoothstep(0,0.3,t) in TreeCollision.hlsl.
 static const float kTreeCoverPushPeak	= 0.785f;
-/// Maximum ring radius when tree bends (prevents artifacts at extreme push).
+/// Maximum ring radius when tree bends; keeps a cover band inside the ellipsoid and avoids dividing by 1 - Ring.
 static const float kTreeCoverMaxRing	= 0.85f;
 /// Minimum ring radius; below this the coverage uses outer half-circle only.
 static const float kTreeCoverMinRing	= 0.001f;
