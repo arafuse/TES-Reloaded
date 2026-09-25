@@ -11,12 +11,17 @@ struct TreeCoverInput {
 	float PushStrength;		///< Live sideways push (TreeCollisionStrength); 0 when the tree isn't bending
 };
 
-static const float kTreeCoverPushPeak	= 0.785f;	// peak of smoothstep(1,0,t) * smoothstep(0,0.3,t) in TreeCollision.hlsl
+/// Peak of smoothstep(1,0,t) * smoothstep(0,0.3,t) in TreeCollision.hlsl.
+static const float kTreeCoverPushPeak	= 0.785f;
+/// Maximum ring radius when tree bends (prevents artifacts at extreme push).
 static const float kTreeCoverMaxRing	= 0.85f;
+/// Minimum ring radius; below this the coverage uses outer half-circle only.
 static const float kTreeCoverMinRing	= 0.001f;
 
+/// Clamps X to [0, 1].
 inline float TreeCoverSaturate(float X) { return X < 0.0f ? 0.0f : (X > 1.0f ? 1.0f : X); }
 
+/// Hermite smoothstep: 3t² - 2t³ applied to saturated X.
 inline float TreeCoverSmoothstep(float X) { X = TreeCoverSaturate(X); return X * X * (3.0f - 2.0f * X); }
 
 /// Returns how concealed the player point is by one tree, in [0, 1].
