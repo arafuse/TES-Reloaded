@@ -25,9 +25,9 @@ inline float TreeCoverSaturate(float X) { return X < 0.0f ? 0.0f : (X > 1.0f ? 1
 inline float TreeCoverSmoothstep(float X) { X = TreeCoverSaturate(X); return X * X * (3.0f - 2.0f * X); }
 
 /// Returns how concealed the player point is by one tree, in [0, 1].
-/// Unbent, cover peaks at the centre of an ellipsoid running from the ground to the bound top. As
-/// the tree bends away from the player, the peak moves out to a ring of normalised radius Ring
-/// (the shader's push at torso height over the horizontal semi-axis) and the centre is exposed.
+/// Cover peaks at the centre of an ellipsoid running from the ground to the bound top. As the tree bends,
+/// the peak moves out to a ring of normalised radius Ring (the shader's full-bend push over the horizontal
+/// semi-axis) and the centre is exposed. The ellipsoid's lower half counts as fully inside vertically.
 /// OutRing, when given, receives that ring radius.
 inline float TreeCoverAt(const TreeCoverInput& In, float* OutRing = 0) {
 	if (OutRing) *OutRing = 0.0f;
@@ -42,15 +42,15 @@ inline float TreeCoverAt(const TreeCoverInput& In, float* OutRing = 0) {
 	float HorizontalSq = In.R * In.R - Rise * Rise;
 	float HorizontalAxis = sqrtf(HorizontalSq > MinAxis * MinAxis ? HorizontalSq : MinAxis * MinAxis);
 
-	float Bend = TreeCoverSaturate((In.QZ - In.BaseZ) / In.R);
-	float Ring = TreeCoverSaturate(In.PushStrength * kTreeCoverPushPeak * Bend * Bend / HorizontalAxis);
+	float Ring = TreeCoverSaturate(In.PushStrength * kTreeCoverPushPeak / HorizontalAxis);
 	if (Ring > kTreeCoverMaxRing) Ring = kTreeCoverMaxRing;
 	if (OutRing) *OutRing = Ring;
 
 	float DX = In.QX - In.CX;
 	float DY = In.QY - In.CY;
 	float U = sqrtf(DX * DX + DY * DY) / HorizontalAxis;
-	float V = (In.QZ - CentreZ) / VerticalAxis;
+	float Above = In.QZ - CentreZ;
+	float V = (Above > 0.0f ? Above : 0.0f) / VerticalAxis;
 	float Radial = (Ring < kTreeCoverMinRing || U >= Ring) ? (U - Ring) / (1.0f - Ring) : (Ring - U) / Ring;
 	return 1.0f - TreeCoverSmoothstep(sqrtf(Radial * Radial + V * V));
 }
