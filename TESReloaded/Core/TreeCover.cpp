@@ -5,6 +5,10 @@ static const void*	VFTBSTreeNode			= (void*)0x00A65854;
 static const float	kTreeCoverTorsoHeight	= 50.0f;
 static const UInt32	kMovementSneak			= 0x400;
 static const UInt32	kMovementSwim			= 0x800;
+static const UInt32	kDetectionLevelCall		= 0x005F68DB; // the only call to Calc_DetectionLevel
+static const UInt32	kCalcDetectionLevel		= 0x005463F0;
+static const int	kDetectionArgLight		= 5;
+static const int	kDetectionArgSneaking	= 9;
 
 static volatile float PlayerTreeCover = 0.0f;
 
@@ -77,5 +81,37 @@ void UpdateTreeCover() {
 		AccumulateTreeCover(&Player->parentCell->objectList.First, In, Settings->TreeCollisionMaxBound, Exposure);
 	}
 	PlayerTreeCover = 1.0f - Exposure;
+
+}
+
+static void __stdcall AdjustDetectionLight(Actor* Target, SInt32* Args) {
+
+	float Cover = PlayerTreeCover;
+	SettingsGrassStruct* Settings = &TheSettingManager->SettingsGrass;
+	if (Cover <= 0.0f || !Settings->TreeCover || Target != Player || !(UInt8)Args[kDetectionArgSneaking]) return;
+	float Scale = 1.0f - Cover * Settings->TreeCoverLightReduction;
+	if (Scale < 0.0f) Scale = 0.0f;
+	Args[kDetectionArgLight] = (SInt32)(Args[kDetectionArgLight] * Scale);
+
+}
+
+// Reached by the original call, so [esp] is its return address and the cdecl args follow it.
+static __declspec(naked) void DetectionLevelHook() {
+
+	__asm {
+		pushad
+		lea		eax, [esp + 0x24]
+		push	eax
+		push	ebp
+		call	AdjustDetectionLight
+		popad
+		jmp		kCalcDetectionLevel
+	}
+
+}
+
+void CreateTreeCoverHook() {
+
+	WriteRelCall(kDetectionLevelCall, (UInt32)DetectionLevelHook);
 
 }

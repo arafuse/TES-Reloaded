@@ -15,6 +15,7 @@
 #include "MemoryManagement.h"
 #include "RagdollCollision.h"
 #include "TreeCollision.h"
+#include "TreeCover.h"
 #include "WeatherSmoothing.h"
 #include "D3D9Hook.h"
 
@@ -56,6 +57,7 @@ extern "C" {
 			if (TheSettingManager->SettingsMain.Main.WeatherMinTransitionTime > 0.0f) CreateWeatherSmoothingHook();
 			if (TheSettingManager->SettingsMain.GrassMode.Enabled) CreateGrassHook();
 			CreateTreeCollisionHook();
+			CreateTreeCoverHook();
 			if (TheSettingManager->SettingsMain.CameraMode.Enabled) CreateCameraModeHook();
 
 			if (TheSettingManager->SettingsMain.EquipmentMode.Enabled) {
