@@ -15,7 +15,8 @@ proportion to how far the foliage is pushed at the player's height.
 
 | Question | Decision |
 |---|---|
-| What drives "amount of deformation" | The shader's own displacement curve (`TreeCollision.hlsl`) evaluated at the player's torso height, relative to the tree's horizontal size |
+| What drives "amount of deformation" | The shader's peak sideways push at full bend (the crown), relative to the tree's horizontal size. Revised after play-test 1: at crouched torso height the bend is ~7% of full, giving ρ ≈ 0.04 and no visible centre exposure |
+| Low in the shrub | Fully covered vertically from the ground up to the ellipsoid centre; only the upper half falls off. Revised after play-test 1: the symmetric ellipsoid capped a crouched player's cover near 0.66 |
 | Detection lever | Scale the target light argument of `Calc_DetectionLevel`: `light' = light × (1 − cover × TreeCoverLightReduction)` |
 | Tree source | Main-thread scan of loaded cells' object lists once per frame, only while the player sneaks |
 | Hook install | Always installed; gated at runtime on `TreeCover`, so the in-game menu toggle works live |
@@ -58,18 +59,18 @@ and the live push strength (0 when the tree isn't bending). Output: coverage in 
 
 **Player point**: `Q = Player->pos + (0, 0, 50)` (crouched torso; code constant).
 
-**Deformation → ring radius** (mirrors `TreeCollisionDisplacement`)
+**Deformation → ring radius** (mirrors `TreeCollisionDisplacement` at full bend)
 
-- `bend = saturate((Q.z − P.z) / R)` — the shader's height falloff (`ModelPos.z × scale / Bound`),
-  applied squared to the displacement (`disp *= bend * bend`).
-- `H = TreeCollisionStrength × 0.785 × bend²` — 0.785 is the peak of
-  `smoothstep(1,0,t) × smoothstep(0,0.3,t)`, the shader's sideways push profile.
+- `H = TreeCollisionStrength × 0.785` — 0.785 is the peak of `smoothstep(1,0,t) × smoothstep(0,0.3,t)`,
+  the shader's sideways push profile. The shader's height falloff (`bend²`) reaches 1 at the crown,
+  so `H` is how far the canopy parts; it does not depend on the player's height.
 - `ρ = clamp(H / rₕ, 0, 0.85)`. The upper clamp keeps a cover band inside the ellipsoid and avoids
   dividing by `1 − ρ = 0`.
 - `ρ = 0` when `TreeCollision` is off or `TheShaderManager->GrassCollisionSourceCount == 0` (the tree
   isn't bending), which reduces the model to the plain ellipsoid.
 
-**Normalised position**: `u = |Q.xy − C.xy| / rₕ`, `v = (Q.z − z₀) / rᵥ`.
+**Normalised position**: `u = |Q.xy − C.xy| / rₕ`, `v = max(Q.z − z₀, 0) / rᵥ` — the lower half of
+the ellipsoid counts as fully inside vertically, since a rooted shrub hides a low body.
 
 **Distance to the ring** (asymmetric torus whose tube fills the ellipsoid)
 
@@ -77,7 +78,7 @@ and the live push strength (0 when the tree isn't bending). Output: coverage in 
 - `u < ρ`: `d = sqrt(((ρ − u) / ρ)² + v²)`
 - `c = 1 − smoothstep(0, 1, d)`
 
-Properties: `ρ = 0` is exactly the ellipsoid (full cover at centre, zero at the surface); for any
+Properties: `ρ = 0` is the lower-flattened ellipsoid (full cover on the axis up to `z₀`, zero at the surface); for any
 `ρ > 0` the centre is fully exposed and cover peaks on the ring `u = ρ`.
 
 ### `CreateTreeCoverHook()` — detection hook
