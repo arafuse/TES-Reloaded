@@ -599,6 +599,9 @@ void SettingManager::LoadSettings() {
 	SettingsGrass.TreeCollisionStrength = atof(value);
 	GetPrivateProfileStringA("Default", "TreeCollisionFlattenStrength", "10.0", value, SettingStringBuffer, Filename);
 	SettingsGrass.TreeCollisionFlattenStrength = atof(value);
+	SettingsGrass.TreeCover = GetPrivateProfileIntA("Default", "TreeCover", 0, Filename);
+	GetPrivateProfileStringA("Default", "TreeCoverLightReduction", "0.75", value, SettingStringBuffer, Filename);
+	SettingsGrass.TreeCoverLightReduction = atof(value);
 
 	strcpy(Filename, CurrentPath);
 	strcat(Filename, SettingsPath);
@@ -1568,6 +1571,8 @@ void SettingManager::SaveSettings(const char* Item, const char* Definition, cons
 			WritePrivateProfileStringA("Default", "TreeCollisionRadius", ToString(SettingsGrass.TreeCollisionRadius).c_str(), Filename);
 			WritePrivateProfileStringA("Default", "TreeCollisionStrength", ToString(SettingsGrass.TreeCollisionStrength).c_str(), Filename);
 			WritePrivateProfileStringA("Default", "TreeCollisionFlattenStrength", ToString(SettingsGrass.TreeCollisionFlattenStrength).c_str(), Filename);
+			WritePrivateProfileStringA("Default", "TreeCover", ToString(SettingsGrass.TreeCover).c_str(), Filename);
+			WritePrivateProfileStringA("Default", "TreeCoverLightReduction", ToString(SettingsGrass.TreeCoverLightReduction).c_str(), Filename);
 		}
 		else if (!strcmp(Definition, "MotionBlur")) {
 			WritePrivateProfileStringA("Effects", "MotionBlur", ToString(SettingsMain.Effects.MotionBlur).c_str(), SettingsMain.Main.MainFile);
@@ -2237,6 +2242,8 @@ SettingsList SettingManager::GetMenuSettings(const char* Item, const char* Defin
 			Settings["TreeCollisionRadius"] = SettingsGrass.TreeCollisionRadius;
 			Settings["TreeCollisionStrength"] = SettingsGrass.TreeCollisionStrength;
 			Settings["TreeCollisionFlattenStrength"] = SettingsGrass.TreeCollisionFlattenStrength;
+			Settings["TreeCover"] = SettingsGrass.TreeCover;
+			Settings["TreeCoverLightReduction"] = SettingsGrass.TreeCoverLightReduction;
 		}
 		else if (!strcmp(Definition, "MotionBlur")) {
 			SettingsMotionBlurStruct* sms = GetSettingsMotionBlur(Section);
@@ -2975,6 +2982,10 @@ void SettingManager::SetMenuSetting(const char* Item, const char* Definition, co
 				SettingsGrass.TreeCollisionStrength = Value;
 			else if (!strcmp(Setting, "TreeCollisionFlattenStrength"))
 				SettingsGrass.TreeCollisionFlattenStrength = Value;
+			else if (!strcmp(Setting, "TreeCover"))
+				SettingsGrass.TreeCover = Value;
+			else if (!strcmp(Setting, "TreeCoverLightReduction"))
+				SettingsGrass.TreeCoverLightReduction = Value;
 		}
 		else if (!strcmp(Definition, "MotionBlur")) {
 			SettingsMotionBlurStruct* sms = GetSettingsMotionBlur(Section);
