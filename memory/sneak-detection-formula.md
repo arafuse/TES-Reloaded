@@ -52,6 +52,16 @@ boots' weight, 5 when the global at `0xB333B8` is set. Process vfunc 0x2C0 = `Ge
 (matches Game.h; see Hook shape above for the confirmed stub). In-game, light 52 → 13 at full cover
 (reduction 0.75).
 
+**LOS (verified 2026-09-25, for tree cover LOS blocking):** `sub_5F2820` is the general actor LOS
+test (FOV checks + Havok ray), thiscall `(1, target, 1, &reason, 0)`, `ret 0x14`, 12 callers; the
+detection one is the `call` at **0x5F6647**. Its byte lands at frame `[esp+0x2c]` and feeds arg 2, the
+out byte `[esi]` (0x5F6693) and the observer's detection-list update (process vfunc 0xA8 at
+0x5F6950) — so wrapping that one call changes all three consistently. In the formula LOS=0 ZEROES the
+visual term and scales the sound term by `fSneakSoundLosMult` (0xB36718). Other formula globals:
+fSneakMaxDistance 0xB36708, fSneakExteriorDistanceMult 0xB36748, fSneakLightMult 0xB36738,
+fSneakSoundsMult 0xB36740, fSneakRunningMult 0xB36720, fSneakTargetInCombatBonus 0xB366E8,
+fSneakSkillMult 0xB36710, fSneakBaseValue 0xB36700. Inside the callee, arg n is at `[esp+0x14+4n]`.
+
 **Tree refs:** a TREE ref's root node (`Ref->GetNode()`) IS the `BSTreeNode` (vtable 0xA65854) —
 ~700–760 tree refs in a loaded exterior grid, never a wrapper. Shrub bounds ~185–450 radius were
 seen in the play-test area, consistent with the wider 190–617 range measured in
