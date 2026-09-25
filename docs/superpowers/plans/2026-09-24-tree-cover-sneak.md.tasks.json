@@ -1,0 +1,46 @@
+{
+  "planPath": "docs/superpowers/plans/2026-09-24-tree-cover-sneak.md",
+  "tasks": [
+    {
+      "id": "4",
+      "subject": "Task 1: TreeCover settings",
+      "status": "pending",
+      "description": "**Goal:** Add `TreeCover` and `TreeCoverLightReduction` to `SettingsGrass`, wired through load, save, menu map and set, with ship values in `Grass.ini`.\n\n**Files:**\n- Modify: `TESReloaded/Core/SettingManager.h:431` (after `TreeCollisionFlattenStrength`)\n- Modify: `TESReloaded/Core/SettingManager.cpp:601`, `:1570`, `:2239`, `:2977` (after each `TreeCollisionFlattenStrength` line)\n- Modify: `OblivionReloaded/Shaders/Grass/Grass.ini`\n\n**Acceptance Criteria:**\n- [ ] `grep -c \"TreeCover\\b\\|TreeCoverLightReduction\" TESReloaded/Core/SettingManager.cpp` counts 8 lines (4 touch points × 2 settings)\n- [ ] Both fields have `///<` doc comments in `SettingsGrassStruct`\n- [ ] Release build succeeds with 0 errors\n\n**Verify:** Release build (Global Constraints command) → `OblivionReloaded.vcxproj -> ...\\OblivionReloaded.dll`, 0 errors.\n\n```json:metadata\n{\"files\": [\"TESReloaded/Core/SettingManager.h\", \"TESReloaded/Core/SettingManager.cpp\", \"OblivionReloaded/Shaders/Grass/Grass.ini\"], \"modelTier\": \"mechanical\", \"acceptanceCriteria\": [\"`grep -c \\\"TreeCover\\\\b\\\\|TreeCoverLightReduction\\\" TESReloaded/Core/SettingManager.cpp` counts 8 lines (4 touch points \\u00d7 2 settings)\", \"Both fields have `///<` doc comments in `SettingsGrassStruct`\", \"Release build succeeds with 0 errors\"]}\n```"
+    },
+    {
+      "id": "3",
+      "subject": "Task 2: Coverage math with standalone check",
+      "status": "pending",
+      "description": "**Goal:** Header-only `TreeCoverAt()` implementing the spec's ellipsoid → asymmetric-torus coverage, proven by a standalone harness.\n\n**Files:**\n- Create: `TESReloaded/Core/TreeCoverMath.h`\n- Test (not committed): `%TEMP%\\treecover-check\\TreeCoverCheck.cpp`\n\n**Acceptance Criteria:**\n- [ ] Harness prints `ok` for all 13 checks and exits 0\n- [ ] `TreeCoverMath.h` includes only `<cmath>` (no engine types, no `min`/`max` macros)\n- [ ] With push strength 0 the result is the plain ellipsoid; with push > 0 the tree centre returns 0\n\n**Verify:** harness command in Step 4 → 13 lines ending `ok`, `ALL PASS`, exit code 0.\n\n```json:metadata\n{\"files\": [\"TESReloaded/Core/TreeCoverMath.h\"], \"modelTier\": \"mechanical\", \"acceptanceCriteria\": [\"Harness prints `ok` for all 13 checks and exits 0\", \"`TreeCoverMath.h` includes only `<cmath>` (no engine types, no `min`/`max` macros)\", \"With push strength 0 the result is the plain ellipsoid; with push > 0 the tree centre returns 0\"]}\n```"
+    },
+    {
+      "id": "1",
+      "subject": "Task 3: Per-frame tree cover scan",
+      "status": "pending",
+      "description": "**Goal:** `UpdateTreeCover()` scans loaded small tree refs once per frame on the main thread while the player sneaks and publishes the combined cover.\n\n**Files:**\n- Create: `TESReloaded/Core/TreeCover.h`, `TESReloaded/Core/TreeCover.cpp`\n- Modify: `TESReloaded/Core/ShaderManager.cpp` (include + call after the `if (currentCell) { ... }` block that ends with `UpdateGrass(...)`, ≈ line 2657)\n- Modify: `OblivionReloaded/OblivionReloaded.vcxproj` (after lines 148 and 189), `OblivionReloaded/OblivionReloaded.vcxproj.filters` (after the `TreeCollision.h` / `TreeCollision.cpp` entries)\n\n**Acceptance Criteria:**\n- [ ] Cover is published as 0 when `TreeCover` is off, `Player->process`/`parentCell` is NULL, or movement flags lack 0x400 or have 0x800\n- [ ] Exterior walks every `Tes->gridCellArray` cell (`*SettingGridsToLoad` square); interior walks `Player->parentCell`\n- [ ] Refs are skipped when NULL, disabled/deleted, not `kFormType_Tree`, have no `BSTreeNode` (root or direct child), bound radius ≤ 0 or > `TreeCollisionMaxBound`, horizontally beyond R, or with torso z outside [ref z, bound top]\n- [ ] Trees combine as `1 − ∏(1 − cᵢ)`; `PushStrength` is 0 unless `TreeCollision` is on and `GrassCollisionSourceCount > 0`\n- [ ] Release build succeeds; `compile_commands.json` regenerated\n\n**Verify:** Release build → 0 errors; `powershell -File Tools\\GenerateCompileCommands.ps1` completes and `grep -c TreeCover.cpp compile_commands.json` ≥ 1.\n\n```json:metadata\n{\"files\": [\"TESReloaded/Core/TreeCover.h\", \"TESReloaded/Core/TreeCover.cpp\", \"TESReloaded/Core/ShaderManager.cpp\", \"OblivionReloaded/OblivionReloaded.vcxproj\", \"OblivionReloaded/OblivionReloaded.vcxproj.filters\"], \"modelTier\": \"standard\", \"acceptanceCriteria\": [\"Cover is published as 0 when `TreeCover` is off, `Player->process`/`parentCell` is NULL, or movement flags lack 0x400 or have 0x800\", \"Exterior walks every `Tes->gridCellArray` cell (`*SettingGridsToLoad` square); interior walks `Player->parentCell`\", \"Refs are skipped when NULL, disabled/deleted, not `kFormType_Tree`, have no `BSTreeNode` (root or direct child), bound radius \\u2264 0 or > `TreeCollisionMaxBound`, horizontally beyond R, or with torso z outside [ref z, bound top]\", \"Trees combine as `1 \\u2212 \\u220f(1 \\u2212 c\\u1d62)`; `PushStrength` is 0 unless `TreeCollision` is on and `GrassCollisionSourceCount > 0`\", \"Release build succeeds; `compile_commands.json` regenerated\"]}\n```",
+      "blockedBy": [
+        "4",
+        "3"
+      ]
+    },
+    {
+      "id": "2",
+      "subject": "Task 4: Detection light hook",
+      "status": "pending",
+      "description": "**Goal:** Patch the call at 0x5F68DB so the sneaking player's light argument is scaled by `1 − cover × TreeCoverLightReduction` before `Calc_DetectionLevel` runs.\n\n**Files:**\n- Modify: `TESReloaded/Core/TreeCover.cpp`\n- Modify: `OblivionReloaded/Main.cpp:17` (include) and `:58` (install)\n\n**Acceptance Criteria:**\n- [ ] `WriteRelCall(0x005F68DB, DetectionLevelHook)` installed unconditionally after `CreateTreeCollisionHook()`\n- [ ] Stub preserves all registers (`pushad`/`popad`) and tail-jumps to 0x005463F0 with the original stack\n- [ ] Light is changed only when `TreeCover` is on, cover > 0, target is `Player`, and arg 9's low byte is non-zero; scale is clamped at ≥ 0\n- [ ] Release build succeeds\n\n**Verify:** Release build → 0 errors; `grep -n \"CreateTreeCoverHook\" OblivionReloaded/Main.cpp` shows the call on the line after `CreateTreeCollisionHook();`.\n\n```json:metadata\n{\"files\": [\"TESReloaded/Core/TreeCover.cpp\", \"OblivionReloaded/Main.cpp\"], \"modelTier\": \"standard\", \"acceptanceCriteria\": [\"`WriteRelCall(0x005F68DB, DetectionLevelHook)` installed unconditionally after `CreateTreeCollisionHook()`\", \"Stub preserves all registers (`pushad`/`popad`) and tail-jumps to 0x005463F0 with the original stack\", \"Light is changed only when `TreeCover` is on, cover > 0, target is `Player`, and arg 9's low byte is non-zero; scale is clamped at \\u2265 0\", \"Release build succeeds\"]}\n```",
+      "blockedBy": [
+        "1"
+      ]
+    },
+    {
+      "id": "5",
+      "subject": "Task 5: In-game verification and memory update",
+      "status": "pending",
+      "description": "**Goal:** Confirm in-game that cover is computed from real tree refs and lowers the player's detection light, then record the verified facts in memory.\n\n**Files:**\n- Modify temporarily (never committed): `TESReloaded/Core/TreeCover.cpp`\n- Modify: `memory/sneak-detection-formula.md`\n\n**Acceptance Criteria:**\n- [ ] Log shows `[TreeCover]` lines with `root + child > 0` while sneaking in a shrub (the `BSTreeNode` lookup works)\n- [ ] Logged `light A -> B` has `B < A` whenever cover > 0, and cover is 0 when not inside a small tree\n- [ ] Logged cover near the centre of a bent shrub is lower than at mid-radius\n- [ ] Temporary logging removed: `git diff --quiet TESReloaded/Core/TreeCover.cpp` exits 0\n- [ ] Memory updated and committed as a separate `docs:` commit\n\n**Verify:** `grep \"\\[TreeCover\\]\" \"C:\\Games\\Steam\\steamapps\\common\\Oblivion\\OblivionReloaded.log\"` shows the lines above; `git status --short` clean except the docs commit.\n\n```json:metadata\n{\"files\": [\"TESReloaded/Core/TreeCover.cpp\", \"memory/sneak-detection-formula.md\"], \"modelTier\": \"standard\", \"acceptanceCriteria\": [\"Log shows `[TreeCover]` lines with `root + child > 0` while sneaking in a shrub (the `BSTreeNode` lookup works)\", \"Logged `light A -> B` has `B < A` whenever cover > 0, and cover is 0 when not inside a small tree\", \"Logged cover near the centre of a bent shrub is lower than at mid-radius\", \"Temporary logging removed: `git diff --quiet TESReloaded/Core/TreeCover.cpp` exits 0\", \"Memory updated and committed as a separate `docs:` commit\"]}\n```",
+      "blockedBy": [
+        "2"
+      ]
+    }
+  ],
+  "lastUpdated": "2026-09-24T21:17:18.531212"
+}

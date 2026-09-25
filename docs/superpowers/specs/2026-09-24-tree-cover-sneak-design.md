@@ -46,8 +46,9 @@ geometry to `VFTBSTreeNode`). If the root is a wrapper, read the `BSTreeNode` ch
 
 ### `TreeCoverAt(...)` — pure coverage function
 
-Inputs: player point `Q`, tree base `P` (ref position), bound centre `C`, bound radius `R`, and
-whether deformation is live. Output: coverage in [0, 1]. No engine access.
+Header-only in `TESReloaded/Core/TreeCoverMath.h`, free of engine types so a standalone harness can
+check it. Inputs: player point `Q`, tree base `P` (ref position), bound centre `C`, bound radius `R`,
+and the live push strength (0 when the tree isn't bending). Output: coverage in [0, 1].
 
 **Ellipsoid**
 
@@ -59,7 +60,8 @@ whether deformation is live. Output: coverage in [0, 1]. No engine access.
 
 **Deformation → ring radius** (mirrors `TreeCollisionDisplacement`)
 
-- `bend = saturate((Q.z − P.z) / R)²` — the shader's height falloff (`ModelPos.z × scale / Bound`).
+- `bend = saturate((Q.z − P.z) / R)` — the shader's height falloff (`ModelPos.z × scale / Bound`),
+  applied squared to the displacement (`disp *= bend * bend`).
 - `H = TreeCollisionStrength × 0.785 × bend²` — 0.785 is the peak of
   `smoothstep(1,0,t) × smoothstep(0,0.3,t)`, the shader's sideways push profile.
 - `ρ = clamp(H / rₕ, 0, 0.85)`. The upper clamp keeps a cover band inside the ellipsoid and avoids
@@ -85,8 +87,10 @@ Properties: `ρ = 0` is exactly the ellipsoid (full cover at centre, zero at the
 - Naked stub, reached by `call`, so arg *n* is at `[esp + 4 + 4n]`. If `TreeCover` is on,
   `ebp == Player`, arg 9 (target sneaking) is non-zero, and the published cover is > 0, it rewrites
   arg 5 (target light) in place, then `jmp 0x5463F0` with all registers preserved.
-- Verify by disassembly whether arg 5 is int or float before writing the stub; this decides between
-  an `fmul` and convert/multiply/truncate.
+- Verified by disassembly: arg 5 is an **int** 0–100 (`ftol` of the process vfunc 0x3AC result,
+  night-eye scaled and clamped at 0x5F6611–0x5F6629), so the adjuster multiplies and truncates.
+  Arg 9 is the dword result of bool `sub_5F3B50` (process movement flags `& 0x400` and not
+  `& 0x800`); only its low byte is meaningful. Process vfunc 0x2C0 is `GetMovementFlags`.
 - Invisibility and chameleon ≥ 100 short-circuit before this call and are unaffected.
 - Installed unconditionally from `Main.cpp` beside `CreateTreeCollisionHook()`.
 
