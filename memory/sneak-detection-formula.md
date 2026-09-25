@@ -1,6 +1,6 @@
 ---
 name: sneak-detection-formula
-description: "RE'd sneak detection: Actor_GetDetectionLevel 0x5F6540 → single call to cdecl Calc_DetectionLevel 0x5463F0 at 0x5F68DB; full 16-arg map; chameleon arg is the concealment lever; threaded AI caveat"
+description: "RE'd sneak detection: Actor_GetDetectionLevel 0x5F6540 → single call to cdecl Calc_DetectionLevel 0x5463F0 at 0x5F68DB; full 16-arg map; chameleon arg is the concealment lever (implemented, live-tested); threaded AI caveat"
 metadata:
   node_type: memory
   type: project
@@ -9,7 +9,7 @@ metadata:
 ---
 
 Statically RE'd 2026-09-23 (capstone + [[oblivion-pdb-symbols]]) for the shrub-cover sneak feature.
-Not yet capture-verified.
+Arg layout disassembly-verified and the hook live-tested 2026-09-25 (tree cover feature, [[tree-cover-sneak]] design in docs/superpowers/specs/2026-09-24-tree-cover-sneak-design.md).
 
 **`Actor_GetDetectionLevel` 0x5F6540** — thiscall, `this` = observer (kept in `ebx`), target
 Actor* = 2nd stack arg (kept in `ebp`, never reassigned), 3rd arg = out byte (detection state).
@@ -36,3 +36,15 @@ block, calls an adjuster, then jumps to 0x5463F0. No Detour needed.
 UNVERIFIED — the adjuster must not walk cells or the scene graph; read a main-thread snapshot.
 Render-side tree data ([[speedtree-shader-variants]]) is frustum-only, so it can't serve as the
 shrub source.
+
+**Verified 2026-09-25 (`TESReloaded/Core/TreeCover.cpp`):** arg 5 (light) is an INT 0–100 — `ftol`
+of process vfunc 0x3AC, night-eye scaled and clamped at 0x5F6611–0x5F6629, stored at frame
+`[esp+0x24]`. Arg 9 is the dword result of bool `sub_5F3B50` (movement flags `& 0x400`, not `& 0x800`;
+low byte only). Process vfunc 0x2C0 = `GetMovementFlags` (matches Game.h). The hook at 0x5F68DB is
+installed: `pushad`, `lea eax,[esp+0x24]` = arg 0, `ebp` = target, then `jmp 0x5463F0`. In-game,
+light 52 → 13 at full cover (reduction 0.75).
+
+**Tree refs:** a TREE ref's root node (`Ref->GetNode()`) IS the `BSTreeNode` (vtable 0xA65854) —
+~700–760 tree refs in a loaded exterior grid, never a wrapper. Shrub bounds are ~185–450 radius,
+centred near the ground, so the shader's `(height/R)²` bend is ~7% at crouched-torso height; the
+cover ring is therefore measured at full (crown) bend.
