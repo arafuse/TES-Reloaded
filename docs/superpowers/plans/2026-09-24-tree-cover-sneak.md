@@ -122,6 +122,8 @@ git commit -m "feat(Trees): Add tree cover sneak settings"
 
 ### Task 2: Coverage math with standalone check
 
+> Superseded after play-test 1 by the revised spec (crown ring, flattened lower half; commit b3582e2).
+
 **Goal:** Header-only `TreeCoverAt()` implementing the spec's ellipsoid → asymmetric-torus coverage, proven by a standalone harness.
 
 **Files:**
@@ -580,9 +582,10 @@ In `AdjustDetectionLight`, replace the last line with:
 ```markdown
 **Verified 2026-09-24 (tree cover feature, `TreeCover.cpp`):** arg 5 (light) is an INT 0–100 — `ftol`
 of process vfunc 0x3AC, night-eye scaled and clamped at 0x5F6611–0x5F6629, stored at frame
-`[esp+0x24]`. Arg 9 is the dword result of bool `sub_5F3B50` (movement flags `& 0x400`, not `& 0x800`;
-low byte only). Process vfunc 0x2C0 = `GetMovementFlags` (matches Game.h). The hook at 0x5F68DB is
-installed: `pushad`, `lea eax,[esp+0x24]` = arg 0, `ebp` = target, then `jmp 0x5463F0`.
+`[esp+0x24]`. Arg 9 (target sneaking) is a BYTE set from bool `sub_5E0550` (movement flags `& 0x400`,
+not `& 0x800`; low byte only; `sub_5F3B50` is the separate boot-weight term, arg 7). Process vfunc
+0x2C0 = `GetMovementFlags` (matches Game.h). The hook at 0x5F68DB is installed: `pushad`,
+`lea eax,[esp+0x24]` = arg 0, `ebp` = target, then `jmp 0x5463F0`.
 ```
 
 - [ ] **Step 6: Commit memory separately**

@@ -1,7 +1,7 @@
 # Tree Cover for Sneak Detection — Design
 
 Date: 2026-09-24
-Status: Approved design, pending implementation plan
+Status: Implemented on feat/misc-3; play-tested 2026-09-25
 
 ## Goal
 
@@ -90,16 +90,19 @@ Properties: `ρ = 0` is the lower-flattened ellipsoid (full cover on the axis up
   arg 5 (target light) in place, then `jmp 0x5463F0` with all registers preserved.
 - Verified by disassembly: arg 5 is an **int** 0–100 (`ftol` of the process vfunc 0x3AC result,
   night-eye scaled and clamped at 0x5F6611–0x5F6629), so the adjuster multiplies and truncates.
-  Arg 9 is the dword result of bool `sub_5F3B50` (process movement flags `& 0x400` and not
-  `& 0x800`); only its low byte is meaningful. Process vfunc 0x2C0 is `GetMovementFlags`.
+  Arg 9 (target sneaking) is a BYTE set from bool `sub_5E0550` (movement flags `& 0x400` and not
+  `& 0x800`), forced to 0 when the caller's flag at `[esp+0x128]` is set; the upper three bytes of
+  the pushed dword are stale stack, so only the low byte is meaningful and the `(UInt8)` cast is
+  required. `sub_5F3B50` is a separate term (arg 7, boot weight). Process vfunc 0x2C0 is
+  `GetMovementFlags`.
 - Invisibility and chameleon ≥ 100 short-circuit before this call and are unaffected.
 - Installed unconditionally from `Main.cpp` beside `CreateTreeCollisionHook()`.
 
 ### Threading
 
-`bUseThreadedAI` may run detection off the main thread. The AI side reads only the aligned
-`volatile float` the main thread writes (atomic on x86); it never walks cells or the scene graph.
-Cover lags by at most one frame.
+`bUseThreadedAI` may run detection off the main thread. The AI side reads only the published
+`volatile float`, the `Player` pointer, and aligned settings values; it never walks cells or the
+scene graph. Cover lags by at most one frame.
 
 ## Settings
 
@@ -113,6 +116,9 @@ menu map and the set path in `SettingManager.cpp`:
 
 Because `fDetectionSneakLightMod` is added after the scaled light, full cover dims the player but
 does not make them visually undetectable.
+
+Cover eligibility shares `TreeCollisionMaxBound` with bending, so raising it (e.g. to bend young
+trees) also grants cover under raised canopies, because the lower half counts as covered.
 
 ## Verification
 
