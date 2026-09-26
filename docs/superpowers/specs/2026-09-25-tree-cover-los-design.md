@@ -1,7 +1,7 @@
 # Tree Cover Line-of-Sight Blocking — Design
 
 Date: 2026-09-25
-Status: Approved design; not yet implemented
+Status: Implemented on feat/misc-3; play-tested 2026-09-25
 
 ## Goal
 
