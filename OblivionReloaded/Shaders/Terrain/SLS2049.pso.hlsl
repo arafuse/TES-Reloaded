@@ -37,13 +37,11 @@ sampler2D TESR_ShadowMapBufferFar : register(s5) = sampler_state { ADDRESSU = CL
 
 struct VS_OUTPUT {
     float2 BaseUV : TEXCOORD0;
-    //float2 NormalUV : TEXCOORD1;
+    float4 ParallaxView : TEXCOORD1;
     float3 texcoord_2 : TEXCOORD2_centroid;
     float3 texcoord_3 : TEXCOORD3_centroid;
     float3 texcoord_4 : TEXCOORD4_centroid;
     float3 texcoord_5 : TEXCOORD5_centroid;
-    float4 texcoord_6 : TEXCOORD6;
-	float4 texcoord_7 : TEXCOORD7;
     float4 texcoord_8 : TEXCOORD8;
     float4 color_0 : COLOR0;
     float4 color_1 : COLOR1;
@@ -53,6 +51,7 @@ struct PS_OUTPUT {
     float4 color_0 : COLOR0;
 };
 
+#include "Includes/Parallax.hlsl"
 
 PS_OUTPUT main(VS_OUTPUT IN) {
     PS_OUTPUT OUT;
@@ -72,15 +71,16 @@ PS_OUTPUT main(VS_OUTPUT IN) {
     float shadow;
     float nl;
     float3 fresnel;
-    
-    r1.xyzw = tex2D(NormalMap, IN.BaseUV.xy);
+
+    float2 uv = TerrainParallaxUV(BaseMap, IN.BaseUV.xy, IN.ParallaxView);
+    r1.xyzw = tex2D(NormalMap, uv);
     q18.xyz = normalize(expand(r1.xyz));
     fresnel = saturate(pow(1 - dot(q18.xyz, normalize(IN.texcoord_5.xyz)), 10) * 2);
     r2.w = pow(shades(q18.xyz, normalize(IN.texcoord_4.xyz)), 10.0f);
     fresnel *= r2.w;
     r2.w += fresnel;
-    r0.xyz = tex2D(NormalMap, IN.BaseUV.xy).xyz;
-    r3.xyz = tex2D(BaseMap, IN.BaseUV.xy).xyz;
+    r0.xyz = tex2D(NormalMap, uv).xyz;
+    r3.xyz = tex2D(BaseMap, uv).xyz;
     nl = shades((IN.texcoord_3.xyz * 2) - 1, normalize(expand(r0.xyz)));
     shadow = 1.0f;
     r0.xyz = r3.xyz * ((shadow * (nl * PSLightColor[0].rgb)) + AmbientColor.rgb);

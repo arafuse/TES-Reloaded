@@ -51,6 +51,7 @@ struct VS_INPUT {
 struct VS_OUTPUT {
     float4 position : POSITION;
     float2 texcoord_0 : TEXCOORD0;
+    float4 ParallaxView : TEXCOORD1;
     float4 texcoord_2 : TEXCOORD2;
     float3 texcoord_3 : TEXCOORD3;
     float3 texcoord_4 : TEXCOORD4;
@@ -78,6 +79,9 @@ VS_OUTPUT main(VS_INPUT IN) {
 	r0 = mul(ModelViewProj, IN.position);
     OUT.position = r0;
     OUT.texcoord_0.xy = IN.texcoord_0.xy;
+    float3 eyeVec = EyePosition.xyz - IN.position.xyz;
+    OUT.ParallaxView.xyz = mul(TanSpaceProj, eyeVec);
+    OUT.ParallaxView.w = length(eyeVec);
     OUT.texcoord_2.xyzw = (IN.color_0.xyzx * const_4.yyyz) + const_4.zzzy;
     OUT.texcoord_3.xyz = compress(mul(TanSpaceProj, LightDirection[0].xyz));
 	OUT.texcoord_6 = mul(r0, TESR_ShadowCameraToLightTransform[0]);
