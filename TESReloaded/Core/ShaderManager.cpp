@@ -470,6 +470,8 @@ bool ShaderProgram::SetConstantTableValue2(LPCSTR Name, UInt32 Index) {
 		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.TAA.Data;
 	else if (!strcmp(Name, "TESR_PrevWorldViewProjectionTransform"))
 		FloatShaderValues[Index].Value = (D3DXVECTOR4*)&TheShaderManager->PrevWorldViewProjMatrix;
+	else if (!strcmp(Name, "TESR_TerrainParallaxData"))
+		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.Terrain.ParallaxData;
 	else {
 		return false;
 	}
@@ -2196,11 +2198,20 @@ void ShaderManager::UpdatePOM(ShaderConstants& ShaderConst) {
 	ShaderConst.POM.ParallaxData.z = TheSettingManager->SettingsPOM.ShadowReliefScale;
 }
 
+/// Packs the terrain shader settings: specular/noise tuning, and the near-land parallax scale with
+/// its centering bias and a distance fade (full strength to half the fade distance, zero at it).
 void ShaderManager::UpdateTerrain(ShaderConstants& ShaderConst) {
 	ShaderConst.Terrain.Data.x = TheSettingManager->SettingsTerrain.DistantSpecular;
 	ShaderConst.Terrain.Data.y = TheSettingManager->SettingsTerrain.DistantNoise;
 	ShaderConst.Terrain.Data.z = TheSettingManager->SettingsTerrain.NearSpecular;
 	ShaderConst.Terrain.Data.w = TheSettingManager->SettingsTerrain.MiddleSpecular;
+
+	float Scale = TheSettingManager->SettingsTerrain.ParallaxScale;
+	float FadeDistance = TheSettingManager->SettingsTerrain.ParallaxFadeDistance;
+	ShaderConst.Terrain.ParallaxData.x = Scale;
+	ShaderConst.Terrain.ParallaxData.y = -0.5f * Scale;
+	ShaderConst.Terrain.ParallaxData.z = FadeDistance > 0.0f ? -2.0f / FadeDistance : 0.0f;
+	ShaderConst.Terrain.ParallaxData.w = FadeDistance > 0.0f ? 2.0f : 1.0f;
 }
 
 void ShaderManager::UpdateSkin(ShaderConstants& ShaderConst) {

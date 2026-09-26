@@ -625,6 +625,10 @@ void SettingManager::LoadSettings() {
 	SettingsTerrain.NearSpecular = atof(value);
 	GetPrivateProfileStringA("Default", "MiddleSpecular", "0.0", value, SettingStringBuffer, Filename);
 	SettingsTerrain.MiddleSpecular = atof(value);
+	GetPrivateProfileStringA("Default", "ParallaxScale", "0.0", value, SettingStringBuffer, Filename);
+	SettingsTerrain.ParallaxScale = atof(value);
+	GetPrivateProfileStringA("Default", "ParallaxFadeDistance", "8000.0", value, SettingStringBuffer, Filename);
+	SettingsTerrain.ParallaxFadeDistance = atof(value);
 
 	strcpy(Filename, CurrentPath);
 	strcat(Filename, SettingsPath);
@@ -1671,6 +1675,8 @@ void SettingManager::SaveSettings(const char* Item, const char* Definition, cons
 			WritePrivateProfileStringA("Default", "DistantSpecular", ToString(SettingsTerrain.DistantSpecular).c_str(), Filename);
 			WritePrivateProfileStringA("Default", "MiddleSpecular", ToString(SettingsTerrain.MiddleSpecular).c_str(), Filename);
 			WritePrivateProfileStringA("Default", "NearSpecular", ToString(SettingsTerrain.NearSpecular).c_str(), Filename);
+			WritePrivateProfileStringA("Default", "ParallaxFadeDistance", ToString(SettingsTerrain.ParallaxFadeDistance).c_str(), Filename);
+			WritePrivateProfileStringA("Default", "ParallaxScale", ToString(SettingsTerrain.ParallaxScale).c_str(), Filename);
 		}
 		else if (!strcmp(Definition, "VolumetricFog")) {
 			WritePrivateProfileStringA("Effects", "VolumetricFog", ToString(SettingsMain.Effects.VolumetricFog).c_str(), SettingsMain.Main.MainFile);
@@ -2331,6 +2337,8 @@ SettingsList SettingManager::GetMenuSettings(const char* Item, const char* Defin
 			Settings["DistantSpecular"] = SettingsTerrain.DistantSpecular;
 			Settings["MiddleSpecular"] = SettingsTerrain.MiddleSpecular;
 			Settings["NearSpecular"] = SettingsTerrain.NearSpecular;
+			Settings["ParallaxFadeDistance"] = SettingsTerrain.ParallaxFadeDistance;
+			Settings["ParallaxScale"] = SettingsTerrain.ParallaxScale;
 		}
 		else if (!strcmp(Definition, "VolumetricFog")) {
 			Settings["Amount"] = SettingsVolumetricFog.Amount;
@@ -3150,6 +3158,10 @@ void SettingManager::SetMenuSetting(const char* Item, const char* Definition, co
 				SettingsTerrain.MiddleSpecular = Value;
 			else if (!strcmp(Setting, "NearSpecular"))
 				SettingsTerrain.NearSpecular = Value;
+			else if (!strcmp(Setting, "ParallaxFadeDistance"))
+				SettingsTerrain.ParallaxFadeDistance = Value;
+			else if (!strcmp(Setting, "ParallaxScale"))
+				SettingsTerrain.ParallaxScale = Value;
 		}
 		else if (!strcmp(Definition, "VolumetricFog")) {
 			if (!strcmp(Setting, "Amount"))
