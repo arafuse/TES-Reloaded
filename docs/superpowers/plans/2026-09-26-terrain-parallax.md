@@ -1,6 +1,6 @@
 # Terrain Parallax Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers-extended-cc:subagent-driven-development (recommended) or superpowers-extended-cc:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers-extended-cc:subagent-driven-development (recommended) or superpowers-extended-cc:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Near land gets single-tap parallax on every layer pass, driven by the height in each landscape diffuse map's alpha, tunable from `Terrain.ini` and off by default.
 
@@ -17,7 +17,7 @@
 - Build ONLY through the PowerShell tool (Bash's TEMP breaks MSBuild with a fake MSB3073):
   `& 'C:\Development\Microsoft\Visual Studio\18\Community\MSBuild\Current\Bin\MSBuild.exe' 'C:\Users\Adam\Code\Oblivion\Oblivion Reloaded E3 Custom\TESReloaded.sln' /p:Configuration=Release /p:Platform=x86 /t:OblivionReloaded /v:minimal`
   The post-build step copies the DLL into the game's Plugins folder; the game must not be running.
-- Shader facts (do not re-derive): the game's `Data\Shaders\OblivionReloaded` is a symlink to `OblivionReloaded\Shaders`. Edited `.hlsl` only takes effect after the game recompiles it with `[Develop] CompileShaders = 1` in the game's `Data\OBSE\Plugins\OblivionReloaded.ini`; the compiled `.vso`/`.pso` next to each `.hlsl` are tracked in git.
+- Shader facts (do not re-derive): the game's `Data\Shaders\OblivionReloaded` is a symlink to `OblivionReloaded\Shaders`. Edited `.hlsl` only takes effect after the game recompiles it with `[Develop] CompileShaders = 1` in the game's `Data\OBSE\Plugins\OblivionReloaded.ini`; the compiled `.vso`/`.pso` next to each `.hlsl` are gitignored (the game writes them).
 - Offline shader check uses `C:\Program Files (x86)\Windows Kits\10\bin\10.0.26100.0\x86\fxc.exe`, `/T vs_3_0` or `/T ps_3_0`, `/E main`, `/I OblivionReloaded\Shaders\Terrain`.
 - Register/slot facts: PSO constant **c7** is unused in SLS2048/2049 (they use c1–c4, c6). Interpolator **TEXCOORD1** is unused by our SLS2042/2043/2048/2049 overrides. `EyePosition` (c25, model space) is already declared in both VSOs; `TanSpaceProj` is already `#define`d in both VSO input structs.
 - Constant packing (exact): `x = ParallaxScale`, `y = -0.5 * ParallaxScale`, `z = -2 / ParallaxFadeDistance`, `w = 2`; when `ParallaxFadeDistance <= 0`: `z = 0`, `w = 1`.

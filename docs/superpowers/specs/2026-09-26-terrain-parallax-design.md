@@ -3,8 +3,8 @@
 ## Goal
 
 Give near land single-tap parallax (the same technique as the object PAR shaders), driven by the
-height already stored in the alpha channel of the landscape diffuse textures. Off by default,
-tunable from `Terrain.ini` and the in-game menu.
+height already stored in the alpha channel of the landscape diffuse textures. On by default
+(ParallaxScale 0.01), tunable from `Terrain.ini` and the in-game menu.
 
 ## Findings that shape the design
 
@@ -84,12 +84,12 @@ float2 TerrainParallaxUV(sampler2D HeightMap, float2 BaseUV, float4 ParallaxView
 - Read from `Terrain\Terrain.ini [Default]` alongside the existing keys (~line 619).
 - Written back in the save path (~line 1668).
 - Exposed in the menu: list (~line 2329) and set (~line 3144) branches for `"Terrain"`.
-- `Terrain.ini` gains `ParallaxScale = 0.0` and `ParallaxFadeDistance = 8000.0`.
+- `Terrain.ini` gains `ParallaxScale = 0.01` and `ParallaxFadeDistance = 8000.0`.
 
 ### Constants (`TESReloaded/Core/ShaderManager.h/.cpp`)
 
 - `ShaderConstants::TerrainStruct` gains `D3DXVECTOR4 ParallaxData;`.
-- `SetConstantTableValue1` maps `"TESR_TerrainParallaxData"` to it.
+- `SetConstantTableValue2` maps `"TESR_TerrainParallaxData"` to it.
 - `ShaderManager::UpdateTerrain` packs it:
   - `x = ParallaxScale`, `y = -0.5f * ParallaxScale`
   - fade is full strength to half the fade distance, then linear to zero at the fade distance:
@@ -127,3 +127,4 @@ float2 TerrainParallaxUV(sampler2D HeightMap, float2 BaseUV, float4 ParallaxView
 - **Register budget:** SLS2043 was at the vs_3_0 limit of 11 outputs; its dead TEXCOORD6/7 outputs
   (and the matching unread SLS2049 inputs) were removed to make room for TEXCOORD1.
 - **Default:** the user chose `ParallaxScale = 0.01`, on by default (shipped INI and code default).
+- **Degenerate projection:** `TerrainEyePosition()` clamps `w` so an orthographic MVP yields a distant eye (fade → 0) instead of NaN. SLS2042/2043 are no longer in `EyePositionShaders` (the unused per-geometry `TESR_GEOM_EyePosition` upload).

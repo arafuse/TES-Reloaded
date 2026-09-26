@@ -27,6 +27,11 @@ SLS2042 has one output left.
 
 Landscape diffuse alpha is a heightmap in the installed replacer (116/118 DXT5 maps full-range).
 
+Do not "fix" land eye vectors with `TESR_GEOM_EyePosition` (c128, the `EyePositionShaders` list in
+ShaderIOHook.cpp + RenderHook per-geometry upload): it is computed from the MAIN camera, so it is wrong
+in the water reflection pass, where the MVP-derived eye is correct. SLS2042/2043 are deliberately not
+in that list.
+
 **How to apply:** per-layer effects go in both 2048 and 2049; anything needing all layers at once
 (height blending) needs single-pass land. See [[par-shader-interpolator-layout]],
 [[shader-deployment-workflow]], [[or-screenshot-dds-diagnostic]].
