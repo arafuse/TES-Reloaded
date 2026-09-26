@@ -10,7 +10,7 @@
 #define TreeVertexShaders "STB2005.vso STB2007.vso STB2009.vso STB2015.vso"
 #define SkinVertexShaders "SLS2034.vso SLS2014.vso SLS2005.vso"
 #define SkinPixelShaders "SLS2003.pso SLS2018.pso SLS2039.pso"
-#define EyePositionShaders "SLS2025.vso SLS2009.vso SLS2003.vso SLS2042.vso SLS2043.vso"
+#define EyePositionShaders "SLS2025.vso SLS2009.vso SLS2003.vso"
 #define RefractionPixelShaders "SLS2063.pso SM3028.pso SM3029.pso SM3030.pso"
 #define POMShadowPixelShaders "PAR2000.pso PAR2002.pso PAR2004.pso PAR2006.pso PAR2010.pso PAR2016.pso PAR2018.pso PAR2026.pso"
 #elif defined(SKYRIM)
