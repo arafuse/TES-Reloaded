@@ -1,6 +1,6 @@
 ---
 name: sneak-detection-formula
-description: "RE'd sneak detection: Actor_GetDetectionLevel 0x5F6540 → single call to cdecl Calc_DetectionLevel 0x5463F0 at 0x5F68DB; full 16-arg map; TreeCover.cpp scales the LIGHT arg 5 (implemented, live-tested), chameleon arg 6 is an unused alternative lever; threaded AI caveat"
+description: "RE'd sneak detection: Actor_GetDetectionLevel 0x5F6540 → single call to cdecl Calc_DetectionLevel 0x5463F0 at 0x5F68DB; full 16-arg map; LOS call at 0x5F6647 wrapped in TreeCover.cpp (live-tested 2026-09-25); TreeCover.cpp scales the LIGHT arg 5 (implemented, live-tested), chameleon arg 6 is an unused alternative lever; threaded AI caveat"
 metadata:
   node_type: memory
   type: project
@@ -60,7 +60,7 @@ out byte `[esi]` (0x5F6693) and the observer's detection-list update (process vf
 visual term and scales the sound term by `fSneakSoundLosMult` (0xB36718). Other formula globals:
 fSneakMaxDistance 0xB36708, fSneakExteriorDistanceMult 0xB36748, fSneakLightMult 0xB36738,
 fSneakSoundsMult 0xB36740, fSneakRunningMult 0xB36720, fSneakTargetInCombatBonus 0xB366E8,
-fSneakSkillMult 0xB36710, fSneakBaseValue 0xB36700. Inside the callee, arg n is at `[esp+0x14+4n]`.
+fSneakSkillMult 0xB36710, fSneakBaseValue 0xB36700. Inside the callee, arg n is at `[esp+0x14+4n]`. Wrapped in TreeCover.cpp (DetectionLineOfSightHook, __fastcall + ThisCall to the original); live-tested 2026-09-25 with hostile NPCs, TreeCoverLOSDepth = 64.
 
 **Tree refs:** a TREE ref's root node (`Ref->GetNode()`) IS the `BSTreeNode` (vtable 0xA65854) —
 ~700–760 tree refs in a loaded exterior grid, never a wrapper. Shrub bounds ~185–450 radius were
