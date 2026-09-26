@@ -46,13 +46,15 @@ Free of engine types, like `TreeCoverAt`.
   vertical from `BaseZ` to `C.z + R`), using the same `rₕ` and vertical extent as `TreeCoverAt`.
   To keep them consistent, factor the ellipsoid-axis computation out of `TreeCoverAt` into a shared
   helper.
-- Takes `kTreeCoverRaySamples = 16` midpoint samples on the clipped part, evaluates `TreeCoverAt` at
-  each (Q = sample point), and returns `Σ c × step length`: effective foliage depth in world units.
+- Takes `kTreeCoverRaySamples = 16` midpoint samples on the clipped part, evaluates the shared shape's
+  coverage (`TreeCoverShapeAt`, the same field `TreeCoverAt` uses) at each sample, and returns
+  `Σ c × step length`: effective foliage depth in world units.
 - Samples below `BaseZ` count as 0. An empty clip returns 0.
 
 Properties that fall out of the density field: a ray down the bent-open centre sees ~0 density; a
-short ray from an observer inside the same shrub accumulates little depth; a low eye (small
-creature) crosses the dense lower half.
+short ray from an observer inside the same shrub accumulates little depth; an observer with a small
+ref scale (lower eye) crosses the dense lower half; small creatures at scale 1.0 use the human eye
+height.
 
 ### Published shrub snapshot
 
@@ -71,8 +73,8 @@ creature) crosses the dense lower half.
 
 - `WriteRelCall(0x5F6647, (UInt32)DetectionLineOfSightHook)`, installed in `CreateTreeCoverHook()`
   beside the existing Calc_DetectionLevel patch.
-- Declared `static bool __fastcall DetectionLineOfSightHook(Actor* Observer, void* Edx, UInt8 Arg1,
-  TESObjectREFR* Target, UInt8 Arg3, UInt32* Reason, UInt32 Arg5)`, matching the thiscall
+- Declared `static bool __fastcall DetectionLineOfSightHook(Actor* Observer, void* Edx, UInt32 Arg1,
+  TESObjectREFR* Target, UInt32 Arg3, UInt32* Reason, UInt32 Arg5)`, matching the thiscall
   convention with callee cleanup. It first calls the original `0x5F2820` via `ThisCall` with the same
   arguments.
 - It returns the original result unchanged unless all hold: result is true, `TreeCoverBlockLOS` is
@@ -80,7 +82,8 @@ creature) crosses the dense lower half.
 - Eye point `A = Observer->pos + (0, 0, kTreeCoverEyeHeight × Observer->scale)`, with
   `kTreeCoverEyeHeight = 110`.
 - Sums `TreeCoverRayDepth` over the snapshot's shrubs; returns false when the sum is
-  `≥ TreeCoverLOSDepth`.
+  `≥ TreeCoverLOSDepth`, but only for a positive `TreeCoverLOSDepth` (a non-positive threshold or NaN
+  depth leaves the original result).
 - `*Reason` is left as the original wrote it.
 - Reads only the snapshot, `Player`, the observer's `pos`/`scale` and settings; never walks cells or
   the scene graph.
