@@ -625,7 +625,7 @@ void SettingManager::LoadSettings() {
 	SettingsTerrain.NearSpecular = atof(value);
 	GetPrivateProfileStringA("Default", "MiddleSpecular", "0.0", value, SettingStringBuffer, Filename);
 	SettingsTerrain.MiddleSpecular = atof(value);
-	GetPrivateProfileStringA("Default", "ParallaxScale", "0.0", value, SettingStringBuffer, Filename);
+	GetPrivateProfileStringA("Default", "ParallaxScale", "0.01", value, SettingStringBuffer, Filename);
 	SettingsTerrain.ParallaxScale = atof(value);
 	GetPrivateProfileStringA("Default", "ParallaxFadeDistance", "8000.0", value, SettingStringBuffer, Filename);
 	SettingsTerrain.ParallaxFadeDistance = atof(value);
