@@ -20,5 +20,7 @@ event copies only `OblivionReloaded.dll` + `.pdb` to `Data\OBSE\Plugins\`. The m
   last commit.
 - After changing a `.hlsl`, say plainly that `[Develop] CompileShaders = 1` is required (code default
   0), or the stale compiled shader is used and an in-game test silently exercises the old code.
+- Compiled shaders (`*.vso`, `*.pso`, `*.fxo`) are **gitignored** — the game writes them next to the
+  `.hlsl` when compiling. Never plan to commit or review them; only the `.hlsl` sources ship.
 
 Related: [[shader-pipeline-facts]], [[build-via-powershell-not-bash]].

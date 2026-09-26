@@ -1,6 +1,6 @@
 # Terrain Parallax Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers-extended-cc:subagent-driven-development (recommended) or superpowers-extended-cc:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers-extended-cc:subagent-driven-development (recommended) or superpowers-extended-cc:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Near land gets single-tap parallax on every layer pass, driven by the height in each landscape diffuse map's alpha, tunable from `Terrain.ini` and off by default.
 
@@ -60,17 +60,17 @@
 - Modify: `OblivionReloaded/Shaders/Terrain/Terrain.ini`
 
 **Acceptance Criteria:**
-- [ ] `grep -c "ParallaxScale\|ParallaxFadeDistance" TESReloaded/Core/SettingManager.cpp` prints `12` (load 4 lines, save 2, list 2, set 4)
-- [ ] `grep -c "TESR_TerrainParallaxData" TESReloaded/Core/ShaderManager.cpp` prints `1`, and it is inside `SetConstantTableValue2`
-- [ ] Both new struct fields have `///<` doc comments; `UpdateTerrain` has a `///` doc comment
-- [ ] `Terrain.ini` `[Default]` contains `ParallaxScale = 0.0` and `ParallaxFadeDistance = 8000.0`
-- [ ] Release build succeeds with 0 errors
+- [x] `grep -c "ParallaxScale\|ParallaxFadeDistance" TESReloaded/Core/SettingManager.cpp` prints `12` (load 4 lines, save 2, list 2, set 4)
+- [x] `grep -c "TESR_TerrainParallaxData" TESReloaded/Core/ShaderManager.cpp` prints `1`, and it is inside `SetConstantTableValue2`
+- [x] Both new struct fields have `///<` doc comments; `UpdateTerrain` has a `///` doc comment
+- [x] `Terrain.ini` `[Default]` contains `ParallaxScale = 0.0` and `ParallaxFadeDistance = 8000.0`
+- [x] Release build succeeds with 0 errors
 
 **Verify:** the two greps above → `12` and `1`; MSBuild command (Global Constraints) → `Build succeeded`-style output with 0 errors.
 
 **Steps:**
 
-- [ ] **Step 1: Add the settings fields** — in `SettingManager.h`, `SettingsTerrainStruct` becomes:
+- [x] **Step 1: Add the settings fields** — in `SettingManager.h`, `SettingsTerrainStruct` becomes:
 
 ```cpp
 struct SettingsTerrainStruct {
@@ -83,7 +83,7 @@ struct SettingsTerrainStruct {
 };
 ```
 
-- [ ] **Step 2: Load them** — in `SettingManager.cpp`, directly after the `SettingsTerrain.MiddleSpecular = atof(value);` line (~627):
+- [x] **Step 2: Load them** — in `SettingManager.cpp`, directly after the `SettingsTerrain.MiddleSpecular = atof(value);` line (~627):
 
 ```cpp
 	GetPrivateProfileStringA("Default", "ParallaxScale", "0.0", value, SettingStringBuffer, Filename);
@@ -92,21 +92,21 @@ struct SettingsTerrainStruct {
 	SettingsTerrain.ParallaxFadeDistance = atof(value);
 ```
 
-- [ ] **Step 3: Save them** — in the `"Terrain"` save branch (~1673), after the `NearSpecular` write:
+- [x] **Step 3: Save them** — in the `"Terrain"` save branch (~1673), after the `NearSpecular` write:
 
 ```cpp
 			WritePrivateProfileStringA("Default", "ParallaxFadeDistance", ToString(SettingsTerrain.ParallaxFadeDistance).c_str(), Filename);
 			WritePrivateProfileStringA("Default", "ParallaxScale", ToString(SettingsTerrain.ParallaxScale).c_str(), Filename);
 ```
 
-- [ ] **Step 4: Menu list** — in the `"Terrain"` branch that fills `Settings[...]` (~2333), after `Settings["NearSpecular"] = ...;`:
+- [x] **Step 4: Menu list** — in the `"Terrain"` branch that fills `Settings[...]` (~2333), after `Settings["NearSpecular"] = ...;`:
 
 ```cpp
 			Settings["ParallaxFadeDistance"] = SettingsTerrain.ParallaxFadeDistance;
 			Settings["ParallaxScale"] = SettingsTerrain.ParallaxScale;
 ```
 
-- [ ] **Step 5: Menu set** — in the `"Terrain"` branch that assigns from `Setting` (~3152), after the `NearSpecular` pair:
+- [x] **Step 5: Menu set** — in the `"Terrain"` branch that assigns from `Setting` (~3152), after the `NearSpecular` pair:
 
 ```cpp
 			else if (!strcmp(Setting, "ParallaxFadeDistance"))
@@ -115,7 +115,7 @@ struct SettingsTerrainStruct {
 				SettingsTerrain.ParallaxScale = Value;
 ```
 
-- [ ] **Step 6: Constant storage** — in `ShaderManager.h`, `TerrainStruct` becomes:
+- [x] **Step 6: Constant storage** — in `ShaderManager.h`, `TerrainStruct` becomes:
 
 ```cpp
 	struct TerrainStruct {
@@ -124,14 +124,14 @@ struct SettingsTerrainStruct {
 	};
 ```
 
-- [ ] **Step 7: Name mapping** — in `ShaderManager.cpp` `SetConstantTableValue2`, insert before the final `else {` (after the `TESR_PrevWorldViewProjectionTransform` branch):
+- [x] **Step 7: Name mapping** — in `ShaderManager.cpp` `SetConstantTableValue2`, insert before the final `else {` (after the `TESR_PrevWorldViewProjectionTransform` branch):
 
 ```cpp
 	else if (!strcmp(Name, "TESR_TerrainParallaxData"))
 		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.Terrain.ParallaxData;
 ```
 
-- [ ] **Step 8: Packing** — replace `ShaderManager::UpdateTerrain` with:
+- [x] **Step 8: Packing** — replace `ShaderManager::UpdateTerrain` with:
 
 ```cpp
 /// Packs the terrain shader settings: specular/noise tuning, and the near-land parallax scale with
@@ -151,7 +151,7 @@ void ShaderManager::UpdateTerrain(ShaderConstants& ShaderConst) {
 }
 ```
 
-- [ ] **Step 9: Shipped INI** — `OblivionReloaded/Shaders/Terrain/Terrain.ini` becomes:
+- [x] **Step 9: Shipped INI** — `OblivionReloaded/Shaders/Terrain/Terrain.ini` becomes:
 
 ```ini
 [Default]
@@ -163,9 +163,9 @@ ParallaxScale   = 0.0
 ParallaxFadeDistance = 8000.0
 ```
 
-- [ ] **Step 10: Verify** — run the two greps from Acceptance Criteria (expect `12` and `1`), then the MSBuild command from Global Constraints through the PowerShell tool. Expect 0 errors.
+- [x] **Step 10: Verify** — run the two greps from Acceptance Criteria (expect `12` and `1`), then the MSBuild command from Global Constraints through the PowerShell tool. Expect 0 errors.
 
-- [ ] **Step 11: Commit**
+- [x] **Step 11: Commit**
 
 ```bash
 git add TESReloaded/Core/SettingManager.h TESReloaded/Core/SettingManager.cpp TESReloaded/Core/ShaderManager.h TESReloaded/Core/ShaderManager.cpp OblivionReloaded/Shaders/Terrain/Terrain.ini
@@ -190,16 +190,16 @@ git commit -m "feat(Terrain): Add near-land parallax settings and shader constan
 - Modify: `OblivionReloaded/Shaders/Terrain/SLS2049.pso.hlsl`
 
 **Acceptance Criteria:**
-- [ ] fxc compiles all four files (`vs_3_0` for the VSOs, `ps_3_0` for the PSOs) with exit code 0 and no warning that the HEAD version of the same file doesn't also produce
-- [ ] No `tex2D(BaseMap, IN.BaseUV` or `tex2D(NormalMap, IN.BaseUV` remains in SLS2048/2049 (`grep -c` → `0` for each file)
-- [ ] The PSO disassembly (`/Fc`) lists `TESR_TerrainParallaxData` at `c7`, and the VSO disassembly writes `o` register semantics `texcoord1`
-- [ ] Every existing VSO output line is unchanged (diff shows only additions in the VSOs)
+- [x] fxc compiles all four files (`vs_3_0` for the VSOs, `ps_3_0` for the PSOs) with exit code 0 and no warning that the HEAD version of the same file doesn't also produce
+- [x] No `tex2D(BaseMap, IN.BaseUV` or `tex2D(NormalMap, IN.BaseUV` remains in SLS2048/2049 (`grep -c` → `0` for each file)
+- [x] The PSO disassembly (`/Fc`) lists `TESR_TerrainParallaxData` at `c7`, and the VSO disassembly writes `o` register semantics `texcoord1`
+- [x] Every existing VSO output line is unchanged (diff shows only additions in the VSOs)
 
 **Verify:** the PowerShell fxc loop in Step 6 → `OK` for all four files; the `grep -c` checks → `0`.
 
 **Steps:**
 
-- [ ] **Step 1: Create `OblivionReloaded/Shaders/Terrain/Includes/Parallax.hlsl`**
+- [x] **Step 1: Create `OblivionReloaded/Shaders/Terrain/Includes/Parallax.hlsl`**
 
 ```hlsl
 // Single-tap parallax for the near-land layer passes (SLS2048 base layer, SLS2049 blended layers).
@@ -221,7 +221,7 @@ float2 TerrainParallaxUV(sampler2D HeightMap, float2 BaseUV, float4 ParallaxView
 }
 ```
 
-- [ ] **Step 2: SLS2042.vso.hlsl** — add the output to `VS_OUTPUT`, directly after `float2 texcoord_0 : TEXCOORD0;`:
+- [x] **Step 2: SLS2042.vso.hlsl** — add the output to `VS_OUTPUT`, directly after `float2 texcoord_0 : TEXCOORD0;`:
 
 ```hlsl
     float4 ParallaxView : TEXCOORD1;
@@ -235,7 +235,7 @@ and in `main`, directly after `OUT.texcoord_0.xy = IN.texcoord_0.xy;`:
     OUT.ParallaxView.w = length(eyeVec);
 ```
 
-- [ ] **Step 3: SLS2043.vso.hlsl** — the identical two additions: `float4 ParallaxView : TEXCOORD1;` after `float2 texcoord_0 : TEXCOORD0;` in `VS_OUTPUT`, and after `OUT.texcoord_0.xy = IN.texcoord_0.xy;` in `main`:
+- [x] **Step 3: SLS2043.vso.hlsl** — the identical two additions: `float4 ParallaxView : TEXCOORD1;` after `float2 texcoord_0 : TEXCOORD0;` in `VS_OUTPUT`, and after `OUT.texcoord_0.xy = IN.texcoord_0.xy;` in `main`:
 
 ```hlsl
     float3 eyeVec = EyePosition.xyz - IN.position.xyz;
@@ -243,7 +243,7 @@ and in `main`, directly after `OUT.texcoord_0.xy = IN.texcoord_0.xy;`:
     OUT.ParallaxView.w = length(eyeVec);
 ```
 
-- [ ] **Step 4: SLS2048.pso.hlsl**
+- [x] **Step 4: SLS2048.pso.hlsl**
   - In `VS_OUTPUT`, replace `float2 NormalUV : TEXCOORD1;` with `float4 ParallaxView : TEXCOORD1;`.
   - Directly before `PS_OUTPUT main(VS_OUTPUT IN) {`, add `#include "Includes/Parallax.hlsl"` followed by a blank line.
   - As the first statement after the `#define` block and local declarations in `main` (i.e. directly before `r1.xyzw = tex2D(NormalMap, IN.BaseUV.xy);`), add:
@@ -262,7 +262,7 @@ and in `main`, directly after `OUT.texcoord_0.xy = IN.texcoord_0.xy;`:
     r3.xyz = tex2D(BaseMap, uv).xyz;
 ```
 
-- [ ] **Step 5: SLS2049.pso.hlsl**
+- [x] **Step 5: SLS2049.pso.hlsl**
   - In `VS_OUTPUT`, replace `//float2 NormalUV : TEXCOORD1;` with `float4 ParallaxView : TEXCOORD1;`.
   - Directly before `PS_OUTPUT main(VS_OUTPUT IN) {`, add `#include "Includes/Parallax.hlsl"` followed by a blank line.
   - Directly before `r1.xyzw = tex2D(NormalMap, IN.BaseUV.xy);`, add:
@@ -273,7 +273,7 @@ and in `main`, directly after `OUT.texcoord_0.xy = IN.texcoord_0.xy;`:
 
   - Change the three samples exactly as in Step 4 (`r1.xyzw = tex2D(NormalMap, uv);`, `r0.xyz = tex2D(NormalMap, uv).xyz;`, `r3.xyz = tex2D(BaseMap, uv).xyz;`). Leave the `OUT.color_0.a` layer-weight line untouched.
 
-- [ ] **Step 6: Compile new and HEAD versions with fxc** (PowerShell tool):
+- [x] **Step 6: Compile new and HEAD versions with fxc** (PowerShell tool):
 
 ```powershell
 $fxc = 'C:\Program Files (x86)\Windows Kits\10\bin\10.0.26100.0\x86\fxc.exe'
@@ -296,7 +296,7 @@ Select-String -Path "$out\SLS2042.vso.asm","$out\SLS2043.vso.asm" -Pattern 'texc
 
 Expected: `OK` for all four; the PSO listings show `TESR_TerrainParallaxData   c7   1`; each VSO listing has a `dcl_texcoord1 o…` line. (If the HEAD copy fails to compile because `/I` resolution differs for a temp path, copy it into `$dir` under a temporary name instead, and delete it afterwards.)
 
-- [ ] **Step 7: Check no un-displaced samples remain**
+- [x] **Step 7: Check no un-displaced samples remain**
 
 ```bash
 grep -c "tex2D(BaseMap, IN.BaseUV\|tex2D(NormalMap, IN.BaseUV" OblivionReloaded/Shaders/Terrain/SLS2048.pso.hlsl OblivionReloaded/Shaders/Terrain/SLS2049.pso.hlsl
@@ -304,7 +304,7 @@ grep -c "tex2D(BaseMap, IN.BaseUV\|tex2D(NormalMap, IN.BaseUV" OblivionReloaded/
 
 Expected: `...SLS2048.pso.hlsl:0` and `...SLS2049.pso.hlsl:0`.
 
-- [ ] **Step 8: Commit** (source only; the compiled `.vso`/`.pso` are regenerated in-game in Task 3)
+- [x] **Step 8: Commit** (source only; the compiled `.vso`/`.pso` are regenerated in-game in Task 3)
 
 ```bash
 git add OblivionReloaded/Shaders/Terrain/Includes/Parallax.hlsl OblivionReloaded/Shaders/Terrain/SLS2042.vso.hlsl OblivionReloaded/Shaders/Terrain/SLS2043.vso.hlsl OblivionReloaded/Shaders/Terrain/SLS2048.pso.hlsl OblivionReloaded/Shaders/Terrain/SLS2049.pso.hlsl
@@ -329,31 +329,31 @@ This task needs the user to run the game; the coordinator drives it in conversat
 - Possibly modify: `OblivionReloaded/Shaders/Terrain/Terrain.ini` (tuned `ParallaxScale` if the user wants it on by default)
 
 **Acceptance Criteria:**
-- [ ] `OblivionReloaded.log` shows no shader compile error for SLS2042/2043/2048/2049
-- [ ] With `ParallaxScale = 0`, the user reports terrain looks identical to before
-- [ ] With `ParallaxScale ≈ 0.04`, the user reports visible relief on cobblestone / rocky layers with bumps raised consistently along both texture axes (after a sign fix if needed)
-- [ ] The user reports no visible seam at the near-land / LOD boundary and no distant shimmer
-- [ ] A `Develop.LogShaders` capture in an exterior shows SLS2042 paired only with SLS2048 and SLS2043 only with SLS2049 (or any other pairing's PSO is confirmed not to read TEXCOORD1)
-- [ ] `git status` shows the four regenerated binaries, committed
+- [x] `OblivionReloaded.log` shows no shader compile error for SLS2042/2043/2048/2049
+- [x] With `ParallaxScale = 0`, the user reports terrain looks identical to before
+- [x] With `ParallaxScale ≈ 0.04`, the user reports visible relief on cobblestone / rocky layers with bumps raised consistently along both texture axes (after a sign fix if needed)
+- [x] The user reports no visible seam at the near-land / LOD boundary and no distant shimmer
+- [x] A `Develop.LogShaders` capture in an exterior shows SLS2042 paired only with SLS2048 and SLS2043 only with SLS2049 (or any other pairing's PSO is confirmed not to read TEXCOORD1)
+- [x] `git status` shows the four regenerated binaries, committed
 
 **Verify:** user confirmation of each visual criterion in conversation; `git log -1 --stat` lists the four `.vso`/`.pso` binaries.
 
 **Steps:**
 
-- [ ] **Step 1: Build** — MSBuild command from Global Constraints (game closed). Expect 0 errors.
-- [ ] **Step 2: Ask the user** to set `[Develop] CompileShaders = 1` in `C:\Games\Steam\steamapps\common\Oblivion\Data\OBSE\Plugins\OblivionReloaded.ini`, confirm `[Shaders] Terrain = 1`, launch, and load an exterior save with cobblestone and rocky ground (e.g. outside a city gate).
-- [ ] **Step 3: Check the log** — `Select-String -Path 'C:\Games\Steam\steamapps\common\Oblivion\OblivionReloaded.log' -Pattern 'SLS204[2389]'` shows each loaded without an error line.
-- [ ] **Step 4: Inert at 0** — user compares against memory/screenshot of the previous build: no change.
-- [ ] **Step 5: Effect on** — user sets Terrain `ParallaxScale` to `0.04` from the in-game menu. Ask: do bumps look raised, and does the relief stay consistent when strafing left/right and walking forward/back? If one direction looks inverted (relief slides the wrong way along one axis), negate that component in **both** SLS2042.vso.hlsl and SLS2043.vso.hlsl directly after the `OUT.ParallaxView.w` line:
+- [x] **Step 1: Build** — MSBuild command from Global Constraints (game closed). Expect 0 errors.
+- [x] **Step 2: Ask the user** to set `[Develop] CompileShaders = 1` in `C:\Games\Steam\steamapps\common\Oblivion\Data\OBSE\Plugins\OblivionReloaded.ini`, confirm `[Shaders] Terrain = 1`, launch, and load an exterior save with cobblestone and rocky ground (e.g. outside a city gate).
+- [x] **Step 3: Check the log** — `Select-String -Path 'C:\Games\Steam\steamapps\common\Oblivion\OblivionReloaded.log' -Pattern 'SLS204[2389]'` shows each loaded without an error line.
+- [x] **Step 4: Inert at 0** — user compares against memory/screenshot of the previous build: no change.
+- [x] **Step 5: Effect on** — user sets Terrain `ParallaxScale` to `0.04` from the in-game menu. Ask: do bumps look raised, and does the relief stay consistent when strafing left/right and walking forward/back? If one direction looks inverted (relief slides the wrong way along one axis), negate that component in **both** SLS2042.vso.hlsl and SLS2043.vso.hlsl directly after the `OUT.ParallaxView.w` line:
 
 ```hlsl
     OUT.ParallaxView.y = -OUT.ParallaxView.y;
 ```
 
   (use `.x` instead if the horizontal texture axis is the inverted one; use both if everything looks sunken). Re-run with CompileShaders = 1 and re-check.
-- [ ] **Step 6: Fade** — user looks toward distant land at the near/LOD boundary and pans: no ring or seam, no shimmer. If the fade is visible, try `ParallaxFadeDistance` values from the menu and record the chosen value.
-- [ ] **Step 7: Pairing** — user presses the `Develop.LogShaders` key in the exterior; search the log for `SLS2042` / `SLS2043` pass lines and confirm their PSOs are only SLS2048 / SLS2049. If another PSO appears (e.g. SLS2046), extract it (see memory `par-shader-interpolator-layout`) and confirm it does not declare `t1`.
-- [ ] **Step 8: Restore and commit** — user sets `CompileShaders = 0`; if the user wants parallax on by default, update `ParallaxScale` in `Terrain.ini` to the chosen value. Commit:
+- [x] **Step 6: Fade** — user looks toward distant land at the near/LOD boundary and pans: no ring or seam, no shimmer. If the fade is visible, try `ParallaxFadeDistance` values from the menu and record the chosen value.
+- [x] **Step 7: Pairing** — user presses the `Develop.LogShaders` key in the exterior; search the log for `SLS2042` / `SLS2043` pass lines and confirm their PSOs are only SLS2048 / SLS2049. If another PSO appears (e.g. SLS2046), extract it (see memory `par-shader-interpolator-layout`) and confirm it does not declare `t1`.
+- [x] **Step 8: Restore and commit** — user sets `CompileShaders = 0`; if the user wants parallax on by default, update `ParallaxScale` in `Terrain.ini` to the chosen value. Commit:
 
 ```bash
 git add OblivionReloaded/Shaders/Terrain/SLS2042.vso OblivionReloaded/Shaders/Terrain/SLS2043.vso OblivionReloaded/Shaders/Terrain/SLS2048.pso OblivionReloaded/Shaders/Terrain/SLS2049.pso
@@ -378,15 +378,15 @@ git commit -m "feat(Terrain): Recompile near-land shaders with parallax"
 - Modify: `docs/superpowers/plans/2026-09-26-terrain-parallax.md`
 
 **Acceptance Criteria:**
-- [ ] `memory/terrain-land-passes.md` has the standard frontmatter (`name: terrain-land-passes`, `description`, `metadata.type: project`) and states: SLS2042→2048 base layer opaque, SLS2043→2049 per-layer alpha-blended by vertex weights; TEXCOORD1 carries `ParallaxView`; the Task 3 tangent-sign result (no flip / which axis flipped); the Task 3 pairing result; links `[[par-shader-interpolator-layout]]` and `[[shader-deployment-workflow]]`
-- [ ] `MEMORY.md` has one new line pointing to it
-- [ ] The commit touches only `memory/` and `docs/` files, with a `docs:` subject
+- [x] `memory/terrain-land-passes.md` has the standard frontmatter (`name: terrain-land-passes`, `description`, `metadata.type: project`) and states: SLS2042→2048 base layer opaque, SLS2043→2049 per-layer alpha-blended by vertex weights; TEXCOORD1 carries `ParallaxView`; the Task 3 tangent-sign result (no flip / which axis flipped); the Task 3 pairing result; links `[[par-shader-interpolator-layout]]` and `[[shader-deployment-workflow]]`
+- [x] `MEMORY.md` has one new line pointing to it
+- [x] The commit touches only `memory/` and `docs/` files, with a `docs:` subject
 
 **Verify:** `git show --stat HEAD` lists only `memory/terrain-land-passes.md`, `memory/MEMORY.md`, `docs/superpowers/plans/2026-09-26-terrain-parallax.md`.
 
 **Steps:**
 
-- [ ] **Step 1: Write `memory/terrain-land-passes.md`** using the facts measured in Task 3 (fill the two bracketed results from Task 3's outcome before writing — they are measurements, not placeholders to leave in):
+- [x] **Step 1: Write `memory/terrain-land-passes.md`** using the facts measured in Task 3 (fill the two bracketed results from Task 3's outcome before writing — they are measurements, not placeholders to leave in):
 
 ```markdown
 ---
@@ -414,15 +414,15 @@ once (height blending) would need single-pass land. See [[par-shader-interpolato
 [[shader-deployment-workflow]].
 ```
 
-- [ ] **Step 2: Index it** — append to `memory/MEMORY.md`:
+- [x] **Step 2: Index it** — append to `memory/MEMORY.md`:
 
 ```markdown
 - [Near-land pass structure](terrain-land-passes.md) — SLS2042→2048 opaque base, SLS2043→2049 per-layer blend by vertex weights; TEXCOORD1 = terrain ParallaxView; measured tangent sign
 ```
 
-- [ ] **Step 3: Tick this plan's checkboxes** for Tasks 1–4.
+- [x] **Step 3: Tick this plan's checkboxes** for Tasks 1–4.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add memory/terrain-land-passes.md memory/MEMORY.md docs/superpowers/plans/2026-09-26-terrain-parallax.md
@@ -432,3 +432,15 @@ git commit -m "docs: Record near-land pass structure and terrain parallax result
 ```json:metadata
 {"files": ["memory/terrain-land-passes.md", "memory/MEMORY.md", "docs/superpowers/plans/2026-09-26-terrain-parallax.md"], "verifyCommand": "git show --stat HEAD lists only memory/terrain-land-passes.md, memory/MEMORY.md, docs/superpowers/plans/2026-09-26-terrain-parallax.md", "acceptanceCriteria": ["memory file with frontmatter, pass structure, measured sign and pairing results, links", "MEMORY.md index line added", "docs-only commit"], "modelTier": "mechanical"}
 ```
+
+---
+
+## Execution notes
+
+- Task 2: SLS2043 hit vs_3_0 X5622 (12 outputs); ruling: drop its dead TEXCOORD6/7 outputs and the
+  matching SLS2049 input declarations.
+- Task 3: relief slid along one axis; a Y flip moved the error to the other axis. Diagnostics showed
+  the land TBN is exact and `EyePosition` (c25) is stale for land draws. Fixed by deriving the eye
+  from `ModelViewProj` (bec0337); no sign flip. Compiled `.vso`/`.pso` are gitignored, so the
+  "commit regenerated binaries" steps did not apply. User chose `ParallaxScale = 0.01`, default on
+  (2eb09cf).

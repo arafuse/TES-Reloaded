@@ -101,8 +101,8 @@ float2 TerrainParallaxUV(sampler2D HeightMap, float2 BaseUV, float4 ParallaxView
 1. **Offline compile:** fxc `/T vs_3_0` / `/T ps_3_0 /E main /I OblivionReloaded\Shaders\Terrain`
    on all four `.hlsl` files; no new errors or warnings versus HEAD.
 2. **Build:** MSBuild Release/x86 of `OblivionReloaded` succeeds.
-3. **Binaries:** run the game with `[Develop] CompileShaders = 1` to regenerate the tracked
-   `.vso`/`.pso` files (the game's shader folder symlinks to the repo).
+3. **Compile in-game:** run the game with `[Develop] CompileShaders = 1` so it compiles the edited
+   `.hlsl` (the compiled `.vso`/`.pso` are gitignored and never committed).
 4. **Inert when off:** with `ParallaxScale = 0` terrain looks identical to before.
 5. **Effect when on (~0.03–0.05):** cobblestone / rocky-dirt layers show relief; bumps read as
    raised consistently along both UV axes. If one axis appears inverted, the land
@@ -114,6 +114,16 @@ float2 TerrainParallaxUV(sampler2D HeightMap, float2 BaseUV, float4 ParallaxView
 
 ## Commits
 
-- `feat(Terrain): ...` — shaders, regenerated binaries, settings, constants, `Terrain.ini`.
+- `feat(Terrain): ...` — shaders, settings, constants, `Terrain.ini`.
 - `docs: ...` — this spec, the plan, and a memory note on the land pass structure and the
   measured tangent-sign result.
+
+## Implementation notes (post-verification)
+
+- **Eye position:** the engine never uploads `EyePosition` (c25) for land draws (stock SLS2042/2043
+  don't declare it), so it is stale. The VSOs derive the model-space eye from `ModelViewProj` via
+  `TerrainEyePosition()` in `Terrain/Includes/Parallax.hlsl`. The land TBN was measured exact; no
+  sign flip.
+- **Register budget:** SLS2043 was at the vs_3_0 limit of 11 outputs; its dead TEXCOORD6/7 outputs
+  (and the matching unread SLS2049 inputs) were removed to make room for TEXCOORD1.
+- **Default:** the user chose `ParallaxScale = 0.01`, on by default (shipped INI and code default).
