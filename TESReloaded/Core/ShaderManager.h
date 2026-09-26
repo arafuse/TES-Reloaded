@@ -109,6 +109,7 @@ struct ShaderConstants {
 	};
 	struct TerrainStruct {
 		D3DXVECTOR4		Data;
+		D3DXVECTOR4		ParallaxData;	// x = scale, y = -0.5 * scale, z = fade slope, w = fade bias
 	};
 	struct SkinStruct {
 		D3DXVECTOR4		SkinData;

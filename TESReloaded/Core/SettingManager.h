@@ -446,6 +446,8 @@ struct SettingsTerrainStruct {
 	float DistantNoise;
 	float NearSpecular;
 	float MiddleSpecular;
+	float ParallaxScale;			///< Near-land parallax UV offset per unit of height (diffuse alpha); 0 disables it.
+	float ParallaxFadeDistance;		///< Eye distance at which near-land parallax has faded to zero; <= 0 never fades.
 };
 
 struct SettingsSkinStruct {
