@@ -64,6 +64,8 @@ struct VS_OUTPUT {
 
 // Code:
 
+#include "Includes/Parallax.hlsl"
+
 VS_OUTPUT main(VS_INPUT IN) {
     VS_OUTPUT OUT;
 
@@ -82,7 +84,7 @@ VS_OUTPUT main(VS_INPUT IN) {
     OUT.color_1.rgba = IN.texcoord_2.xyzw;
     OUT.position = r0;
     OUT.texcoord_0.xy = IN.texcoord_0.xy;
-    float3 eyeVec = EyePosition.xyz - IN.position.xyz;
+    float3 eyeVec = TerrainEyePosition(ModelViewProj) - IN.position.xyz;
     OUT.ParallaxView.xyz = mul(TanSpaceProj, eyeVec);
     OUT.ParallaxView.w = length(eyeVec);
     OUT.texcoord_2.xyzw = (IN.color_0.xyzx * const_4.yyyz) + const_4.zzzy;

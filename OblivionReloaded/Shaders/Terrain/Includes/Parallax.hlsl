@@ -15,3 +15,16 @@ float2 TerrainParallaxUV(sampler2D HeightMap, float2 BaseUV, float4 ParallaxView
     float fade = saturate(ParallaxView.w * TESR_TerrainParallaxData.z + TESR_TerrainParallaxData.w);
     return BaseUV + (height * TESR_TerrainParallaxData.x + TESR_TerrainParallaxData.y) * fade * normalize(ParallaxView.xyz).xy;
 }
+
+// VSO side: the eye position in model space, solved from ModelViewProj as the point whose clip x, y
+// and w are all zero. The engine does not upload EyePosition (c25) for land draws (the stock land
+// shaders never use it), so that register holds a stale value from an earlier draw.
+// MVP : ModelViewProj
+float3 TerrainEyePosition(row_major float4x4 MVP) {
+    float4 a = MVP[0];
+    float4 b = MVP[1];
+    float4 c = MVP[3];
+    float4 eye = float4(determinant(float3x3(a.yzw, b.yzw, c.yzw)), -determinant(float3x3(a.xzw, b.xzw, c.xzw)),
+                        determinant(float3x3(a.xyw, b.xyw, c.xyw)), -determinant(float3x3(a.xyz, b.xyz, c.xyz)));
+    return eye.xyz / eye.w;
+}
