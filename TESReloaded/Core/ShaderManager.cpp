@@ -606,7 +606,8 @@ bool ShaderRecord::LoadShader(const char* Name, const char* DirPostFix) {
 			void* pShaderBuffer = Shader->GetBufferPointer();
 			FileBinary.read((char*)pShaderBuffer, size);
 			FileBinary.close();
-			D3DXGetShaderConstantTable((const DWORD*)pShaderBuffer, &Table);
+			// Without the flag, D3DX misreads handles to records above 2GB as name strings.
+			D3DXGetShaderConstantTableEx((const DWORD*)pShaderBuffer, D3DXCONSTTABLE_LARGEADDRESSAWARE, &Table);
 		}
 		else {
 			Logger::Log("ERROR: Shader %s not found. Try to enable the CompileShader option to recompile the shaders.", FileNameBinary);
@@ -635,7 +636,7 @@ void ShaderRecord::CreateCT() {
 	Table->GetDesc(&ConstantTableDesc);
     for (UINT c = 0; c < ConstantTableDesc.Constants; c++) {
 		Handle = Table->GetConstant(NULL, c);
-		Table->GetConstantDesc(Handle, &ConstantDesc, &ConstantCount);
+		if (FAILED(Table->GetConstantDesc(Handle, &ConstantDesc, &ConstantCount))) continue;
 		//if (ConstantDesc.RegisterSet == D3DXRS_FLOAT4 && !memcmp(ConstantDesc.Name, "TESR_", 5)) FloatShaderValuesCount += 1;
 		if (ConstantDesc.RegisterSet == D3DXRS_FLOAT4 && !memcmp(ConstantDesc.Name, "TESR_GEOM_", 10)) { PerGeomFloatShaderValuesCount += 1; }
 		else if(ConstantDesc.RegisterSet == D3DXRS_FLOAT4 && !memcmp(ConstantDesc.Name, "TESR_", 5)) { FloatShaderValuesCount += 1; }
@@ -648,7 +649,7 @@ void ShaderRecord::CreateCT() {
 		TextureShaderValues = (ShaderValue*)malloc(TextureShaderValuesCount * sizeof(ShaderValue));
 		for (UINT c = 0; c < ConstantTableDesc.Constants; c++) {
 			Handle = Table->GetConstant(NULL, c);
-			Table->GetConstantDesc(Handle, &ConstantDesc, &ConstantCount);
+			if (FAILED(Table->GetConstantDesc(Handle, &ConstantDesc, &ConstantCount))) continue;
 			if (!memcmp(ConstantDesc.Name, "TESR_", 5)) {
 				Logger::Log("%s", ConstantDesc.Name);
 				switch (ConstantDesc.RegisterSet) {
@@ -789,7 +790,7 @@ bool EffectRecord::LoadEffect(const char* Name) {
 		Source[size] = 0;
 		FileSource.close();
 
-		D3DXCreateEffectFromFileA(TheRenderManager->device, Name, NULL, NULL, NULL, NULL, &Effect, &Errors);
+		D3DXCreateEffectFromFileA(TheRenderManager->device, Name, NULL, NULL, D3DXFX_LARGEADDRESSAWARE, NULL, &Effect, &Errors);
 		if (Errors) Logger::Log((char*)Errors->GetBufferPointer());
 		if (Effect) {
 			CreateCT();
@@ -912,7 +913,7 @@ void EffectRecord::CreateCT() {
 	Effect->GetDesc(&ConstantTableDesc);
 	for (UINT c = 0; c < ConstantTableDesc.Parameters; c++) {
 		Handle = Effect->GetParameter(NULL, c);
-		Effect->GetParameterDesc(Handle, &ConstantDesc);
+		if (FAILED(Effect->GetParameterDesc(Handle, &ConstantDesc))) continue;
 		if ((ConstantDesc.Class == D3DXPC_VECTOR || ConstantDesc.Class == D3DXPC_MATRIX_ROWS) && !memcmp(ConstantDesc.Name, "TESR_", 5)) FloatShaderValuesCount += 1;
 		if (ConstantDesc.Class == D3DXPC_OBJECT && ConstantDesc.Type >= D3DXPT_SAMPLER && ConstantDesc.Type <= D3DXPT_SAMPLERCUBE && !memcmp(ConstantDesc.Name, "TESR_", 5)) TextureShaderValuesCount += 1;
 	}
@@ -920,7 +921,7 @@ void EffectRecord::CreateCT() {
 	TextureShaderValues = (ShaderValue*)malloc(TextureShaderValuesCount * sizeof(ShaderValue));
 	for (UINT c = 0; c < ConstantTableDesc.Parameters; c++) {
 		Handle = Effect->GetParameter(NULL, c);
-		Effect->GetParameterDesc(Handle, &ConstantDesc);
+		if (FAILED(Effect->GetParameterDesc(Handle, &ConstantDesc))) continue;
 		if (!memcmp(ConstantDesc.Name, "TESR_", 5)) {
 			switch (ConstantDesc.Class) {
 				case D3DXPC_VECTOR:
