@@ -6,7 +6,6 @@
 //
 // Parameters:
 //
-float4 EyePosition : register(c25);
 row_major float4x4 ModelViewProj : register(c0);
 float3 LightDirection[3] : register(c13);
 row_major float4x4 ShadowProj : register(c28);
@@ -74,10 +73,7 @@ VS_OUTPUT main(VS_INPUT IN) {
     const float4 const_4 = {0.5, 1, 0, 0};
 	
 	float4 r0;
-    float3 eye4;
     float3 m12;
-    eye4.xyz = normalize(normalize(EyePosition.xyz - IN.position.xyz) + LightDirection[0].xyz);
-    m12.xyz = mul(float3x3(IN.tangent.xyz, IN.binormal.xyz, IN.normal.xyz), eye4.xyz);
 	r0 = mul(ModelViewProj, IN.position);
     OUT.position = r0;
     OUT.texcoord_0.xy = IN.texcoord_0.xy;
