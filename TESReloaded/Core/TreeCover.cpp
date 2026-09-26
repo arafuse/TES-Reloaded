@@ -164,7 +164,8 @@ static bool __fastcall DetectionLineOfSightHook(Actor* Observer, void* Edx, UInt
 	float Depth = 0.0f;
 	for (int i = 0; i < Shrubs.Count; i++)
 		Depth += TreeCoverRayDepth(Shrubs.Shrubs[i], EyeX, EyeY, EyeZ, Shrubs.TorsoX, Shrubs.TorsoY, Shrubs.TorsoZ);
-	return Depth < TheSettingManager->SettingsGrass.TreeCoverLOSDepth;
+	float Threshold = TheSettingManager->SettingsGrass.TreeCoverLOSDepth;
+	return !(Threshold > 0.0f && Depth >= Threshold);
 
 }
 
