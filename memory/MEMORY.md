@@ -32,3 +32,4 @@
 - [D3DX handles break above 2GB](d3dx-laa-handle-trap.md) — exe is LAA; D3DX constant-table/effect handles to high records are misread as name strings (crash in CreateCT on interior shader reload) unless created with D3DXCONSTTABLE_/D3DXFX_LARGEADDRESSAWARE; check GetConstantDesc HRESULT
 - [Near-land pass structure](terrain-land-passes.md) — SLS2042→2048 base + SLS2043→2049 layer blend; EyePosition c25 is STALE in land shaders (derive eye from ModelViewProj); land TBN exact; SLS2043 at vs_3_0 output limit; land writes POM shadow relief, layers blended by weight
 - [Actor light level formula](actor-light-level-formula.md) — GetLightLevel 0x655FE0 = Σ point falloff + unoccluded sun max(diffuse) (one call at 0x6561FD, actor in edi) ×100; no occlusion anywhere
+- [No dusk fade for shadow gameplay](moon-shadows-no-dusk-fade.md) — moon casts shadows; shadow-driven effects use Darkness directly, never the ShadowLightDir.w dawn/dusk/moon ramp
