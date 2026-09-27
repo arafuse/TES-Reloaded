@@ -629,6 +629,8 @@ void SettingManager::LoadSettings() {
 	SettingsTerrain.ParallaxScale = atof(value);
 	GetPrivateProfileStringA("Default", "ParallaxFadeDistance", "8000.0", value, SettingStringBuffer, Filename);
 	SettingsTerrain.ParallaxFadeDistance = atof(value);
+	GetPrivateProfileStringA("Default", "ShadowReliefScale", "4.0", value, SettingStringBuffer, Filename);
+	SettingsTerrain.ShadowReliefScale = atof(value);
 
 	strcpy(Filename, CurrentPath);
 	strcat(Filename, SettingsPath);
@@ -1677,6 +1679,7 @@ void SettingManager::SaveSettings(const char* Item, const char* Definition, cons
 			WritePrivateProfileStringA("Default", "NearSpecular", ToString(SettingsTerrain.NearSpecular).c_str(), Filename);
 			WritePrivateProfileStringA("Default", "ParallaxFadeDistance", ToString(SettingsTerrain.ParallaxFadeDistance).c_str(), Filename);
 			WritePrivateProfileStringA("Default", "ParallaxScale", ToString(SettingsTerrain.ParallaxScale).c_str(), Filename);
+			WritePrivateProfileStringA("Default", "ShadowReliefScale", ToString(SettingsTerrain.ShadowReliefScale).c_str(), Filename);
 		}
 		else if (!strcmp(Definition, "VolumetricFog")) {
 			WritePrivateProfileStringA("Effects", "VolumetricFog", ToString(SettingsMain.Effects.VolumetricFog).c_str(), SettingsMain.Main.MainFile);
@@ -2339,6 +2342,7 @@ SettingsList SettingManager::GetMenuSettings(const char* Item, const char* Defin
 			Settings["NearSpecular"] = SettingsTerrain.NearSpecular;
 			Settings["ParallaxFadeDistance"] = SettingsTerrain.ParallaxFadeDistance;
 			Settings["ParallaxScale"] = SettingsTerrain.ParallaxScale;
+			Settings["ShadowReliefScale"] = SettingsTerrain.ShadowReliefScale;
 		}
 		else if (!strcmp(Definition, "VolumetricFog")) {
 			Settings["Amount"] = SettingsVolumetricFog.Amount;
@@ -3162,6 +3166,8 @@ void SettingManager::SetMenuSetting(const char* Item, const char* Definition, co
 				SettingsTerrain.ParallaxFadeDistance = Value;
 			else if (!strcmp(Setting, "ParallaxScale"))
 				SettingsTerrain.ParallaxScale = Value;
+			else if (!strcmp(Setting, "ShadowReliefScale"))
+				SettingsTerrain.ShadowReliefScale = Value;
 		}
 		else if (!strcmp(Definition, "VolumetricFog")) {
 			if (!strcmp(Setting, "Amount"))

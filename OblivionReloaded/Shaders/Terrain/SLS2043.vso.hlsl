@@ -58,7 +58,7 @@ struct VS_OUTPUT {
     float3 texcoord_3 : TEXCOORD3;
     float3 texcoord_4 : TEXCOORD4;
     float3 texcoord_5 : TEXCOORD5;
-    float4 texcoord_8 : TEXCOORD8;
+    float ViewDepth : TEXCOORD8;
 };
 
 // Code:
@@ -85,8 +85,9 @@ VS_OUTPUT main(VS_INPUT IN) {
     OUT.ParallaxView.w = length(eyeVec);
     OUT.texcoord_2.xyzw = (IN.color_0.xyzx * const_4.yyyz) + const_4.zzzy;
     OUT.texcoord_3.xyz = compress(mul(TanSpaceProj, LightDirection[0].xyz));
-    OUT.texcoord_8 = mul(r0, TESR_InvViewProjectionTransform);
-    m12.xyz = -mul(float3x3(IN.tangent.xyz, IN.binormal.xyz, IN.normal.xyz), OUT.texcoord_8.xyz);
+    OUT.ViewDepth = r0.w;
+    float4 viewVec = mul(r0, TESR_InvViewProjectionTransform);
+    m12.xyz = -mul(float3x3(IN.tangent.xyz, IN.binormal.xyz, IN.normal.xyz), viewVec.xyz);
     OUT.texcoord_4.xyz = normalize(m12.xyz) + LightDirection[0].xyz;
     OUT.texcoord_5 = normalize(m12.xyz);
     return OUT;

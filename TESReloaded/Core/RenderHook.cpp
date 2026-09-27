@@ -863,10 +863,12 @@ UInt32 RenderHook::TrackSetupShaderPrograms(NiGeometry* Geometry, NiSkinInstance
 		}
 
 #if defined(OBLIVION)
-		// POM shadow side channel: RT1 only under a depth-writing, unblended PAR first
-		// pass of the main scene. Must precede the mid-scene shadow apply below.
-		TheShaderManager->BindPOMDepth(PixelShader->isPOMShadowWriter && TheShaderManager->InMainScenePass &&
-			RenderState->GetRenderState(D3DRS_ZWRITEENABLE) && !RenderState->GetRenderState(D3DRS_ALPHABLENDENABLE));
+		// POM shadow side channel: RT1 only under a depth-writing, unblended first pass of the
+		// main scene, or a blended land layer when the target supports blending. Must precede
+		// the mid-scene shadow apply below.
+		TheShaderManager->BindPOMDepth(TheShaderManager->InMainScenePass &&
+			((PixelShader->isPOMShadowWriter && RenderState->GetRenderState(D3DRS_ZWRITEENABLE) && !RenderState->GetRenderState(D3DRS_ALPHABLENDENABLE)) ||
+			 (PixelShader->isPOMShadowBlender && TheShaderManager->POMDepthBlendable)));
 #endif
 
 		// Apply shadows at the main pass's first near-water draw: every receiver is
