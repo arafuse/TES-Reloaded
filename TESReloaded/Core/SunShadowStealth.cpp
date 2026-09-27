@@ -37,6 +37,7 @@ static float				Visibility[kProbePointCount] = {};
 static float				LastShadowed = 0.0f;
 static DWORD				LastLogTick = 0;
 static bool					LoggedLightListCheck = false;
+static bool					LoggedD3DFailure = false;
 
 static void ReleaseProbeResources() {
 
@@ -96,6 +97,7 @@ void UpdateSunShadowStealth() {
 		ReleaseProbeResources();
 		ProbeFailed = false;
 		ProbeArmed = false;
+		LoggedD3DFailure = false;
 		PlayerSunLightScale = 1.0f;
 		return;
 	}
@@ -159,6 +161,17 @@ static void PublishScale() {
 
 }
 
+// Publishes the vanilla scale and logs once on a probe D3D call failure.
+static void ProbeFailure() {
+
+	PlayerSunLightScale = 1.0f;
+	if (!LoggedD3DFailure) {
+		LoggedD3DFailure = true;
+		Logger::Log("SunShadowStealth: probe D3D call failed; the player's light level stays vanilla.");
+	}
+
+}
+
 // Oldest first; a slot is copied only once its event query reports the GPU is done with it.
 static void ReadFinishedProbes(IDirect3DDevice9* Device) {
 
@@ -168,8 +181,8 @@ static void ReadFinishedProbes(IDirect3DDevice9* Device) {
 		if (Slot.Done->GetData(NULL, 0, 0) != S_OK) return;
 		Slot.Pending = false;
 		D3DLOCKED_RECT Locked;
-		if (FAILED(Device->GetRenderTargetData(Slot.Target, ReadbackSurface))) continue;
-		if (FAILED(ReadbackSurface->LockRect(&Locked, NULL, D3DLOCK_READONLY))) continue;
+		if (FAILED(Device->GetRenderTargetData(Slot.Target, ReadbackSurface))) { ProbeFailure(); continue; }
+		if (FAILED(ReadbackSurface->LockRect(&Locked, NULL, D3DLOCK_READONLY))) { ProbeFailure(); continue; }
 		memcpy(Visibility, Locked.pBits, sizeof(Visibility));
 		ReadbackSurface->UnlockRect();
 		PublishScale();
@@ -213,15 +226,39 @@ void RenderSunShadowProbe(IDirect3DDevice9* Device) {
 
 	D3DXVECTOR4 Points[kProbePointCount];
 	BuildProbePoints(Points);
-	if (FAILED(Device->SetRenderTarget(0, Slot.Target))) return;
+	if (FAILED(Device->SetRenderTarget(0, Slot.Target))) {
+		ProbeFailure();
+		return;
+	}
+
+	// Unbind depth: the scene's may be multisampled, and D3D9 will not pair it with the non-MS probe target.
+	IDirect3DSurface9* DepthStencil = NULL;
+	Device->GetDepthStencilSurface(&DepthStencil);
+	Device->SetDepthStencilSurface(NULL);
+
+	bool Ok = true;
 	ProbeEffect->SetCT();
 	ProbeEffect->Effect->SetVectorArray(ProbePointsHandle, Points, kProbePointCount);
 	UINT Passes;
-	ProbeEffect->Effect->Begin(&Passes, NULL);
-	ProbeEffect->Effect->BeginPass(0);
-	Device->DrawPrimitive(D3DPT_TRIANGLESTRIP, 0, 2);
-	ProbeEffect->Effect->EndPass();
-	ProbeEffect->Effect->End();
+	if (FAILED(ProbeEffect->Effect->Begin(&Passes, NULL))) {
+		Ok = false;
+	} else {
+		if (SUCCEEDED(ProbeEffect->Effect->BeginPass(0))) {
+			Device->DrawPrimitive(D3DPT_TRIANGLESTRIP, 0, 2);
+			ProbeEffect->Effect->EndPass();
+		} else {
+			Ok = false;
+		}
+		ProbeEffect->Effect->End();
+	}
+
+	Device->SetDepthStencilSurface(DepthStencil);
+	if (DepthStencil) DepthStencil->Release();
+
+	if (!Ok) {
+		ProbeFailure();
+		return;
+	}
 	Slot.Done->Issue(D3DISSUE_END);
 	Slot.Pending = true;
 	NextSlot = (NextSlot + 1) % kProbeRingSize;
