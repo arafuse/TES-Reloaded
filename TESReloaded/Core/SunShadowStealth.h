@@ -14,5 +14,5 @@ void UpdateSunShadowStealth();
 
 /// Publishes the scale from any finished probe, then renders this frame's probe. Main thread, from
 /// RenderShadowsMidScene straight after the sun shadow apply, with that apply's device state bound.
-/// Changes render target 0; the caller restores it.
+/// Restores render target 0 and the depth-stencil itself before returning.
 void RenderSunShadowProbe(IDirect3DDevice9* Device);

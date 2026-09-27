@@ -18,6 +18,7 @@ static const float	kLateralOffset		= 15.0f;
 static const float	kExitMargin			= 10.0f;
 static const UInt32	kMovementSneak		= 0x400;
 static const DWORD	kLogIntervalMs		= 1000;
+static const int	kReadbackTimeoutFrames	= 30;
 
 /// One in-flight probe: its render target and the event query issued after it was drawn.
 struct ProbeSlot {
@@ -30,7 +31,6 @@ static EffectRecord*		ProbeEffect = NULL;
 static D3DXHANDLE			ProbePointsHandle = NULL;
 static ProbeSlot			Ring[kProbeRingSize] = {};
 static int					NextSlot = 0;
-static IDirect3DSurface9*	ReadbackSurface = NULL;
 static bool					ProbeFailed = false;
 static bool					ProbeArmed = false;
 static float				Visibility[kProbePointCount] = {};
@@ -38,6 +38,7 @@ static float				LastShadowed = 0.0f;
 static DWORD				LastLogTick = 0;
 static bool					LoggedLightListCheck = false;
 static bool					LoggedD3DFailure = false;
+static int					FramesSinceReadback = 0;
 
 static void ReleaseProbeResources() {
 
@@ -46,8 +47,6 @@ static void ReleaseProbeResources() {
 		if (Ring[i].Done) Ring[i].Done->Release();
 		Ring[i] = {};
 	}
-	if (ReadbackSurface) ReadbackSurface->Release();
-	ReadbackSurface = NULL;
 	if (ProbeEffect) TheShaderManager->DisposeEffect(ProbeEffect);
 	ProbeEffect = NULL;
 	ProbePointsHandle = NULL;
@@ -68,10 +67,10 @@ static bool CreateProbeResources(IDirect3DDevice9* Device) {
 	ProbePointsHandle = ProbeEffect->Effect->GetParameterByName(NULL, "SunShadowProbePoints");
 	if (!ProbePointsHandle) return false;
 	for (int i = 0; i < kProbeRingSize; i++) {
-		if (FAILED(Device->CreateRenderTarget(kProbePointCount, 1, D3DFMT_R32F, D3DMULTISAMPLE_NONE, 0, FALSE, &Ring[i].Target, NULL))) return false;
+		if (FAILED(Device->CreateRenderTarget(kProbePointCount, 1, D3DFMT_R32F, D3DMULTISAMPLE_NONE, 0, TRUE, &Ring[i].Target, NULL))) return false;
 		if (FAILED(Device->CreateQuery(D3DQUERYTYPE_EVENT, &Ring[i].Done))) return false;
 	}
-	return SUCCEEDED(Device->CreateOffscreenPlainSurface(kProbePointCount, 1, D3DFMT_R32F, D3DPOOL_SYSTEMMEM, &ReadbackSurface, NULL));
+	return true;
 
 }
 
@@ -87,6 +86,7 @@ static bool SunMapsProbeable() {
 static void DiscardProbes() {
 
 	for (int i = 0; i < kProbeRingSize; i++) Ring[i].Pending = false;
+	FramesSinceReadback = 0;
 	PlayerSunLightScale = 1.0f;
 
 }
@@ -98,6 +98,7 @@ void UpdateSunShadowStealth() {
 		ProbeFailed = false;
 		ProbeArmed = false;
 		LoggedD3DFailure = false;
+		FramesSinceReadback = 0;
 		PlayerSunLightScale = 1.0f;
 		return;
 	}
@@ -111,6 +112,11 @@ void UpdateSunShadowStealth() {
 		ReleaseProbeResources();
 		ProbeFailed = true;
 	}
+
+	// Watchdog: if a slot never comes back S_OK (e.g. a device error), stop waiting on it.
+	bool AnyPending = false;
+	for (int i = 0; i < kProbeRingSize; i++) AnyPending |= Ring[i].Pending;
+	if (AnyPending && ++FramesSinceReadback > kReadbackTimeoutFrames) DiscardProbes();
 
 }
 
@@ -172,19 +178,22 @@ static void ProbeFailure() {
 
 }
 
-// Oldest first; a slot is copied only once its event query reports the GPU is done with it.
+// Oldest first; a slot is copied only once its event query reports the GPU is done with it. Each
+// target is Lockable, so this reads it directly with no GetRenderTargetData stall.
 static void ReadFinishedProbes(IDirect3DDevice9* Device) {
 
 	for (int k = 0; k < kProbeRingSize; k++) {
 		ProbeSlot& Slot = Ring[(NextSlot + k) % kProbeRingSize];
 		if (!Slot.Pending) continue;
 		if (Slot.Done->GetData(NULL, 0, 0) != S_OK) return;
-		Slot.Pending = false;
 		D3DLOCKED_RECT Locked;
-		if (FAILED(Device->GetRenderTargetData(Slot.Target, ReadbackSurface))) { ProbeFailure(); continue; }
-		if (FAILED(ReadbackSurface->LockRect(&Locked, NULL, D3DLOCK_READONLY))) { ProbeFailure(); continue; }
+		HRESULT hr = Slot.Target->LockRect(&Locked, NULL, D3DLOCK_READONLY | D3DLOCK_DONOTWAIT);
+		if (hr == D3DERR_WASSTILLDRAWING) return;
+		Slot.Pending = false;
+		if (FAILED(hr)) { ProbeFailure(); continue; }
 		memcpy(Visibility, Locked.pBits, sizeof(Visibility));
-		ReadbackSurface->UnlockRect();
+		Slot.Target->UnlockRect();
+		FramesSinceReadback = 0;
 		PublishScale();
 	}
 
@@ -226,8 +235,14 @@ void RenderSunShadowProbe(IDirect3DDevice9* Device) {
 
 	D3DXVECTOR4 Points[kProbePointCount];
 	BuildProbePoints(Points);
+	IDirect3DSurface9* Previous = NULL;
+	if (FAILED(Device->GetRenderTarget(0, &Previous))) {
+		ProbeFailure();
+		return;
+	}
 	if (FAILED(Device->SetRenderTarget(0, Slot.Target))) {
 		ProbeFailure();
+		Previous->Release();
 		return;
 	}
 
@@ -238,28 +253,36 @@ void RenderSunShadowProbe(IDirect3DDevice9* Device) {
 
 	bool Ok = true;
 	ProbeEffect->SetCT();
-	ProbeEffect->Effect->SetVectorArray(ProbePointsHandle, Points, kProbePointCount);
-	UINT Passes;
-	if (FAILED(ProbeEffect->Effect->Begin(&Passes, NULL))) {
+	if (FAILED(ProbeEffect->Effect->SetVectorArray(ProbePointsHandle, Points, kProbePointCount))) {
 		Ok = false;
 	} else {
-		if (SUCCEEDED(ProbeEffect->Effect->BeginPass(0))) {
-			Device->DrawPrimitive(D3DPT_TRIANGLESTRIP, 0, 2);
-			ProbeEffect->Effect->EndPass();
-		} else {
+		UINT Passes;
+		if (FAILED(ProbeEffect->Effect->Begin(&Passes, NULL))) {
 			Ok = false;
+		} else {
+			if (SUCCEEDED(ProbeEffect->Effect->BeginPass(0))) {
+				if (FAILED(Device->DrawPrimitive(D3DPT_TRIANGLESTRIP, 0, 2))) Ok = false;
+				ProbeEffect->Effect->EndPass();
+			} else {
+				Ok = false;
+			}
+			ProbeEffect->Effect->End();
 		}
-		ProbeEffect->Effect->End();
 	}
 
 	Device->SetDepthStencilSurface(DepthStencil);
 	if (DepthStencil) DepthStencil->Release();
+	Device->SetRenderTarget(0, Previous);
+	Previous->Release();
 
 	if (!Ok) {
 		ProbeFailure();
 		return;
 	}
-	Slot.Done->Issue(D3DISSUE_END);
+	if (FAILED(Slot.Done->Issue(D3DISSUE_END))) {
+		ProbeFailure();
+		return;
+	}
 	Slot.Pending = true;
 	NextSlot = (NextSlot + 1) % kProbeRingSize;
 
