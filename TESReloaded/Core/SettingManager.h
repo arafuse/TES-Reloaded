@@ -448,6 +448,7 @@ struct SettingsTerrainStruct {
 	float MiddleSpecular;
 	float ParallaxScale;			///< Near-land parallax UV offset per unit of height (diffuse alpha); 0 disables it.
 	float ParallaxFadeDistance;		///< Eye distance at which near-land parallax has faded to zero; <= 0 never fades.
+	float ShadowReliefScale;		///< World units the near-land shadow receiver rises at height 1 (TESR_POMDepthBuffer); 0 = flat
 };
 
 struct SettingsSkinStruct {

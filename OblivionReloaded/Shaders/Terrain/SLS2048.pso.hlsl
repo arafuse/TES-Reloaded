@@ -40,13 +40,12 @@ struct VS_OUTPUT {
     float3 texcoord_3 : TEXCOORD3_centroid;
     float3 texcoord_4 : TEXCOORD4_centroid;
     float3 texcoord_5 : TEXCOORD5_centroid;
-    float4 texcoord_6 : TEXCOORD6;
-	float4 texcoord_7 : TEXCOORD7;
-    float4 texcoord_8 : TEXCOORD8;
+    float ViewDepth : TEXCOORD8;
 };
 
 struct PS_OUTPUT {
     float4 color_0 : COLOR0;
+    float4 POM : COLOR1;
 };
 
 #include "Includes/Parallax.hlsl"
@@ -69,7 +68,8 @@ PS_OUTPUT main(VS_OUTPUT IN) {
     float nl;
     float3 fresnel;
 
-    float2 uv = TerrainParallaxUV(BaseMap, IN.BaseUV.xy, IN.ParallaxView);
+    float relief;
+    float2 uv = TerrainParallaxUV(BaseMap, IN.BaseUV.xy, IN.ParallaxView, relief);
     r1.xyzw = tex2D(NormalMap, uv);
     q18.xyz = normalize(expand(r1.xyz));
     fresnel = saturate(pow(1 - dot(q18.xyz, normalize(IN.texcoord_5.xyz)), 10) * 2);
@@ -92,6 +92,7 @@ PS_OUTPUT main(VS_OUTPUT IN) {
     float coeff = min(gCoeff, rCoeff);
     float baseIntensity = smoothstep(.25f, 1.0f, length(r3.xyz));
     OUT.color_0.rgb += ((((PSLightColor[0].rgb * (coeff * r2.w) * shadow) * saturate(nl*2.5f)) * baseIntensity) * TESR_TerrainData.z);
+    OUT.POM = TerrainShadowDepth(IN.ViewDepth, relief, IN.ParallaxView, 1);
     return OUT;
 	
 };

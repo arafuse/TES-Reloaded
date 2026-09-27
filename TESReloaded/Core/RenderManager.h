@@ -36,8 +36,12 @@ public:
 	// prefix alone, deliberately widening to WATERHMAP* as well. Narrowing it to this flag would
 	// change behaviour - see the comment there.
 	bool					isNearWater;
-	/// One of our PAR first-pass pixel shaders, which output the POM shadow side channel on COLOR1.
+	/// One of our depth-writing first-pass pixel shaders (PAR, near-land base layer), which output the
+	/// POM shadow side channel on COLOR1.
 	bool					isPOMShadowWriter;
+	/// One of our alpha-blended pixel shaders (near-land layers) whose COLOR1 side channel is blended
+	/// into TESR_POMDepthBuffer by the draw's own blend state.
+	bool					isPOMShadowBlender;
 };
 
 class RenderManager: public NiDX9Renderer {
