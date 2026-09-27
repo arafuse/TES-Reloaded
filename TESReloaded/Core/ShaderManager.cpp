@@ -3601,7 +3601,6 @@ void ShaderManager::RenderShadowsMidScene() {
 		ShadowsExteriorsEffect->SetCT();
 		ShadowsExteriorsEffect->Render(Device, SceneRT, RenderedSurface, false);
 		RenderSunShadowProbe(Device);
-		Device->SetRenderTarget(0, SceneRT);
 	}
 	if (DoPoint) {
 		ShadowsPointEffect->SetCT();
