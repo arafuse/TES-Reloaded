@@ -7,6 +7,7 @@
 #include <iostream>
 #include <filesystem>
 #include "TreeCover.h"
+#include "SunShadowStealth.h"
 #define EFFECTQUADFORMAT D3DFVF_XYZ | D3DFVF_TEX1
 
 #if defined(NEWVEGAS)
@@ -2678,6 +2679,7 @@ void ShaderManager::UpdateConstants() {
 	}
 
 	UpdateTreeCover();
+	UpdateSunShadowStealth();
 
 	if (TheSettingManager->SettingsMain.Shaders.POM)     UpdatePOM(ShaderConst);
 	if (TheSettingManager->SettingsMain.Shaders.Terrain) UpdateTerrain(ShaderConst);
@@ -3598,6 +3600,8 @@ void ShaderManager::RenderShadowsMidScene() {
 	if (DoSun) {
 		ShadowsExteriorsEffect->SetCT();
 		ShadowsExteriorsEffect->Render(Device, SceneRT, RenderedSurface, false);
+		RenderSunShadowProbe(Device);
+		Device->SetRenderTarget(0, SceneRT);
 	}
 	if (DoPoint) {
 		ShadowsPointEffect->SetCT();
