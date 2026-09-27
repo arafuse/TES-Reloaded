@@ -440,6 +440,7 @@ SettingManager::SettingManager() {
 	SettingsMain.Develop.ProfileSampler = GetPrivateProfileIntA("Develop", "ProfileSampler", 0, Filename);
 	SettingsMain.Develop.ProfileSamplerHz = GetPrivateProfileIntA("Develop", "ProfileSamplerHz", 1000, Filename);
 	SettingsMain.Develop.NearShellDebug = GetPrivateProfileIntA("Develop", "NearShellDebug", 0, Filename);
+	SettingsMain.Develop.LogSunShadowStealth = GetPrivateProfileIntA("Develop", "LogSunShadowStealth", 0, Filename);
 
 	GameLoading = false;
 
@@ -1249,6 +1250,7 @@ void SettingManager::LoadSettings() {
 	SettingsShadows.Exteriors.OrthoOcclusionBias = atof(value);
 
 	SettingsShadows.Exteriors.UsePostProcessing = GetPrivateProfileIntA("Exteriors", "UsePostProcessing", 1, Filename);
+	SettingsShadows.Exteriors.SunShadowStealth = GetPrivateProfileIntA("Exteriors", "SunShadowStealth", 0, Filename);
 	SettingsShadows.Exteriors.UseIntervalUpdate = GetPrivateProfileIntA("Exteriors", "UseIntervalUpdate", 1, Filename);
 	SettingsShadows.Exteriors.UseInstancing = GetPrivateProfileIntA("Exteriors", "UseInstancing", 1, Filename);
 	SettingsShadows.Exteriors.CacheStaticShadows = GetPrivateProfileIntA("Exteriors", "CacheStaticShadows", 1, Filename);
@@ -1617,6 +1619,7 @@ void SettingManager::SaveSettings(const char* Item, const char* Definition, cons
 		else if (!strcmp(Definition, "Shadows")) {
 			strcat(Filename, "Shadows\\Shadows.ini");
 			WritePrivateProfileStringA("Exteriors", "UsePostProcessing", ToString(SettingsShadows.Exteriors.UsePostProcessing).c_str(), Filename);
+			WritePrivateProfileStringA("Exteriors", "SunShadowStealth", ToString(SettingsShadows.Exteriors.SunShadowStealth).c_str(), Filename);
 			WritePrivateProfileStringA("Exteriors", "Darkness", ToString(SettingsShadows.Exteriors.Darkness).c_str(), Filename);
 			WritePrivateProfileStringA("Exteriors", "DarknessCloudy", ToString(SettingsShadows.ExteriorsAlt.Darkness).c_str(), Filename);
 			WritePrivateProfileStringA("Exteriors", "DarknessPrecipitation", ToString(SettingsShadows.ExteriorsPrecip.Darkness).c_str(), Filename);
@@ -2276,6 +2279,7 @@ SettingsList SettingManager::GetMenuSettings(const char* Item, const char* Defin
 		else if (!strcmp(Definition, "Shadows")) {
 			if (!strcmp(Section, "Exteriors")) {
 				Settings["UsePostProcessing"] = SettingsShadows.Exteriors.UsePostProcessing;
+				Settings["SunShadowStealth"] = SettingsShadows.Exteriors.SunShadowStealth;
 				Settings["Darkness"] = SettingsShadows.Exteriors.Darkness;
 				Settings["DarknessCloudy"] = SettingsShadows.ExteriorsAlt.Darkness;
 				Settings["DarknessPrecipitation"] = SettingsShadows.ExteriorsPrecip.Darkness;
@@ -3065,6 +3069,10 @@ void SettingManager::SetMenuSetting(const char* Item, const char* Definition, co
 				}
 				else if (!strcmp(Setting, "BiasMaxSlope")) {
 					SettingsShadows.Exteriors.BiasMaxSlope = Value;
+				}
+				// UpdateSunShadowStealth creates or releases the probe on the next frame.
+				else if (!strcmp(Setting, "SunShadowStealth")) {
+					SettingsShadows.Exteriors.SunShadowStealth = Value;
 				}
 				else if (!strcmp(Setting, "UsePostProcessing")) {
 					// Special case for forward or post-process shadowing
