@@ -159,10 +159,8 @@ static void PublishScale() {
 		Sum += (V >= 0.0f && V <= 1.0f) ? V : 1.0f;
 	}
 	LastShadowed = 1.0f - Sum / kProbePointCount;
-	float Darkness = TheShaderManager->ShaderConst.Shadow.Data.y;
-	float Lit = std::clamp(TheShaderManager->ShaderConst.ShadowMap.ShadowLightDir.w, Darkness, 1.0f);
-	float ShadowRatio = Lit > 0.0f ? Darkness / Lit : 1.0f;
-	float Scale = std::lerp(1.0f, ShadowRatio, LastShadowed);
+	// No dawn/dusk fade: the moon keeps casting shadows, so shade hides the player at any hour.
+	float Scale = std::lerp(1.0f, TheShaderManager->ShaderConst.Shadow.Data.y, LastShadowed);
 	PlayerSunLightScale = (Scale >= 0.0f && Scale <= 1.0f) ? Scale : 1.0f;
 
 }
@@ -215,13 +213,11 @@ static void LogProbe() {
 		}
 		Logger::Log("SunShadowStealth: directional light %s in ShadowSceneNode::lights", Listed ? "IS (sun double-counted)" : "is not");
 	}
-	float Darkness = TheShaderManager->ShaderConst.Shadow.Data.y;
-	float Lit = std::clamp(TheShaderManager->ShaderConst.ShadowMap.ShadowLightDir.w, Darkness, 1.0f);
 	float Scale = PlayerSunLightScale;
 	float Term = LastPlayerSunTerm;
-	Logger::Log("SunShadowStealth: vis %.2f %.2f %.2f %.2f %.2f %.2f %.2f %.2f shadowed %.2f D %.2f L %.2f scale %.2f sun term %.3f -> %.3f",
+	Logger::Log("SunShadowStealth: vis %.2f %.2f %.2f %.2f %.2f %.2f %.2f %.2f shadowed %.2f D %.2f scale %.2f sun term %.3f -> %.3f",
 		Visibility[0], Visibility[1], Visibility[2], Visibility[3], Visibility[4], Visibility[5], Visibility[6], Visibility[7],
-		LastShadowed, Darkness, Lit, Scale, Term, Term * Scale);
+		LastShadowed, TheShaderManager->ShaderConst.Shadow.Data.y, Scale, Term, Term * Scale);
 
 }
 
