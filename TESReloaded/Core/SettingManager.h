@@ -290,6 +290,7 @@ struct SettingsMainStruct {
 		UInt8	ProfileSampler;		// key code: toggles the main-thread sampling profiler
 		int		ProfileSamplerHz;
 		UInt8	NearShellDebug;
+		UInt8	LogSunShadowStealth;	// logs the player sun shadow probe about once a second
 	};
 
 	MainStruct					Main;
@@ -343,6 +344,7 @@ struct SettingsShadowStruct {
 		bool				DynamicTrees;			// [Exteriors] DynamicTrees: redraw trees every frame so they sway
 		float				FadeTime;				// [Exteriors] FadeTime: static-map crossfade seconds (0 = off)
 		bool                UsePostProcessing;
+		bool				SunShadowStealth;		// [Exteriors] SunShadowStealth: sun shadow lowers the player's light level
 		bool				UseIntervalUpdate;
 		bool				UseInstancing;
 		float				deferredNormBias;
