@@ -34,7 +34,7 @@
 **Refinements to the spec, decided while planning (Task 6 writes them back into the spec):**
 1. Readback uses a ring of 3 `D3DPOOL_DEFAULT` 8×1 R32F render targets, each with a `D3DQUERYTYPE_EVENT` query. `GetRenderTargetData` runs only on a slot whose query reports done. The spec's plan (a sysmem ring read with `D3DLOCK_DONOTWAIT`) would not avoid the stall, because `GetRenderTargetData` synchronizes on its source.
 2. This fork has no device-reset path (no surfaces are recreated anywhere), so probe resources are created lazily and released only when the feature is switched off.
-3. Scale formula: `L = clamp(ShadowLightDir.w, D, 1)`, `scale = lerp(1, D / L, shadowed)`. At full sun (`L = 1`) this is the spec's `lerp(1, D, shadowed)`. It also follows the dawn/dusk contrast fade the apply shader uses, where lit ground dims toward D and hiding in shade gains nothing.
+3. Scale formula: `scale = lerp(1, D, shadowed)` at every hour, the spec's formula. A planned dawn/dusk fade through `ShadowLightDir.w` was removed at the user's direction (commit 9652283): the moon casts shadows too, so shade must hide the player at night and through the handover.
 4. Probe points are pushed along the sun direction until the sun ray leaves a body capsule (radius 25, height 120 standing / 80 sneaking, × `Player->scale`) plus 10 units. A fixed 35 units would leave the lower points inside the body under a high sun.
 5. The probe is skipped (scale 1.0) when `ShadowLightDir.z <= 0`: a light below the horizon can't light the player.
 6. The diagnostic log reports the raw and scaled player sun term, not the point-light sum.
@@ -479,7 +479,7 @@ git commit -m "feat(Shadows): Hook the player's sun term in the light level"
 - [ ] The probe effect and resources are created lazily, the first time the gate opens. A failed creation logs once and isn't retried until the setting is turned off and on again.
 - [ ] `RenderSunShadowProbe()` reads back only slots whose event query returns `S_OK` (no GPU wait), skips rendering when the next slot is still pending, and uses a `GetParameterByName` handle for `SunShadowProbePoints`.
 - [ ] `RenderShadowsMidScene` calls it right after the sun apply's `Render` and then restores render target 0 to `SceneRT`.
-- [ ] Scale = `lerp(1, D / clamp(ShadowLightDir.w, D, 1), shadowed)` with `D = ShaderConst.Shadow.Data.y`, clamped to [0, 1], with non-finite visibilities treated as lit.
+- [ ] Scale = `lerp(1, D, shadowed)` with `D = ShaderConst.Shadow.Data.y` (no dawn/dusk fade), clamped to [0, 1], with non-finite visibilities treated as lit.
 - [ ] With `LogSunShadowStealth` set, one log line per second gives the visibilities, shadowed, D, L, scale, and the raw and scaled sun term. The first line also says whether `directionalLight` is in `ShadowSceneNode::lights`.
 - [ ] The solution builds.
 
