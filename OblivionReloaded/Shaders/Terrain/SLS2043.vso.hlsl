@@ -6,13 +6,11 @@
 //
 // Parameters:
 //
-float4 EyePosition : register(c25);
 row_major float4x4 ModelViewProj : register(c0);
 float3 LightDirection[3] : register(c13);
 row_major float4x4 ShadowProj : register(c28);
 float4 ShadowProjData : register(c32);
 float4 ShadowProjTransform : register(c33);
-row_major float4x4 TESR_ShadowCameraToLightTransform[2] : register(c34);
 row_major float4x4 TESR_InvViewProjectionTransform : register(c50);
 
 //
@@ -55,16 +53,17 @@ struct VS_OUTPUT {
     float4 color_1 : COLOR1;
     float4 position : POSITION;
     float2 texcoord_0 : TEXCOORD0;
+    float4 ParallaxView : TEXCOORD1;
     float4 texcoord_2 : TEXCOORD2;
     float3 texcoord_3 : TEXCOORD3;
     float3 texcoord_4 : TEXCOORD4;
     float3 texcoord_5 : TEXCOORD5;
-    float4 texcoord_6 : TEXCOORD6;
-	float4 texcoord_7 : TEXCOORD7;
-    float4 texcoord_8 : TEXCOORD8;
+    float ViewDepth : TEXCOORD8;
 };
 
 // Code:
+
+#include "Includes/Parallax.hlsl"
 
 VS_OUTPUT main(VS_INPUT IN) {
     VS_OUTPUT OUT;
@@ -75,21 +74,20 @@ VS_OUTPUT main(VS_INPUT IN) {
     const float4 const_4 = {0.5, 1, 0, 0};
 
 	float4 r0;
-    float3 eye4;
     float3 m12;
-    eye4.xyz = normalize(normalize(EyePosition.xyz - IN.position.xyz) + LightDirection[0].xyz);
-    
 	r0 = mul(ModelViewProj, IN.position);
     OUT.color_0.rgba = IN.texcoord_1.xyzw;
     OUT.color_1.rgba = IN.texcoord_2.xyzw;
     OUT.position = r0;
     OUT.texcoord_0.xy = IN.texcoord_0.xy;
+    float3 eyeVec = TerrainEyePosition(ModelViewProj) - IN.position.xyz;
+    OUT.ParallaxView.xyz = mul(TanSpaceProj, eyeVec);
+    OUT.ParallaxView.w = length(eyeVec);
     OUT.texcoord_2.xyzw = (IN.color_0.xyzx * const_4.yyyz) + const_4.zzzy;
     OUT.texcoord_3.xyz = compress(mul(TanSpaceProj, LightDirection[0].xyz));
-	OUT.texcoord_6 = mul(r0, TESR_ShadowCameraToLightTransform[0]);
-	OUT.texcoord_7 = mul(r0, TESR_ShadowCameraToLightTransform[1]);
-    OUT.texcoord_8 = mul(r0, TESR_InvViewProjectionTransform);
-    m12.xyz = -mul(float3x3(IN.tangent.xyz, IN.binormal.xyz, IN.normal.xyz), OUT.texcoord_8.xyz);
+    OUT.ViewDepth = r0.w;
+    float4 viewVec = mul(r0, TESR_InvViewProjectionTransform);
+    m12.xyz = -mul(float3x3(IN.tangent.xyz, IN.binormal.xyz, IN.normal.xyz), viewVec.xyz);
     OUT.texcoord_4.xyz = normalize(m12.xyz) + LightDirection[0].xyz;
     OUT.texcoord_5 = normalize(m12.xyz);
     return OUT;

@@ -599,6 +599,12 @@ void SettingManager::LoadSettings() {
 	SettingsGrass.TreeCollisionStrength = atof(value);
 	GetPrivateProfileStringA("Default", "TreeCollisionFlattenStrength", "10.0", value, SettingStringBuffer, Filename);
 	SettingsGrass.TreeCollisionFlattenStrength = atof(value);
+	SettingsGrass.TreeCover = GetPrivateProfileIntA("Default", "TreeCover", 0, Filename);
+	GetPrivateProfileStringA("Default", "TreeCoverLightReduction", "0.75", value, SettingStringBuffer, Filename);
+	SettingsGrass.TreeCoverLightReduction = atof(value);
+	SettingsGrass.TreeCoverBlockLOS = GetPrivateProfileIntA("Default", "TreeCoverBlockLOS", 0, Filename);
+	GetPrivateProfileStringA("Default", "TreeCoverLOSDepth", "64.0", value, SettingStringBuffer, Filename);
+	SettingsGrass.TreeCoverLOSDepth = atof(value);
 
 	strcpy(Filename, CurrentPath);
 	strcat(Filename, SettingsPath);
@@ -619,6 +625,12 @@ void SettingManager::LoadSettings() {
 	SettingsTerrain.NearSpecular = atof(value);
 	GetPrivateProfileStringA("Default", "MiddleSpecular", "0.0", value, SettingStringBuffer, Filename);
 	SettingsTerrain.MiddleSpecular = atof(value);
+	GetPrivateProfileStringA("Default", "ParallaxScale", "0.01", value, SettingStringBuffer, Filename);
+	SettingsTerrain.ParallaxScale = atof(value);
+	GetPrivateProfileStringA("Default", "ParallaxFadeDistance", "8000.0", value, SettingStringBuffer, Filename);
+	SettingsTerrain.ParallaxFadeDistance = atof(value);
+	GetPrivateProfileStringA("Default", "ShadowReliefScale", "4.0", value, SettingStringBuffer, Filename);
+	SettingsTerrain.ShadowReliefScale = atof(value);
 
 	strcpy(Filename, CurrentPath);
 	strcat(Filename, SettingsPath);
@@ -1568,6 +1580,10 @@ void SettingManager::SaveSettings(const char* Item, const char* Definition, cons
 			WritePrivateProfileStringA("Default", "TreeCollisionRadius", ToString(SettingsGrass.TreeCollisionRadius).c_str(), Filename);
 			WritePrivateProfileStringA("Default", "TreeCollisionStrength", ToString(SettingsGrass.TreeCollisionStrength).c_str(), Filename);
 			WritePrivateProfileStringA("Default", "TreeCollisionFlattenStrength", ToString(SettingsGrass.TreeCollisionFlattenStrength).c_str(), Filename);
+			WritePrivateProfileStringA("Default", "TreeCover", ToString(SettingsGrass.TreeCover).c_str(), Filename);
+			WritePrivateProfileStringA("Default", "TreeCoverLightReduction", ToString(SettingsGrass.TreeCoverLightReduction).c_str(), Filename);
+			WritePrivateProfileStringA("Default", "TreeCoverBlockLOS", ToString(SettingsGrass.TreeCoverBlockLOS).c_str(), Filename);
+			WritePrivateProfileStringA("Default", "TreeCoverLOSDepth", ToString(SettingsGrass.TreeCoverLOSDepth).c_str(), Filename);
 		}
 		else if (!strcmp(Definition, "MotionBlur")) {
 			WritePrivateProfileStringA("Effects", "MotionBlur", ToString(SettingsMain.Effects.MotionBlur).c_str(), SettingsMain.Main.MainFile);
@@ -1661,6 +1677,9 @@ void SettingManager::SaveSettings(const char* Item, const char* Definition, cons
 			WritePrivateProfileStringA("Default", "DistantSpecular", ToString(SettingsTerrain.DistantSpecular).c_str(), Filename);
 			WritePrivateProfileStringA("Default", "MiddleSpecular", ToString(SettingsTerrain.MiddleSpecular).c_str(), Filename);
 			WritePrivateProfileStringA("Default", "NearSpecular", ToString(SettingsTerrain.NearSpecular).c_str(), Filename);
+			WritePrivateProfileStringA("Default", "ParallaxFadeDistance", ToString(SettingsTerrain.ParallaxFadeDistance).c_str(), Filename);
+			WritePrivateProfileStringA("Default", "ParallaxScale", ToString(SettingsTerrain.ParallaxScale).c_str(), Filename);
+			WritePrivateProfileStringA("Default", "ShadowReliefScale", ToString(SettingsTerrain.ShadowReliefScale).c_str(), Filename);
 		}
 		else if (!strcmp(Definition, "VolumetricFog")) {
 			WritePrivateProfileStringA("Effects", "VolumetricFog", ToString(SettingsMain.Effects.VolumetricFog).c_str(), SettingsMain.Main.MainFile);
@@ -2237,6 +2256,10 @@ SettingsList SettingManager::GetMenuSettings(const char* Item, const char* Defin
 			Settings["TreeCollisionRadius"] = SettingsGrass.TreeCollisionRadius;
 			Settings["TreeCollisionStrength"] = SettingsGrass.TreeCollisionStrength;
 			Settings["TreeCollisionFlattenStrength"] = SettingsGrass.TreeCollisionFlattenStrength;
+			Settings["TreeCover"] = SettingsGrass.TreeCover;
+			Settings["TreeCoverLightReduction"] = SettingsGrass.TreeCoverLightReduction;
+			Settings["TreeCoverBlockLOS"] = SettingsGrass.TreeCoverBlockLOS;
+			Settings["TreeCoverLOSDepth"] = SettingsGrass.TreeCoverLOSDepth;
 		}
 		else if (!strcmp(Definition, "MotionBlur")) {
 			SettingsMotionBlurStruct* sms = GetSettingsMotionBlur(Section);
@@ -2317,6 +2340,9 @@ SettingsList SettingManager::GetMenuSettings(const char* Item, const char* Defin
 			Settings["DistantSpecular"] = SettingsTerrain.DistantSpecular;
 			Settings["MiddleSpecular"] = SettingsTerrain.MiddleSpecular;
 			Settings["NearSpecular"] = SettingsTerrain.NearSpecular;
+			Settings["ParallaxFadeDistance"] = SettingsTerrain.ParallaxFadeDistance;
+			Settings["ParallaxScale"] = SettingsTerrain.ParallaxScale;
+			Settings["ShadowReliefScale"] = SettingsTerrain.ShadowReliefScale;
 		}
 		else if (!strcmp(Definition, "VolumetricFog")) {
 			Settings["Amount"] = SettingsVolumetricFog.Amount;
@@ -2975,6 +3001,14 @@ void SettingManager::SetMenuSetting(const char* Item, const char* Definition, co
 				SettingsGrass.TreeCollisionStrength = Value;
 			else if (!strcmp(Setting, "TreeCollisionFlattenStrength"))
 				SettingsGrass.TreeCollisionFlattenStrength = Value;
+			else if (!strcmp(Setting, "TreeCover"))
+				SettingsGrass.TreeCover = Value;
+			else if (!strcmp(Setting, "TreeCoverLightReduction"))
+				SettingsGrass.TreeCoverLightReduction = Value;
+			else if (!strcmp(Setting, "TreeCoverBlockLOS"))
+				SettingsGrass.TreeCoverBlockLOS = Value;
+			else if (!strcmp(Setting, "TreeCoverLOSDepth"))
+				SettingsGrass.TreeCoverLOSDepth = Value;
 		}
 		else if (!strcmp(Definition, "MotionBlur")) {
 			SettingsMotionBlurStruct* sms = GetSettingsMotionBlur(Section);
@@ -3128,6 +3162,12 @@ void SettingManager::SetMenuSetting(const char* Item, const char* Definition, co
 				SettingsTerrain.MiddleSpecular = Value;
 			else if (!strcmp(Setting, "NearSpecular"))
 				SettingsTerrain.NearSpecular = Value;
+			else if (!strcmp(Setting, "ParallaxFadeDistance"))
+				SettingsTerrain.ParallaxFadeDistance = Value;
+			else if (!strcmp(Setting, "ParallaxScale"))
+				SettingsTerrain.ParallaxScale = Value;
+			else if (!strcmp(Setting, "ShadowReliefScale"))
+				SettingsTerrain.ShadowReliefScale = Value;
 		}
 		else if (!strcmp(Definition, "VolumetricFog")) {
 			if (!strcmp(Setting, "Amount"))

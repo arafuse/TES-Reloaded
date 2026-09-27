@@ -429,6 +429,10 @@ struct SettingsGrassStruct {
 	float TreeCollisionRadius;			///< World units around an actor that push foliage
 	float TreeCollisionStrength;		///< Maximum sideways push, world units
 	float TreeCollisionFlattenStrength;	///< Maximum downward push, world units
+	bool TreeCover;						///< Scale the sneaking player's detection light level by small-tree cover
+	float TreeCoverLightReduction;		///< Fraction of the light level removed at full cover
+	bool TreeCoverBlockLOS;				///< Shrubs the sneaking player is inside block observers' line of sight
+	float TreeCoverLOSDepth;			///< Effective foliage depth, world units, along a sight line that blocks it
 };
 
 /// Parallax settings from POM\POM.ini.
@@ -442,6 +446,9 @@ struct SettingsTerrainStruct {
 	float DistantNoise;
 	float NearSpecular;
 	float MiddleSpecular;
+	float ParallaxScale;			///< Near-land parallax UV offset per unit of height (diffuse alpha); 0 disables it.
+	float ParallaxFadeDistance;		///< Eye distance at which near-land parallax has faded to zero; <= 0 never fades.
+	float ShadowReliefScale;		///< World units the near-land shadow receiver rises at height 1 (TESR_POMDepthBuffer); 0 = flat
 };
 
 struct SettingsSkinStruct {

@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <iostream>
 #include <filesystem>
+#include "TreeCover.h"
 #define EFFECTQUADFORMAT D3DFVF_XYZ | D3DFVF_TEX1
 
 #if defined(NEWVEGAS)
@@ -469,6 +470,10 @@ bool ShaderProgram::SetConstantTableValue2(LPCSTR Name, UInt32 Index) {
 		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.TAA.Data;
 	else if (!strcmp(Name, "TESR_PrevWorldViewProjectionTransform"))
 		FloatShaderValues[Index].Value = (D3DXVECTOR4*)&TheShaderManager->PrevWorldViewProjMatrix;
+	else if (!strcmp(Name, "TESR_TerrainParallaxData"))
+		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.Terrain.ParallaxData;
+	else if (!strcmp(Name, "TESR_TerrainReliefData"))
+		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.Terrain.ReliefData;
 	else {
 		return false;
 	}
@@ -605,7 +610,8 @@ bool ShaderRecord::LoadShader(const char* Name, const char* DirPostFix) {
 			void* pShaderBuffer = Shader->GetBufferPointer();
 			FileBinary.read((char*)pShaderBuffer, size);
 			FileBinary.close();
-			D3DXGetShaderConstantTable((const DWORD*)pShaderBuffer, &Table);
+			// Without the flag, D3DX misreads handles to records above 2GB as name strings.
+			D3DXGetShaderConstantTableEx((const DWORD*)pShaderBuffer, D3DXCONSTTABLE_LARGEADDRESSAWARE, &Table);
 		}
 		else {
 			Logger::Log("ERROR: Shader %s not found. Try to enable the CompileShader option to recompile the shaders.", FileNameBinary);
@@ -634,7 +640,7 @@ void ShaderRecord::CreateCT() {
 	Table->GetDesc(&ConstantTableDesc);
     for (UINT c = 0; c < ConstantTableDesc.Constants; c++) {
 		Handle = Table->GetConstant(NULL, c);
-		Table->GetConstantDesc(Handle, &ConstantDesc, &ConstantCount);
+		if (FAILED(Table->GetConstantDesc(Handle, &ConstantDesc, &ConstantCount))) continue;
 		//if (ConstantDesc.RegisterSet == D3DXRS_FLOAT4 && !memcmp(ConstantDesc.Name, "TESR_", 5)) FloatShaderValuesCount += 1;
 		if (ConstantDesc.RegisterSet == D3DXRS_FLOAT4 && !memcmp(ConstantDesc.Name, "TESR_GEOM_", 10)) { PerGeomFloatShaderValuesCount += 1; }
 		else if(ConstantDesc.RegisterSet == D3DXRS_FLOAT4 && !memcmp(ConstantDesc.Name, "TESR_", 5)) { FloatShaderValuesCount += 1; }
@@ -647,7 +653,7 @@ void ShaderRecord::CreateCT() {
 		TextureShaderValues = (ShaderValue*)malloc(TextureShaderValuesCount * sizeof(ShaderValue));
 		for (UINT c = 0; c < ConstantTableDesc.Constants; c++) {
 			Handle = Table->GetConstant(NULL, c);
-			Table->GetConstantDesc(Handle, &ConstantDesc, &ConstantCount);
+			if (FAILED(Table->GetConstantDesc(Handle, &ConstantDesc, &ConstantCount))) continue;
 			if (!memcmp(ConstantDesc.Name, "TESR_", 5)) {
 				Logger::Log("%s", ConstantDesc.Name);
 				switch (ConstantDesc.RegisterSet) {
@@ -788,7 +794,7 @@ bool EffectRecord::LoadEffect(const char* Name) {
 		Source[size] = 0;
 		FileSource.close();
 
-		D3DXCreateEffectFromFileA(TheRenderManager->device, Name, NULL, NULL, NULL, NULL, &Effect, &Errors);
+		D3DXCreateEffectFromFileA(TheRenderManager->device, Name, NULL, NULL, D3DXFX_LARGEADDRESSAWARE, NULL, &Effect, &Errors);
 		if (Errors) Logger::Log((char*)Errors->GetBufferPointer());
 		if (Effect) {
 			CreateCT();
@@ -911,7 +917,7 @@ void EffectRecord::CreateCT() {
 	Effect->GetDesc(&ConstantTableDesc);
 	for (UINT c = 0; c < ConstantTableDesc.Parameters; c++) {
 		Handle = Effect->GetParameter(NULL, c);
-		Effect->GetParameterDesc(Handle, &ConstantDesc);
+		if (FAILED(Effect->GetParameterDesc(Handle, &ConstantDesc))) continue;
 		if ((ConstantDesc.Class == D3DXPC_VECTOR || ConstantDesc.Class == D3DXPC_MATRIX_ROWS) && !memcmp(ConstantDesc.Name, "TESR_", 5)) FloatShaderValuesCount += 1;
 		if (ConstantDesc.Class == D3DXPC_OBJECT && ConstantDesc.Type >= D3DXPT_SAMPLER && ConstantDesc.Type <= D3DXPT_SAMPLERCUBE && !memcmp(ConstantDesc.Name, "TESR_", 5)) TextureShaderValuesCount += 1;
 	}
@@ -919,7 +925,7 @@ void EffectRecord::CreateCT() {
 	TextureShaderValues = (ShaderValue*)malloc(TextureShaderValuesCount * sizeof(ShaderValue));
 	for (UINT c = 0; c < ConstantTableDesc.Parameters; c++) {
 		Handle = Effect->GetParameter(NULL, c);
-		Effect->GetParameterDesc(Handle, &ConstantDesc);
+		if (FAILED(Effect->GetParameterDesc(Handle, &ConstantDesc))) continue;
 		if (!memcmp(ConstantDesc.Name, "TESR_", 5)) {
 			switch (ConstantDesc.Class) {
 				case D3DXPC_VECTOR:
@@ -1142,6 +1148,7 @@ ShaderManager::ShaderManager() {
 	POMDepthTexture = NULL;
 	POMDepthSurface = NULL;
 	POMDepthBound = false;
+	POMDepthBlendable = false;
 	RenderedBufferFilled = false;
 	DepthBufferFilled = false;
 	PreWaterDepthBufferFilled = false;
@@ -1226,11 +1233,15 @@ ShaderManager::ShaderManager() {
 	PingTexture->GetSurfaceLevel(0, &PingSurface);
 	// 64-bit like the FP16 scene target, as D3D9 MRT requires; on failure POM
 	// shadows are just flat.
-	if (TheSettingManager->SettingsMain.Shaders.POM &&
-		SUCCEEDED(TheRenderManager->device->CreateTexture(TheRenderManager->width, TheRenderManager->height, 1, D3DUSAGE_RENDERTARGET, D3DFMT_G32R32F, D3DPOOL_DEFAULT, &POMDepthTexture, NULL)))
+	bool UsePOMDepth = TheSettingManager->SettingsMain.Shaders.POM || TheSettingManager->SettingsMain.Shaders.Terrain;
+	if (UsePOMDepth &&
+		SUCCEEDED(TheRenderManager->device->CreateTexture(TheRenderManager->width, TheRenderManager->height, 1, D3DUSAGE_RENDERTARGET, D3DFMT_G32R32F, D3DPOOL_DEFAULT, &POMDepthTexture, NULL))) {
 		POMDepthTexture->GetSurfaceLevel(0, &POMDepthSurface);
-	else if (TheSettingManager->SettingsMain.Shaders.POM)
-		Logger::Log("WARNING: TESR_POMDepthBuffer could not be created; POM shadows stay flat.");
+		POMDepthBlendable = CanBlendPOMDepth();
+		if (!POMDepthBlendable) Logger::Log("WARNING: TESR_POMDepthBuffer cannot be blended; terrain shadow relief follows the base layer only.");
+	}
+	else if (UsePOMDepth)
+		Logger::Log("WARNING: TESR_POMDepthBuffer could not be created; POM and terrain shadows stay flat.");
 	UseIntervalUpdate = TheSettingManager->SettingsShadows.Exteriors.UseIntervalUpdate;
 	if (TheSettingManager->SettingsMain.Develop.CompileShaders) {
 		CompileShaders(ShadersPath);
@@ -2194,11 +2205,21 @@ void ShaderManager::UpdatePOM(ShaderConstants& ShaderConst) {
 	ShaderConst.POM.ParallaxData.z = TheSettingManager->SettingsPOM.ShadowReliefScale;
 }
 
+/// Packs the terrain shader settings: specular/noise tuning, and the near-land parallax scale with
+/// its centering bias and a distance fade (full strength to half the fade distance, zero at it).
 void ShaderManager::UpdateTerrain(ShaderConstants& ShaderConst) {
 	ShaderConst.Terrain.Data.x = TheSettingManager->SettingsTerrain.DistantSpecular;
 	ShaderConst.Terrain.Data.y = TheSettingManager->SettingsTerrain.DistantNoise;
 	ShaderConst.Terrain.Data.z = TheSettingManager->SettingsTerrain.NearSpecular;
 	ShaderConst.Terrain.Data.w = TheSettingManager->SettingsTerrain.MiddleSpecular;
+
+	float Scale = TheSettingManager->SettingsTerrain.ParallaxScale;
+	float FadeDistance = TheSettingManager->SettingsTerrain.ParallaxFadeDistance;
+	ShaderConst.Terrain.ParallaxData.x = Scale;
+	ShaderConst.Terrain.ParallaxData.y = -0.5f * Scale;
+	ShaderConst.Terrain.ParallaxData.z = FadeDistance > 0.0f ? -2.0f / FadeDistance : 0.0f;
+	ShaderConst.Terrain.ParallaxData.w = FadeDistance > 0.0f ? 2.0f : 1.0f;
+	ShaderConst.Terrain.ReliefData.x = TheSettingManager->SettingsTerrain.ShadowReliefScale;
 }
 
 void ShaderManager::UpdateSkin(ShaderConstants& ShaderConst) {
@@ -2655,6 +2676,8 @@ void ShaderManager::UpdateConstants() {
 		if (TheSettingManager->SettingsMain.Shaders.Grass)
 			UpdateGrass(ShaderConst, GrassCollisionSources, GrassCollisionWeights, GrassCollisionSourceCount);
 	}
+
+	UpdateTreeCover();
 
 	if (TheSettingManager->SettingsMain.Shaders.POM)     UpdatePOM(ShaderConst);
 	if (TheSettingManager->SettingsMain.Shaders.Terrain) UpdateTerrain(ShaderConst);
@@ -3592,6 +3615,26 @@ void ShaderManager::ClearPOMDepth() {
 
 	BindPOMDepth(false);
 	if (POMDepthSurface) TheRenderManager->device->ColorFill(POMDepthSurface, NULL, 0);
+
+}
+
+/// Whether the device can alpha-blend into the G32R32F TESR_POMDepthBuffer while it is render target 1.
+/// Blending an unsupported target is undefined, so the near-land layer passes skip it without this.
+bool ShaderManager::CanBlendPOMDepth() {
+
+	D3DCAPS9 Caps;
+	D3DDEVICE_CREATION_PARAMETERS Params;
+	D3DDISPLAYMODE Mode;
+	IDirect3D9* D3D = NULL;
+	IDirect3DDevice9* Device = TheRenderManager->device;
+
+	if (FAILED(Device->GetDeviceCaps(&Caps)) || !(Caps.PrimitiveMiscCaps & D3DPMISCCAPS_MRTPOSTPIXELSHADERBLENDING)) return false;
+	if (FAILED(Device->GetCreationParameters(&Params)) || FAILED(Device->GetDirect3D(&D3D))) return false;
+	bool Result = SUCCEEDED(D3D->GetAdapterDisplayMode(Params.AdapterOrdinal, &Mode)) &&
+		SUCCEEDED(D3D->CheckDeviceFormat(Params.AdapterOrdinal, Params.DeviceType, Mode.Format,
+			D3DUSAGE_RENDERTARGET | D3DUSAGE_QUERY_POSTPIXELSHADER_BLENDING, D3DRTYPE_TEXTURE, D3DFMT_G32R32F));
+	D3D->Release();
+	return Result;
 
 }
 
