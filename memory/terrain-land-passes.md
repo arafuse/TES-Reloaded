@@ -1,6 +1,6 @@
 ---
 name: terrain-land-passes
-description: Near land = SLS2042→2048 opaque base + SLS2043→2049 per-layer blend (vertex weights); engine does NOT upload EyePosition c25 for land — derive the eye from ModelViewProj; land TBN is exact (+u=+X, +v=+Y); SLS2043 is at the vs_3_0 output limit
+description: Near land = SLS2042→2048 opaque base + SLS2043→2049 per-layer blend (vertex weights); both write POM shadow relief (2049 blended by layer weight); engine does NOT upload EyePosition c25 for land — derive the eye from ModelViewProj; land TBN is exact (+u=+X, +v=+Y); SLS2043 is at the vs_3_0 output limit
 metadata:
   type: project
 ---
@@ -22,8 +22,19 @@ never uploads it for land draws and the register holds a stale value from an ear
 binormal = +v = world +Y. The stock PAR offset `uv += (h*s - s/2) * normalize(viewTS).xy` needs no flip.
 
 **Register budget:** SLS2043 already uses all 11 vs_3_0 outputs (X5622 at 12); terrain parallax freed
-TEXCOORD6/7 there (dead shadow outputs) for `ParallaxView : TEXCOORD1` (tangent-space eye, eye distance).
-SLS2042 has one output left.
+TEXCOORD6/7 there (dead shadow outputs) for `ParallaxView : TEXCOORD1` (tangent-space eye, eye distance),
+and TEXCOORD8 (never read by the PSO) now carries `ViewDepth` (clip w). SLS2042 dropped its dead
+TEXCOORD6/7 too, so it has room to spare.
+
+**Shadow relief:** both land PSOs write the POM side channel on COLOR1 (see [[par-shader-interpolator-layout]]).
+SLS2048 is in `POMShadowPixelShaders` (depth-writing, unblended gate). SLS2049 is the one
+`isPOMShadowBlender`: RT1 is bound under the blended layer draw and COLOR1.a = the layer weight
+(same register as COLOR0.a), so the stored relief is the layer-weighted mix; the geometric depth
+lerps with itself and stays within the shadow effects' 0.1% match. That needs FP32 blending on
+G32R32F (`ShaderManager::CanBlendPOMDepth`); without it only the base layer writes. Relief scale is
+`Terrain.ini ShadowReliefScale` (c8) and fades with the parallax. NOT yet play-tested: the stock
+layer blend was assumed SRCALPHA/INVSRCALPHA (the alpha output is a weight); an additive blend
+would double the relief.
 
 Landscape diffuse alpha is a heightmap in the installed replacer (116/118 DXT5 maps full-range).
 
