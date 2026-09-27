@@ -32,9 +32,10 @@ SLS2048 is in `POMShadowPixelShaders` (depth-writing, unblended gate). SLS2049 i
 (same register as COLOR0.a), so the stored relief is the layer-weighted mix; the geometric depth
 lerps with itself and stays within the shadow effects' 0.1% match. That needs FP32 blending on
 G32R32F (`ShaderManager::CanBlendPOMDepth`); without it only the base layer writes. Relief scale is
-`Terrain.ini ShadowReliefScale` (c8) and fades with the parallax. NOT yet play-tested: the stock
-layer blend was assumed SRCALPHA/INVSRCALPHA (the alpha output is a weight); an additive blend
-would double the relief.
+`Terrain.ini ShadowReliefScale` (c8) and fades with the parallax. Play-tested 2026-09-26: looks
+right, and the blend-capability check passes (no warning). The layer blend is assumed
+SRCALPHA/INVSRCALPHA (the alpha output is a weight; not captured with LogShaders) — if relief ever
+looks stacked where layers overlap, check that first.
 
 Landscape diffuse alpha is a heightmap in the installed replacer (116/118 DXT5 maps full-range).
 
