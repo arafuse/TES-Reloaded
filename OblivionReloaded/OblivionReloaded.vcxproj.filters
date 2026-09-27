@@ -74,6 +74,9 @@
     <ClInclude Include="..\TESReloaded\Core\TreeCoverMath.h">
       <Filter>Core</Filter>
     </ClInclude>
+    <ClInclude Include="..\TESReloaded\Core\SunShadowStealth.h">
+      <Filter>Core</Filter>
+    </ClInclude>
     <ClInclude Include="..\TESReloaded\Core\WeatherSmoothing.h">
       <Filter>Core</Filter>
     </ClInclude>
@@ -200,6 +203,9 @@
       <Filter>Core</Filter>
     </ClCompile>
     <ClCompile Include="..\TESReloaded\Core\TreeCover.cpp">
+      <Filter>Core</Filter>
+    </ClCompile>
+    <ClCompile Include="..\TESReloaded\Core\SunShadowStealth.cpp">
       <Filter>Core</Filter>
     </ClCompile>
     <ClCompile Include="..\TESReloaded\Core\WeatherSmoothing.cpp">
