@@ -1832,7 +1832,7 @@ void ShadowManager::RenderPointShadows() {
 	D3DXVECTOR4* PointData = &TheShaderManager->ShaderConst.ShadowPoint.PointData;
 	// Strength scale, blended toward [Point] FogStrength under volumetric fog
 	// so fogged torch shadows stop reading black.
-	float FogWeight = TheSettingManager->SettingsMain.Effects.VolumetricFog && Player->IsExteriorLike() ? TheShaderManager->ShaderConst.VolumetricFog.Data.w : 0.0f;
+	float FogWeight = TheSettingManager->SettingsMain.Effects.VolumetricFog ? TheShaderManager->ShaderConst.VolumetricFog.Data.w : 0.0f;
 	PointData->x = std::lerp(1.0f, TheSettingManager->SettingsShadows.Point.FogStrength, FogWeight);
 	// Unused since darkness became light-derived, but a stale compiled
 	// ShadowsPoint.fx still reads .y; 1.0 degrades it to no point shadows.

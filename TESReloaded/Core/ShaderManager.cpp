@@ -2434,11 +2434,12 @@ void ShaderManager::UpdateSharpening(ShaderConstants& ShaderConst) {
 void ShaderManager::UpdateVolumetricFog(ShaderConstants& ShaderConst, float weatherPercent) {
 	ShaderConst.VolumetricFog.Data.x = TheSettingManager->SettingsVolumetricFog.Exponent;
 	ShaderConst.VolumetricFog.Data.y = TheSettingManager->SettingsVolumetricFog.ColorCoeff;
-	// Data.w: 0-1 fog weight, off for weathers whose far fog exceeds MaxDistance.
+	// Data.w: 0-1 fog weight, off for weathers whose far fog exceeds MaxDistance and
+	// in interiors, including BehaveLikeExterior ones; the shadow darkness blends read it too.
 	float MaxDistance = TheSettingManager->SettingsVolumetricFog.MaxDistance;
 	float FromWeight = ShaderConst.oldfogEnd > MaxDistance ? 0.0f : 1.0f;
 	float ToWeight = ShaderConst.currentfogEnd > MaxDistance ? 0.0f : 1.0f;
-	ShaderConst.VolumetricFog.Data.w = std::lerp(FromWeight, ToWeight, weatherPercent);
+	ShaderConst.VolumetricFog.Data.w = Player->GetWorldSpace() ? std::lerp(FromWeight, ToWeight, weatherPercent) : 0.0f;
 	ShaderConst.VolumetricFog.Data.z = TheSettingManager->SettingsVolumetricFog.Amount * ShaderConst.VolumetricFog.Data.w;
 }
 
@@ -3382,7 +3383,8 @@ void ShaderManager::RenderEffects(IDirect3DSurface9* RenderTarget) {
 			RunEffect(VolumetricFogEffect, Device, RenderTarget, false, false);
 		}
 	}
-	if (Effects->VolumetricLight && isExteriorLike) {
+	// Real worldspaces only: BehaveLikeExterior interiors get the sun but no volumetrics.
+	if (Effects->VolumetricLight && Player->GetWorldSpace()) {
 		RunEffect(VolumetricLightEffect, Device, RenderTarget, true, false);
 	}
 	if (Effects->SMAA) {
