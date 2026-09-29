@@ -78,12 +78,13 @@ namespace {
 		Phase_PointBake,       // point-light cube face draw submission
 		Phase_PointTotal,      // whole RenderPointShadows (interiors AND exteriors)
 		Phase_FrameTotal,      // exterior + interior for one frame
+		Phase_StaticMoveCheck, // RedrawMovedStaticRegions: fingerprint walk + any in-place redraws
 		Phase_COUNT
 	};
 	const char* const ShadowPhaseNames[Phase_COUNT] = {
 		"BuildGeoItems", "Pass:Near", "Pass:Far", "Pass:Ortho", "Pass:Skin",
 		"ExtTotal", "Int:Classify", "Int:CubeRender", "IntTotal",
-		"Point:Classify", "Point:Bake", "PointTotal", "FrameTotal"
+		"Point:Classify", "Point:Bake", "PointTotal", "FrameTotal", "Ext:MoveCheck"
 	};
 	// Per-frame counters: how the submission cost breaks down (draws, batches, cache hits).
 	enum ShadowCounter {
@@ -107,6 +108,7 @@ namespace {
 		Cnt_PointCandidates,    // lights passing the candidate filter this frame
 		Cnt_PointSlotsActive,   // slots holding a light after assignment
 		Cnt_PointRebakes,       // slot cubes (re)baked this frame (6 faces each)
+		Cnt_MovedStaticRedraws, // cached Near/Far maps redrawn in place because a static moved
 		Cnt_COUNT
 	};
 	const char* const ShadowCounterNames[Cnt_COUNT] = {
@@ -114,7 +116,7 @@ namespace {
 		"InstancedDraws", "CubeLightsDrawn", "CubeLightsCached",
 		"Dir:TerrainDraws", "Dir:ItemsInstanced", "Dir:ItemsImmNonInst", "Dir:ItemsImmAlpha",
 		"Dir:Groups", "Dir:InstancedItems", "Dir:FallbackItems",
-		"Point:Candidates", "Point:SlotsActive", "Point:Rebakes"
+		"Point:Candidates", "Point:SlotsActive", "Point:Rebakes", "Dir:MovedRedraws"
 	};
 	// When true, draw/Render counters attribute to the cube/point-light path (set around its submission).
 	bool gCubeBucket = false;
@@ -364,6 +366,7 @@ ShadowManager::ShadowManager() {
 	for (int i = 0; i < 2; i++) {
 		Regions[i].Valid = false; D3DXMatrixIdentity(&Regions[i].BakedViewProj); Regions[i].AnchorPos = D3DXVECTOR3(0.0f, 0.0f, 0.0f); Regions[i].BakedSunDir = D3DXVECTOR4(0.0f, 0.0f, 0.0f, 0.0f);
 		D3DXMatrixIdentity(&Regions[i].PrevBakedViewProj); Regions[i].PrevAnchorPos = D3DXVECTOR3(0.0f, 0.0f, 0.0f); Regions[i].PrevValid = false;
+		Regions[i].Fingerprint = 0; Regions[i].FingerprintStale = true;
 	}
 
 	LoadShadowShaders(Device);
@@ -374,7 +377,7 @@ ShadowManager::ShadowManager() {
 	for (int i = 0; i < PointLightMax; i++) {
 		PointSlots[i].Light = NULL;
 		PointSlots[i].BakedLightPos = D3DXVECTOR3(0.0f, 0.0f, 0.0f);
-		PointSlots[i].Checksum = 0.0;
+		PointSlots[i].Checksum = 0;
 		PointSlots[i].Valid = false;
 		PointSlots[i].Intensity = 0.0f;
 		PointSlots[i].LastFarPlane = 0.0f;
@@ -519,6 +522,35 @@ static bool IsShadowCastableType(UInt8 TypeID) {
 	default:
 		return TypeID >= TESForm::FormType::kFormType_NPC && TypeID <= TESForm::FormType::kFormType_LeveledCreature;
 	}
+}
+
+static bool IsActorFormType(UInt8 TypeID) {
+	return TypeID >= TESForm::FormType::kFormType_NPC && TypeID <= TESForm::FormType::kFormType_LeveledCreature;
+}
+
+// Folds Value into a running hash (splitmix64 finalizer), for the order-independent pose sums.
+static inline UInt64 MixHash(UInt64 Hash, UInt64 Value) {
+	UInt64 z = Hash * 0x9E3779B97F4A7C15ull + Value + 0x632BE59BD9B4E019ull;
+	z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ull;
+	z = (z ^ (z >> 27)) * 0x94D049BB133111EBull;
+	return z ^ (z >> 31);
+}
+
+// Identity and pose of a ref's root node: the node itself, world position to whole units, rotation to
+// ~0.1 degree, scale, and the AppCulled bit (Disable). Quantized so float noise on a resting object
+// never reads as movement. Summing these per ref makes a cache key that changes when any caster
+// moves, rotates, rescales, is disabled, or enters or leaves the set.
+static UInt64 RefPoseHash(NiNode* Node) {
+	const NiTransform& T = Node->m_worldTransform;
+	UInt64 Hash = MixHash(0, (UInt64)(uintptr_t)Node);
+	Hash = MixHash(Hash, (UInt32)(SInt32)floorf(T.pos.x));
+	Hash = MixHash(Hash, (UInt32)(SInt32)floorf(T.pos.y));
+	Hash = MixHash(Hash, (UInt32)(SInt32)floorf(T.pos.z));
+	for (int i = 0; i < 3; i++)
+		for (int j = 0; j < 3; j++)
+			Hash = MixHash(Hash, (UInt32)lrintf(T.rot.data[i][j] * 512.0f));
+	Hash = MixHash(Hash, (UInt32)lrintf(T.scale * 1024.0f));
+	return MixHash(Hash, (Node->m_flags & NiAVObject::kFlag_AppCulled) ? 1 : 0);
 }
 
 // Whether the given Forms filter enables shadows for this form type.
@@ -693,17 +725,10 @@ void ShadowManager::SetupShadowMapMatrices(ShadowMapTypeEnum ShadowMapType, Sett
 // Anchor-relative variant of SetupShadowMapMatrices for the cached directional regions. The light matrix
 // is built with the snapped anchor at the ORIGIN (not absolute world coords) so all bake/sample math stays
 // near zero — using absolute world coords (~1e5) here destroys float32 precision and flickers shadow edges.
-// The anchor is snapped to the shadow-map texel grid so reused/rebaked maps don't shimmer.
-void ShadowManager::SetupCachedRegionMatrices(ShadowMapTypeEnum ShadowMapType, SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors, D3DXVECTOR4* SunDir) {
+// Anchor is the caller's world-space bake centre (texel-snapped, see BakeStaticRegion).
+void ShadowManager::SetupCachedRegionMatrices(ShadowMapTypeEnum ShadowMapType, SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors, D3DXVECTOR4* SunDir, const D3DXVECTOR3& Anchor) {
 	float FarPlane = ShadowsExteriors->ShadowMapFarPlane;
 	float Radius   = ShadowsExteriors->ShadowMapRadius[ShadowMapType];
-	int   Size     = ShadowsExteriors->ShadowMapSize[ShadowMapType];
-	float TexelWorld = (2.0f * Radius) / (float)Size;
-
-	D3DXVECTOR3 Anchor = LookAtPosition;
-	Anchor.x = floorf(Anchor.x / TexelWorld) * TexelWorld;
-	Anchor.y = floorf(Anchor.y / TexelWorld) * TexelWorld;
-	Anchor.z = floorf(Anchor.z / TexelWorld) * TexelWorld;
 
 	// Anchor-relative: look-at at the origin, eye up the sun direction; the
 	// apply re-bases receivers to the anchor before this matrix.
@@ -720,6 +745,7 @@ void ShadowManager::SetupCachedRegionMatrices(ShadowMapTypeEnum ShadowMapType, S
 	Regions[r].AnchorPos     = Anchor;
 	Regions[r].BakedSunDir   = *SunDir;
 	Regions[r].Valid         = true;
+	Regions[r].FingerprintStale = true;
 	CollectAnchor = Anchor;
 
 	// Publish as this pass's ShadowViewProj for RenderShadowMap's vertex path,
@@ -839,11 +865,32 @@ bool ShadowManager::RegionNeedsRebake(ShadowMapTypeEnum ShadowMapType) {
 	return false;
 }
 
-// Rebake a cached region's STATIC depth only (Near or Far): world-anchored matrices, world-space
-// collection, statics filtered out of the pool (actors are dynamic and draw via the per-frame
-// overlay instead), then drawn into the persistent ShadowMapSurface[ShadowMapType].
+// Rebake a cached region's STATIC depth only (Near or Far) around the current look-at: world-anchored
+// matrices, world-space collection, statics filtered out of the pool (actors are dynamic and draw via
+// the per-frame overlay instead), then drawn into the persistent ShadowMapSurface[ShadowMapType].
+// The anchor is snapped to the shadow-map texel grid so reused/rebaked maps don't shimmer.
 void ShadowManager::BakeStaticRegion(ShadowMapTypeEnum ShadowMapType, SettingsShadowStruct::ExteriorsStruct* S, D3DXVECTOR4* SunDir) {
-	SetupCachedRegionMatrices(ShadowMapType, S, SunDir);
+	float TexelWorld = (2.0f * S->ShadowMapRadius[ShadowMapType]) / (float)S->ShadowMapSize[ShadowMapType];
+	D3DXVECTOR3 Anchor;
+	Anchor.x = floorf(LookAtPosition.x / TexelWorld) * TexelWorld;
+	Anchor.y = floorf(LookAtPosition.y / TexelWorld) * TexelWorld;
+	Anchor.z = floorf(LookAtPosition.z / TexelWorld) * TexelWorld;
+	SetupCachedRegionMatrices(ShadowMapType, S, SunDir, Anchor);
+	DrawStaticRegion(ShadowMapType, S, SunDir);
+}
+
+// Redraw a cached region with the anchor and sun it was last baked with, so the only change in the map
+// is whatever moved in the world. Leaves the drift and sun-interval triggers exactly where they were.
+void ShadowManager::RedrawStaticRegionInPlace(ShadowMapTypeEnum ShadowMapType, SettingsShadowStruct::ExteriorsStruct* S) {
+	int r = ShadowMapType - MapNear;
+	D3DXVECTOR3 Anchor = Regions[r].AnchorPos;
+	D3DXVECTOR4 SunDir = Regions[r].BakedSunDir;
+	SetupCachedRegionMatrices(ShadowMapType, S, &SunDir, Anchor);
+	DrawStaticRegion(ShadowMapType, S, &SunDir);
+}
+
+// Collect and draw a cached region's statics against the matrices SetupCachedRegionMatrices published.
+void ShadowManager::DrawStaticRegion(ShadowMapTypeEnum ShadowMapType, SettingsShadowStruct::ExteriorsStruct* S, D3DXVECTOR4* SunDir) {
 	CollectWorldSpace = true;
 	BuildExteriorGeoItems(S, ShadowMapType);
 	// Rigid statics only: skinned geometry (GeoData == NULL) is camera-relative
@@ -887,6 +934,72 @@ void ShadowManager::RenderActorOverlay(SettingsShadowStruct::ExteriorsStruct* S,
 }
 
 static const float MinRadii[4] = { 9.0f, 100.0f, 100.0f, 0.0f }; // Near, Far, Ortho, Skin
+
+// Fingerprints the statics each cached region's bake draws: CollectCellGeo's eligibility plus
+// DrawStaticRegion's actor/tree filter, culled at the ref root against the region's baked frustum.
+// Root-level is enough: a root under the map's MinRadius has no leaf the bake could draw. A superset
+// is harmless (at worst a spurious redraw); a subset would miss moves, so this must not cull harder
+// than the bake. One walk covers both regions.
+void ShadowManager::ComputeStaticFingerprints(SettingsShadowStruct::ExteriorsStruct* S, UInt64* Out) {
+	Out[0] = Out[1] = 0;
+	SettingsShadowStruct::ExcludedFormsList* ExcludedForms = &S->ExcludedForms;
+	bool HasExcluded = ExcludedForms->size() > 0;
+	auto FingerprintCell = [&](TESObjectCELL* Cell) {
+		if (!Cell) return;
+		for (TList<TESObjectREFR>::Entry* Entry = &Cell->objectList.First; Entry; Entry = Entry->next) {
+			TESObjectREFR* Ref = Entry->item;
+			NiNode* Node;
+			if (!Ref || !(Node = Ref->GetNode()) || (Ref->flags & TESForm::FormFlags::kFormFlags_NotCastShadows)) continue;
+			TESForm* Form = Ref->baseForm;
+			UInt8 TypeID = Form->formType;
+			if (!IsShadowCastableType(TypeID) || IsActorFormType(TypeID)) continue;
+			if (HasExcluded && std::binary_search(ExcludedForms->begin(), ExcludedForms->end(), Form->refID)) continue;
+			NiBound* Bound = Node->GetWorldBound();
+			if (!Bound) continue;
+			bool IsTree = (TypeID == TESForm::FormType::kFormType_Tree);
+			UInt64 Hash = 0;
+			bool Hashed = false;
+			for (int r = 0; r < 2; r++) {
+				ShadowMapTypeEnum Type = (ShadowMapTypeEnum)(MapNear + r);
+				if (!Regions[r].Valid || !FormsAllows(&S->Forms[Type], TypeID)) continue;
+				if (IsTree && DynamicTrees && Type == MapNear) continue;
+				if (Bound->Radius < MinRadii[Type]) continue;
+				D3DXVECTOR3 Center(Bound->Center.x - Regions[r].AnchorPos.x, Bound->Center.y - Regions[r].AnchorPos.y, Bound->Center.z - Regions[r].AnchorPos.z);
+				if (!SphereInShadowFrustum(Type, Center, Bound->Radius)) continue;
+				if (!Hashed) { Hash = RefPoseHash(Node); Hashed = true; }
+				Out[r] += Hash;
+			}
+		}
+	};
+	if (Player->GetWorldSpace()) {
+		for (UInt32 x = 0; x < *SettingGridsToLoad; x++)
+			for (UInt32 y = 0; y < *SettingGridsToLoad; y++)
+				FingerprintCell(Tes->gridCellArray->GetCell(x, y));
+	}
+	else {
+		FingerprintCell(Player->parentCell);
+	}
+}
+
+// Catches statics that moved while the camera and sun did not: scripted SetPos/SetAngle, havok
+// clutter, items picked up or dropped, Enable/Disable. A changed region is redrawn IN PLACE, so
+// nothing but the moved caster's shadow changes. That needs no crossfade, and it is safe mid-fade:
+// the fade's source copy is left alone and the fade simply continues toward the corrected map.
+void ShadowManager::RedrawMovedStaticRegions(SettingsShadowStruct::ExteriorsStruct* S) {
+	ScopeTimer profile(Phase_StaticMoveCheck);
+	UInt64 Fingerprints[2];
+	ComputeStaticFingerprints(S, Fingerprints);
+	for (int r = 0; r < 2; r++) {
+		if (!Regions[r].Valid) continue;
+		if (!Regions[r].FingerprintStale && Fingerprints[r] != Regions[r].Fingerprint) {
+			RedrawStaticRegionInPlace((ShadowMapTypeEnum)(MapNear + r), S);
+			ProfileCount(Cnt_MovedStaticRedraws);
+		}
+		// Taken after any bake this frame, so a fresh bake's own fingerprint is its baseline.
+		Regions[r].Fingerprint = Fingerprints[r];
+		Regions[r].FingerprintStale = false;
+	}
+}
 
 void ShadowManager::RenderShadowMapCellTerrain(TESObjectCELL* Cell, ShadowMapTypeEnum ShadowMapType, D3DXVECTOR4* ShadowData) {
 	NiNode* CellNode = Cell->niNode;
@@ -1358,6 +1471,7 @@ void ShadowManager::RenderExteriorShadows() {
 					SnapStaticFadeIfTeleported(ShadowsExteriors);
 				}
 			}
+			if (TheSettingManager->SettingsShadows.Exteriors.RebakeMovedStatics) RedrawMovedStaticRegions(ShadowsExteriors);
 		}
 
 		RenderActorOverlay(ShadowsExteriors, SunDir);
@@ -1653,10 +1767,16 @@ ShadowManager::RefLightInfo ShadowManager::BuildRefLightInfo(TESObjectREFR* Ref)
 	UInt8 TypeID = Ref->baseForm->formType;
 	Info.IsActorType = (TypeID >= TESForm::FormType::kFormType_NPC && TypeID <= TESForm::FormType::kFormType_LeveledCreature);
 	Info.BoundRadius = Info.Node->GetWorldBoundRadius();
-	NiBound* B = Ref->niNode->GetWorldBound();
-	// Whole units: an idle NPC's breathing jitters its bound centre, and an
-	// exact sum would rebake every cube every frame.
-	Info.CenterSum = std::floor(B->Center.x) + std::floor(B->Center.y) + std::floor(B->Center.z);
+	if (Info.IsActorType) {
+		// Bound centre to whole units only: an idle NPC's breathing jitters it,
+		// and its root pose would rebake every cube every frame.
+		NiBound* B = Ref->niNode->GetWorldBound();
+		Info.PoseHash = MixHash(MixHash(MixHash(MixHash(0, (UInt64)(uintptr_t)Info.Node),
+			(UInt32)(SInt32)floorf(B->Center.x)), (UInt32)(SInt32)floorf(B->Center.y)), (UInt32)(SInt32)floorf(B->Center.z));
+	}
+	else {
+		Info.PoseHash = RefPoseHash(Info.Node);
+	}
 	Info.IsPlayer = (Ref->refID == Player->refID);
 	return Info;
 }
@@ -1664,7 +1784,7 @@ ShadowManager::RefLightInfo ShadowManager::BuildRefLightInfo(TESObjectREFR* Ref)
 // Tests one ref against one slot's light and files it under statics or actors. Actors (and any
 // carried light) get a wider radius because they move: a caster just outside the strict radius
 // can step inside it before the next rebake.
-void ShadowManager::ClassifyRefForPointSlot(const RefLightInfo& Info, int Slot, double* Checksums) {
+void ShadowManager::ClassifyRefForPointSlot(const RefLightInfo& Info, int Slot, UInt64* Checksums) {
 	NiPointLight* Light = PointSlots[Slot].Light;
 	NiPoint3* LightPos = &Light->m_worldTransform.pos;
 	float FarPlane = TheShaderManager->ShaderConst.ShadowMap.ShadowCastLightPosition[Slot].w;
@@ -1679,10 +1799,10 @@ void ShadowManager::ClassifyRefForPointSlot(const RefLightInfo& Info, int Slot, 
 	else {
 		CubeMapRefMap[Slot].emplace_back(Info.Node);
 	}
-	Checksums[Slot] += Info.CenterSum;
+	Checksums[Slot] += Info.PoseHash;
 }
 
-void ShadowManager::ClassifyCellForPointSlots(TESObjectCELL* Cell, double* Checksums) {
+void ShadowManager::ClassifyCellForPointSlots(TESObjectCELL* Cell, UInt64* Checksums) {
 	if (!Cell) return;
 	SettingsShadowStruct::PointStruct* Settings = &TheSettingManager->SettingsShadows.Point;
 	TList<TESObjectREFR>::Entry* Entry = &Cell->objectList.First;
@@ -1698,7 +1818,7 @@ void ShadowManager::ClassifyCellForPointSlots(TESObjectCELL* Cell, double* Check
 
 // The ONLY place the point path distinguishes interiors from exteriors: which ref list to walk.
 // Everything downstream (classification, baking, applying) is identical.
-void ShadowManager::BuildPointGeoLists(double* Checksums) {
+void ShadowManager::BuildPointGeoLists(UInt64* Checksums) {
 	ClearCubeMapNodeLists();
 	if (Player->GetWorldSpace()) {
 		for (UInt32 x = 0; x < *SettingGridsToLoad; x++)
@@ -1723,7 +1843,7 @@ void ShadowManager::SetupCubeMapRenderState() {
 }
 
 // A slot's cached cube is reused unless something it depends on changed.
-bool ShadowManager::PointSlotNeedsRebake(int Slot, double Checksum) {
+bool ShadowManager::PointSlotNeedsRebake(int Slot, UInt64 Checksum) {
 	PointLightSlot& Slot_ = PointSlots[Slot];
 	if (!Slot_.Valid) return true;          // never baked, or reassigned to a different light
 	if (!EnableStaticMaps) return true;     // post-cell-change warmup: havok still settling
@@ -1844,7 +1964,7 @@ void ShadowManager::RenderPointShadows() {
 
 	// Classify every loaded ref against every occupied slot each frame: this
 	// produces the checksums that decide whether a cube rebakes.
-	double Checksums[PointLightMax] = { 0.0 };
+	UInt64 Checksums[PointLightMax] = { 0 };
 	{
 		ScopeTimer profileClassify(Phase_PointClassify);
 		BuildPointGeoLists(Checksums);

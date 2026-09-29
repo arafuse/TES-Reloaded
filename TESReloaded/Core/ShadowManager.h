@@ -32,7 +32,7 @@ public:
 	// ref (independent of the light) so the per-light loop only does the distance test.
 	struct RefLightInfo {
 		NiNode*	Node;
-		double	CenterSum;
+		UInt64	PoseHash;	// RefPoseHash for statics; floored bound centre for actors
 		float	BoundRadius;
 		bool	IsActorType;
 		bool	IsPlayer;
@@ -68,10 +68,10 @@ public:
 	void					AdvancePointFades();
 	void					SelectPointLights();
 	void					PublishPointLightConstants();
-	void					BuildPointGeoLists(double* Checksums);
-	void					ClassifyCellForPointSlots(TESObjectCELL* Cell, double* Checksums);
-	void					ClassifyRefForPointSlot(const RefLightInfo& Info, int Slot, double* Checksums);
-	bool					PointSlotNeedsRebake(int Slot, double Checksum);
+	void					BuildPointGeoLists(UInt64* Checksums);
+	void					ClassifyCellForPointSlots(TESObjectCELL* Cell, UInt64* Checksums);
+	void					ClassifyRefForPointSlot(const RefLightInfo& Info, int Slot, UInt64* Checksums);
+	bool					PointSlotNeedsRebake(int Slot, UInt64 Checksum);
 	void					BakePointCube(int Slot);
 	void					RenderShadowMaps();
 	void					ResetIntervals();
@@ -86,10 +86,14 @@ public:
 	void					SetupAlphaTexture(NiGeometry* Geo, BSShaderProperty* LProp, D3DXVECTOR4* ShadowData);
 	void					RenderSkinnedGeo(NiGeometry* Geo, D3DXVECTOR4* ShadowData);
 	void					SetupShadowMapMatrices(ShadowMapTypeEnum ShadowMapType, SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors, D3DXVECTOR3* At, D3DXVECTOR4* ShadowLightDir);
-	void					SetupCachedRegionMatrices(ShadowMapTypeEnum ShadowMapType, SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors, D3DXVECTOR4* SunDir);
+	void					SetupCachedRegionMatrices(ShadowMapTypeEnum ShadowMapType, SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors, D3DXVECTOR4* SunDir, const D3DXVECTOR3& Anchor);
 	void					PublishCachedRegionSampleMatrix(ShadowMapTypeEnum ShadowMapType);
 	bool					RegionNeedsRebake(ShadowMapTypeEnum ShadowMapType);
 	void					BakeStaticRegion(ShadowMapTypeEnum ShadowMapType, SettingsShadowStruct::ExteriorsStruct* S, D3DXVECTOR4* SunDir);
+	void					DrawStaticRegion(ShadowMapTypeEnum ShadowMapType, SettingsShadowStruct::ExteriorsStruct* S, D3DXVECTOR4* SunDir);
+	void					RedrawStaticRegionInPlace(ShadowMapTypeEnum ShadowMapType, SettingsShadowStruct::ExteriorsStruct* S);
+	void					ComputeStaticFingerprints(SettingsShadowStruct::ExteriorsStruct* S, UInt64* Out);
+	void					RedrawMovedStaticRegions(SettingsShadowStruct::ExteriorsStruct* S);
 	void					RenderActorOverlay(SettingsShadowStruct::ExteriorsStruct* S, D3DXVECTOR4* SunDir);
 	void					RenderShadowMapCellTerrain(TESObjectCELL* Cell, ShadowMapTypeEnum ShadowMapType, D3DXVECTOR4* ShadowData);
 	void					BuildExteriorGeoItems(SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors, ShadowMapTypeEnum ShadowMapType);
@@ -179,6 +183,11 @@ public:
 		D3DXMATRIX  PrevBakedViewProj;
 		D3DXVECTOR3 PrevAnchorPos;
 		bool        PrevValid;
+		// Order-independent sum of RefPoseHash over the statics this region's bake draws, so a
+		// script-moved, rotated, added, removed or disabled static is caught without per-ref storage.
+		// FingerprintStale marks a bake whose fingerprint has not been taken yet.
+		UInt64      Fingerprint;
+		bool        FingerprintStale;
 	};
 	CachedRegion			Regions[2];         // [0]=MapNear, [1]=MapFar
 
@@ -191,7 +200,7 @@ public:
 	struct PointLightSlot {
 		NiPointLight*	Light;			// NULL = slot empty, or retiring if Intensity > 0
 		D3DXVECTOR3		BakedLightPos;	// world-space light position at last bake
-		double			Checksum;		// quantized bound-center sum of in-radius refs at last bake
+		UInt64			Checksum;		// sum of in-radius refs' RefLightInfo::PoseHash at last bake
 		bool			Valid;			// false => cube must be (re)baked
 		// --- Fade ([Point] FadeTime) ---
 		// Weight the published luminance is scaled by, 0..1. Ramps to 1 while the slot holds a light

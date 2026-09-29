@@ -1254,6 +1254,7 @@ void SettingManager::LoadSettings() {
 	SettingsShadows.Exteriors.UseIntervalUpdate = GetPrivateProfileIntA("Exteriors", "UseIntervalUpdate", 1, Filename);
 	SettingsShadows.Exteriors.UseInstancing = GetPrivateProfileIntA("Exteriors", "UseInstancing", 1, Filename);
 	SettingsShadows.Exteriors.CacheStaticShadows = GetPrivateProfileIntA("Exteriors", "CacheStaticShadows", 1, Filename);
+	SettingsShadows.Exteriors.RebakeMovedStatics = GetPrivateProfileIntA("Exteriors", "RebakeMovedStatics", 1, Filename);
 	SettingsShadows.Exteriors.DynamicTrees = GetPrivateProfileIntA("Exteriors", "DynamicTrees", 0, Filename);
 	GetPrivateProfileStringA("Exteriors", "FadeTime", "1.0", value, SettingStringBuffer, Filename);
 	SettingsShadows.Exteriors.FadeTime = atof(value);
