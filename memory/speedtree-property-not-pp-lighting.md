@@ -23,8 +23,10 @@ is an assumption about content, not a guarantee, and mod-added trees can break i
 
 **How to apply:** anything that widens which passes draw SpeedTree branches, or that turns
 `AlphaEnabled` on for a pass that draws them, walks into this. A fix needs a VFT test before the
-cast, not a wider `IsLightingProperty()`. The DynamicTrees overlay dodges it only because
-`[ExteriorsSkin] AlphaEnabled = 0`; if that is ever flipped on, fix this first. Leaves are
+cast, not a wider `IsLightingProperty()`. The DynamicTrees composite (`CompositeDynamicTrees`, trees
+drawn per frame into the near/far maps) dodges it by forcing `AlphaEnabled` off for MinBlend passes;
+the static bakes still draw trees with `[ExteriorsNear]`/`[ExteriorsFar] AlphaEnabled` whenever
+DynamicTrees is off for that region, so flipping either on is still exposed. Leaves are
 unaffected — they never reach SetupAlphaTexture, and their alpha test is forced by
 `TESR_ShadowData.x == 2` in ShadowMap.pso.
 
