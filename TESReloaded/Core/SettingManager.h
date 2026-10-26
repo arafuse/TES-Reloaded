@@ -343,6 +343,7 @@ struct SettingsShadowStruct {
 		bool				CacheStaticShadows;
 		bool				RebakeMovedStatics;		// [Exteriors] RebakeMovedStatics: redraw a cached map when a static in it moves
 		bool				DynamicTrees;			// [Exteriors] DynamicTrees: redraw trees every frame so they sway
+		bool				DynamicTreesFar;		// [Exteriors] DynamicTreesFar: DynamicTrees for the far map too
 		float				FadeTime;				// [Exteriors] FadeTime: static-map crossfade seconds (0 = off)
 		bool                UsePostProcessing;
 		bool				SunShadowStealth;		// [Exteriors] SunShadowStealth: sun shadow lowers the player's light level

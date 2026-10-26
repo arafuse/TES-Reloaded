@@ -57,7 +57,10 @@ public:
 	void					CollectCubeMapGeometry(NiAVObject* Object, std::vector<NiGeometry*>& Out);
 	void					RenderTerrain(NiAVObject* Object, ShadowMapTypeEnum ShadowMapType, D3DXVECTOR4* ShadowData);
 	void					Render(NiGeometry* Geo, D3DXVECTOR4* ShadowData, const D3DMATRIX* PrecomputedWorld = NULL);
-	void					RenderShadowMap(ShadowMapTypeEnum ShadowMapType, SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors, D3DXVECTOR3* At, D3DXVECTOR4* SunDir, D3DXVECTOR4* ShadowData, bool SkipTerrain = false);
+	// Draws the collected ShadowGeoPool into a map. Target defaults to the map's live surface. MinBlend
+	// draws over the target's existing contents, keeping the depth nearer the light, instead of clearing
+	// it and depth-testing.
+	void					RenderShadowMap(ShadowMapTypeEnum ShadowMapType, SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors, D3DXVECTOR3* At, D3DXVECTOR4* SunDir, D3DXVECTOR4* ShadowData, bool SkipTerrain = false, IDirect3DSurface9* Target = NULL, bool MinBlend = false);
 	void					RenderExteriorShadows();
 	bool					OrthoNeeded();
 	bool					SunShadowNeeded();
@@ -87,6 +90,11 @@ public:
 	void					RenderSkinnedGeo(NiGeometry* Geo, D3DXVECTOR4* ShadowData);
 	void					SetupShadowMapMatrices(ShadowMapTypeEnum ShadowMapType, SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors, D3DXVECTOR3* At, D3DXVECTOR4* ShadowLightDir);
 	void					SetupCachedRegionMatrices(ShadowMapTypeEnum ShadowMapType, SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors, D3DXVECTOR4* SunDir, const D3DXVECTOR3& Anchor);
+	// Publishes a cached region's anchor-relative projection for drawing into it (ShadowViewProj, culling
+	// frustum, leaf billboard vectors, CollectAnchor) without touching the region's bake state.
+	D3DXMATRIX				ApplyRegionProjection(ShadowMapTypeEnum ShadowMapType, SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors, D3DXVECTOR4* SunDir, const D3DXVECTOR3& Anchor);
+	void					UpdateDynamicTreeRegions(SettingsShadowStruct::ExteriorsStruct* S);
+	void					CompositeDynamicTrees(ShadowMapTypeEnum ShadowMapType, SettingsShadowStruct::ExteriorsStruct* S);
 	void					PublishCachedRegionSampleMatrix(ShadowMapTypeEnum ShadowMapType);
 	bool					RegionNeedsRebake(ShadowMapTypeEnum ShadowMapType);
 	void					BakeStaticRegion(ShadowMapTypeEnum ShadowMapType, SettingsShadowStruct::ExteriorsStruct* S, D3DXVECTOR4* SunDir);
@@ -190,6 +198,17 @@ public:
 		bool        FingerprintStale;
 	};
 	CachedRegion			Regions[2];         // [0]=MapNear, [1]=MapFar
+
+	// --- Dynamic trees ([Exteriors] DynamicTrees / DynamicTreesFar) ---------------------------------
+	// A region whose trees are dynamic bakes its statics into StaticMapSurface instead of its live map.
+	// Each frame CompositeDynamicTrees copies that bake into the live map and min-blends the trees over it
+	// in their current wind pose, so every consumer of the live map sees moving trees with no extra
+	// samplers. NULL when the region's setting is off or the device cannot blend R32F.
+	IDirect3DTexture9*		StaticMapTexture[2];
+	IDirect3DSurface9*		StaticMapSurface[2];
+	// Latched once per sun frame by UpdateDynamicTreeRegions; a change invalidates the region, because
+	// its existing bake was drawn with the other tree mode.
+	bool					TreesDynamic[2];
 
 	//-------SHADOW CUBE MAP--------
 
@@ -298,7 +317,7 @@ public:
 	int                         ShadowGeoCount;
 	// When true, BuildExteriorGeoItems/CollectExteriorGeo collect ANCHOR-relative centers/matrices
 	// (subtract CollectAnchor) for a cached static bake against an anchor-relative ShadowViewProj; set/cleared
-	// around each bake (BakeStaticRegion, RenderActorOverlay). False (default) keeps the normal
+	// around each bake and tree composite (DrawStaticRegion, CompositeDynamicTrees). False (default) keeps the normal
 	// camera-relative per-frame collection. Anchor-relative (not absolute-world) keeps coordinates small so
 	// float32 shadow-map precision is preserved (absolute world coords ~1e5 make shadow edges flicker).
 	bool                        CollectWorldSpace;
@@ -306,15 +325,12 @@ public:
 	// When true (the per-frame actor overlay), CollectExteriorGeo skips rigid non-actor geometry during
 	// collection so the walk doesn't build+store matrices for statics that the overlay would only discard.
 	bool                        CollectSkinnedOnly;
-	// [Exteriors] DynamicTrees, latched once per exterior frame. When set, Tree-form refs are pulled out
-	// of the cached MapNear bake and redrawn into the per-frame MapSkin overlay instead, so their shadows
-	// follow the SpeedTree wind animation. MapFar keeps them baked: the apply shader's out-of-bounds
-	// branch returns the far term WITHOUT min-combining the skin overlay, so receivers past the near
-	// cascade have no other source of tree shadow.
-	bool                        DynamicTrees;
-	// True only while the MapSkin overlay is drawing with DynamicTrees on. Gates the branch-wind path in
-	// Render(): the cube-map passes share Render() but use ShadowCubeMap.vso, which has no such path and
-	// reads c63 as its light position.
+	// When true (CompositeDynamicTrees), collection takes Tree-form refs only and never instances them,
+	// since ShadowMapInstanced.vso cannot apply the branch wind transform.
+	bool                        CollectTreesOnly;
+	// True only while CompositeDynamicTrees is drawing. Gates the branch-wind path in Render(): the
+	// cube-map passes share Render() but use ShadowCubeMap.vso, which has no such path and reads c63 as
+	// its light position.
 	bool                        TreeWindPass;
 };
 

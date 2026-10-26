@@ -79,12 +79,15 @@ namespace {
 		Phase_PointTotal,      // whole RenderPointShadows (interiors AND exteriors)
 		Phase_FrameTotal,      // exterior + interior for one frame
 		Phase_StaticMoveCheck, // RedrawMovedStaticRegions: fingerprint walk + any in-place redraws
+		Phase_TreeComposite,   // CompositeDynamicTrees: static copy + tree collection + draw submission
+		Phase_TreeDraw,        // ...of which RenderShadowMap's tree draw submission
 		Phase_COUNT
 	};
 	const char* const ShadowPhaseNames[Phase_COUNT] = {
 		"BuildGeoItems", "Pass:Near", "Pass:Far", "Pass:Ortho", "Pass:Skin",
 		"ExtTotal", "Int:Classify", "Int:CubeRender", "IntTotal",
-		"Point:Classify", "Point:Bake", "PointTotal", "FrameTotal", "Ext:MoveCheck"
+		"Point:Classify", "Point:Bake", "PointTotal", "FrameTotal", "Ext:MoveCheck",
+		"Ext:Trees", "Ext:TreesDraw"
 	};
 	// Per-frame counters: how the submission cost breaks down (draws, batches, cache hits).
 	enum ShadowCounter {
@@ -233,6 +236,22 @@ void ShadowManager::LoadShadowShaders(IDirect3DDevice9* Device) {
 	if (ShadowMapInstancedVertex->LoadShader("ShadowMapInstanced.vso")) Device->CreateVertexShader((const DWORD*)ShadowMapInstancedVertex->Function, &ShadowMapInstancedVertexShader);
 }
 
+// Whether the device can MIN-blend into an R32F render target, which CompositeDynamicTrees needs.
+static bool SupportsR32FMinBlend(IDirect3DDevice9* Device) {
+	D3DCAPS9 Caps;
+	if (FAILED(Device->GetDeviceCaps(&Caps)) || !(Caps.PrimitiveMiscCaps & D3DPMISCCAPS_BLENDOP)) return false;
+	IDirect3D9* D3D = NULL;
+	if (FAILED(Device->GetDirect3D(&D3D)) || !D3D) return false;
+	D3DDEVICE_CREATION_PARAMETERS Params;
+	D3DDISPLAYMODE Mode;
+	bool Ok = SUCCEEDED(Device->GetCreationParameters(&Params))
+		&& SUCCEEDED(D3D->GetAdapterDisplayMode(Params.AdapterOrdinal, &Mode))
+		&& SUCCEEDED(D3D->CheckDeviceFormat(Params.AdapterOrdinal, Params.DeviceType, Mode.Format,
+			D3DUSAGE_RENDERTARGET | D3DUSAGE_QUERY_POSTPIXELSHADER_BLENDING, D3DRTYPE_TEXTURE, D3DFMT_R32F));
+	D3D->Release();
+	return Ok;
+}
+
 void ShadowManager::CreateShadowMapSurfaces(IDirect3DDevice9* Device, SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors) {
 	// Zero all four map slots, then allocate MapOrtho (precipitation occlusion)
 	// here and the sun maps below. R32F colour + D24S8 depth throughout.
@@ -290,6 +309,25 @@ void ShadowManager::CreateShadowMapSurfaces(IDirect3DDevice9* Device, SettingsSh
 		}
 		StaticFadeReady = Ok;
 		Logger::Log("[ShadowFade] previous-bake copies %s (FadeTime %.2fs)", Ok ? "allocated" : "FAILED - fading disabled", ShadowsExteriors->FadeTime);
+	}
+
+	// Static-only bakes for DynamicTrees, which composites trees over them with MIN blending.
+	StaticMapTexture[0] = StaticMapTexture[1] = NULL;
+	StaticMapSurface[0] = StaticMapSurface[1] = NULL;
+	if (ShadowsExteriors->DynamicTrees) {
+		bool CanBlend = SupportsR32FMinBlend(Device);
+		for (int r = 0; r < 2 && CanBlend; r++) {
+			if (r == 1 && !ShadowsExteriors->DynamicTreesFar) continue;
+			UINT Size = ShadowsExteriors->ShadowMapSize[MapNear + r];
+			if (!Size) continue;
+			if (FAILED(Device->CreateTexture(Size, Size, 1, D3DUSAGE_RENDERTARGET, D3DFMT_R32F, D3DPOOL_DEFAULT, &StaticMapTexture[r], NULL)) ||
+				FAILED(StaticMapTexture[r]->GetSurfaceLevel(0, &StaticMapSurface[r]))) {
+				if (StaticMapTexture[r]) { StaticMapTexture[r]->Release(); StaticMapTexture[r] = NULL; }
+				StaticMapSurface[r] = NULL;
+			}
+		}
+		Logger::Log("[DynamicTrees] near %s, far %s", StaticMapSurface[0] ? "on" : "off", StaticMapSurface[1] ? "on" : "off");
+		if (!CanBlend) Logger::Log("[DynamicTrees] the device cannot blend R32F render targets; trees stay baked");
 	}
 }
 
@@ -350,8 +388,9 @@ ShadowManager::ShadowManager() {
 	ShadowGeoCount = 0;
 	CollectWorldSpace = false;
 	CollectSkinnedOnly = false;
-	DynamicTrees = false;
+	CollectTreesOnly = false;
 	TreeWindPass = false;
+	TreesDynamic[0] = TreesDynamic[1] = false;
 	CollectAnchor = D3DXVECTOR3(0.0f, 0.0f, 0.0f);
 
 	StaticFadeT = 1.0f;
@@ -727,6 +766,16 @@ void ShadowManager::SetupShadowMapMatrices(ShadowMapTypeEnum ShadowMapType, Sett
 // near zero — using absolute world coords (~1e5) here destroys float32 precision and flickers shadow edges.
 // Anchor is the caller's world-space bake centre (texel-snapped, see BakeStaticRegion).
 void ShadowManager::SetupCachedRegionMatrices(ShadowMapTypeEnum ShadowMapType, SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors, D3DXVECTOR4* SunDir, const D3DXVECTOR3& Anchor) {
+	D3DXMATRIX ViewProj = ApplyRegionProjection(ShadowMapType, ShadowsExteriors, SunDir, Anchor);
+	int r = ShadowMapType - MapNear;
+	Regions[r].BakedViewProj = ViewProj;
+	Regions[r].AnchorPos     = Anchor;
+	Regions[r].BakedSunDir   = *SunDir;
+	Regions[r].Valid         = true;
+	Regions[r].FingerprintStale = true;
+}
+
+D3DXMATRIX ShadowManager::ApplyRegionProjection(ShadowMapTypeEnum ShadowMapType, SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors, D3DXVECTOR4* SunDir, const D3DXVECTOR3& Anchor) {
 	float FarPlane = ShadowsExteriors->ShadowMapFarPlane;
 	float Radius   = ShadowsExteriors->ShadowMapRadius[ShadowMapType];
 
@@ -739,13 +788,6 @@ void ShadowManager::SetupCachedRegionMatrices(ShadowMapTypeEnum ShadowMapType, S
 	D3DXMatrixLookAtRH(&View, &Eye, &AtRel, &Up);
 	D3DXMatrixOrthoRH(&Proj, 2.0f * Radius, (1 + SunDir->z) * Radius, 0.0f, 2.0f * FarPlane);
 	D3DXMATRIX ViewProj = View * Proj;
-
-	int r = ShadowMapType - MapNear;
-	Regions[r].BakedViewProj = ViewProj;
-	Regions[r].AnchorPos     = Anchor;
-	Regions[r].BakedSunDir   = *SunDir;
-	Regions[r].Valid         = true;
-	Regions[r].FingerprintStale = true;
 	CollectAnchor = Anchor;
 
 	// Publish as this pass's ShadowViewProj for RenderShadowMap's vertex path,
@@ -754,6 +796,7 @@ void ShadowManager::SetupCachedRegionMatrices(ShadowMapTypeEnum ShadowMapType, S
 	BillboardRight = { View._11, View._21, View._31, 0.0f };
 	BillboardUp    = { View._12, View._22, View._32, 0.0f };
 	GetShadowFrustum(ShadowMapType, &TheShaderManager->ShaderConst.ShadowMap.ShadowViewProj);
+	return ViewProj;
 }
 
 // Recompute the apply-pass sample matrix from the CURRENT camera each frame. BakedViewProj is
@@ -894,11 +937,10 @@ void ShadowManager::DrawStaticRegion(ShadowMapTypeEnum ShadowMapType, SettingsSh
 	CollectWorldSpace = true;
 	BuildExteriorGeoItems(S, ShadowMapType);
 	// Rigid statics only: skinned geometry (GeoData == NULL) is camera-relative
-	// and goes to the per-frame overlay with the actors. Under DynamicTrees the near
-	// region drops trees as well, for the same reason. The FAR region keeps them: the
-	// apply shader's out-of-bounds branch returns the far term without min-combining
-	// the overlay, so receivers past the near cascade would lose tree shadows entirely.
-	bool DropTrees = DynamicTrees && ShadowMapType == MapNear;
+	// and goes to the per-frame overlay with the actors. Dynamic trees are left
+	// out too and composited over this bake every frame instead.
+	int r = ShadowMapType - MapNear;
+	bool DropTrees = TreesDynamic[r];
 	int w = 0;
 	for (int i = 0; i < ShadowGeoCount; i++) {
 		ShadowGeoItem& Item = ShadowGeoPool[i];
@@ -907,30 +949,64 @@ void ShadowManager::DrawStaticRegion(ShadowMapTypeEnum ShadowMapType, SettingsSh
 		ShadowGeoPool[w++] = Item;
 	}
 	ShadowGeoCount = w;
-	RenderShadowMap(ShadowMapType, S, &LookAtPosition, SunDir, &TheShaderManager->ShaderConst.Shadow.Data);
+	RenderShadowMap(ShadowMapType, S, &LookAtPosition, SunDir, &TheShaderManager->ShaderConst.Shadow.Data, false, DropTrees ? StaticMapSurface[r] : NULL);
 	CollectWorldSpace = false;
 }
 
-// Per-frame actor overlay (MapSkin): actors (plus trees under DynamicTrees) only, terrain skipped
-// (statics/terrain are already covered by the cached near/far bakes). Camera-relative (matches
-// RenderSkinnedGeo), with its own sample matrix (TESR_ShadowCameraToLightTransformSkin) min-combined
-// with the cached static term in the apply shader.
+// Per-frame actor overlay (MapSkin): actors and skinned geometry only, terrain skipped (statics and
+// terrain are already covered by the cached near/far bakes). Camera-relative (matches RenderSkinnedGeo),
+// with its own sample matrix (TESR_ShadowCameraToLightTransformSkin) min-combined with the near term in
+// the apply shader.
 void ShadowManager::RenderActorOverlay(SettingsShadowStruct::ExteriorsStruct* S, D3DXVECTOR4* SunDir) {
-	// Redrawn every frame, so camera-relative like RenderSkinnedGeo, with its own
-	// sample matrix that the apply min-combines with the cached near map.
-	D3DXVECTOR3 At;
-	At.x = LookAtPosition.x - TheRenderManager->CameraPosition.x;
-	At.y = LookAtPosition.y - TheRenderManager->CameraPosition.y;
-	At.z = LookAtPosition.z - TheRenderManager->CameraPosition.z;
-	SetupShadowMapMatrices(MapSkin, S, &At, SunDir);
+	// Projected exactly like the near region (same anchor and baked sun), only camera-relative. The apply
+	// consults this overlay only inside the near box; centred anywhere else, part of the near box would
+	// fall outside it and lose its shadows, which shows up as a lit strip along the cascade boundary.
+	bool NearBaked = Regions[0].Valid;
+	D3DXVECTOR3 Center = NearBaked ? Regions[0].AnchorPos : LookAtPosition;
+	D3DXVECTOR3 At = Center - D3DXVECTOR3(TheRenderManager->CameraPosition.x, TheRenderManager->CameraPosition.y, TheRenderManager->CameraPosition.z);
+	D3DXVECTOR4* OverlaySunDir = NearBaked ? &Regions[0].BakedSunDir : SunDir;
+	SetupShadowMapMatrices(MapSkin, S, &At, OverlaySunDir);
 	// CollectSkinnedOnly drops rigid non-actor statics during the walk, leaving
-	// only the camera-relative skinned and actor casters (and trees, under DynamicTrees).
+	// only the camera-relative skinned and actor casters.
 	CollectSkinnedOnly = true;
 	BuildExteriorGeoItems(S, MapSkin);
 	CollectSkinnedOnly = false;
-	TreeWindPass = DynamicTrees;
-	RenderShadowMap(MapSkin, S, &At, SunDir, &TheShaderManager->ShaderConst.Shadow.Data, /*SkipTerrain=*/true);
+	RenderShadowMap(MapSkin, S, &At, OverlaySunDir, &TheShaderManager->ShaderConst.Shadow.Data, /*SkipTerrain=*/true);
+}
+
+// Latches which regions draw their trees per frame. A region whose mode changed is invalidated, because
+// its current bake either holds the trees or is missing them, and the composite assumes the opposite.
+void ShadowManager::UpdateDynamicTreeRegions(SettingsShadowStruct::ExteriorsStruct* S) {
+	for (int r = 0; r < 2; r++) {
+		ShadowMapTypeEnum Type = (ShadowMapTypeEnum)(MapNear + r);
+		bool Wanted = S->DynamicTrees && (r == 0 || S->DynamicTreesFar);
+		bool Dynamic = Wanted && StaticMapSurface[r] && S->Enabled[Type] && S->Forms[Type].Trees;
+		if (Dynamic != TreesDynamic[r]) {
+			TreesDynamic[r] = Dynamic;
+			Regions[r].Valid = false;
+		}
+	}
+}
+
+// Rebuilds a dynamic-tree region's live map: copies its static-only bake in, then draws the region's
+// trees over it with their current wind pose and collision bend, against the region's baked projection
+// so they line up with the statics. MIN blending keeps the depth nearer the light, so no depth buffer
+// is needed. The live map is what every consumer samples: the apply, the crossfade copies, the sun
+// shadow probe and volumetric light.
+void ShadowManager::CompositeDynamicTrees(ShadowMapTypeEnum ShadowMapType, SettingsShadowStruct::ExteriorsStruct* S) {
+	ScopeTimer profile(Phase_TreeComposite);
+	int r = ShadowMapType - MapNear;
+	if (!ShadowMapSurface[ShadowMapType]) return;
+	if (FAILED(TheRenderManager->device->StretchRect(StaticMapSurface[r], NULL, ShadowMapSurface[ShadowMapType], NULL, D3DTEXF_NONE))) return;
+	ApplyRegionProjection(ShadowMapType, S, &Regions[r].BakedSunDir, Regions[r].AnchorPos);
+	CollectWorldSpace = true;
+	CollectTreesOnly = true;
+	BuildExteriorGeoItems(S, ShadowMapType);
+	CollectTreesOnly = false;
+	TreeWindPass = true;
+	RenderShadowMap(ShadowMapType, S, &LookAtPosition, &Regions[r].BakedSunDir, &TheShaderManager->ShaderConst.Shadow.Data, /*SkipTerrain=*/true, ShadowMapSurface[ShadowMapType], /*MinBlend=*/true);
 	TreeWindPass = false;
+	CollectWorldSpace = false;
 }
 
 static const float MinRadii[4] = { 9.0f, 100.0f, 100.0f, 0.0f }; // Near, Far, Ortho, Skin
@@ -962,7 +1038,7 @@ void ShadowManager::ComputeStaticFingerprints(SettingsShadowStruct::ExteriorsStr
 			for (int r = 0; r < 2; r++) {
 				ShadowMapTypeEnum Type = (ShadowMapTypeEnum)(MapNear + r);
 				if (!Regions[r].Valid || !FormsAllows(&S->Forms[Type], TypeID)) continue;
-				if (IsTree && DynamicTrees && Type == MapNear) continue;
+				if (IsTree && TreesDynamic[r]) continue;
 				if (Bound->Radius < MinRadii[Type]) continue;
 				D3DXVECTOR3 Center(Bound->Center.x - Regions[r].AnchorPos.x, Bound->Center.y - Regions[r].AnchorPos.y, Bound->Center.z - Regions[r].AnchorPos.z);
 				if (!SphereInShadowFrustum(Type, Center, Bound->Radius)) continue;
@@ -1022,6 +1098,7 @@ void ShadowManager::CollectCellGeo(TESObjectCELL* Cell, SettingsShadowStruct::Fo
 		if (!Ref || !(Node = Ref->GetNode()) || (Ref->flags & TESForm::FormFlags::kFormFlags_NotCastShadows)) continue;
 		TESForm* Form = Ref->baseForm;
 		UInt8 TypeID = Form->formType;
+		if (CollectTreesOnly && TypeID != TESForm::FormType::kFormType_Tree) continue;
 		if (!IsShadowCastableType(TypeID)) continue;
 		if (!FormsAllows(Forms, TypeID)) continue;
 		if (HasExcluded && std::binary_search(ExcludedForms->begin(), ExcludedForms->end(), Form->refID)) continue;
@@ -1105,10 +1182,8 @@ void ShadowManager::CollectExteriorGeo(NiAVObject* Object, bool HasWater, Shadow
 	}
 
 	// The overlay draws only skinned geometry and actors; skip rigid statics
-	// before their bounds, matrix and instancing work. Trees join them while
-	// DynamicTrees is on, since their wind pose has to be redrawn every frame.
-	bool OverlayTree = CollectSkinnedOnly && DynamicTrees && IsTreeRef;
-	if (CollectSkinnedOnly && !DrawViaSkin && !IsActorRef && !OverlayTree) return;
+	// before their bounds, matrix and instancing work.
+	if (CollectSkinnedOnly && !DrawViaSkin && !IsActorRef) return;
 
 	bool BaseInstanceable = false;
 	bool HasAlphaMask = false;
@@ -1120,9 +1195,9 @@ void ShadowManager::CollectExteriorGeo(NiAVObject* Object, bool HasWater, Shadow
 			if (!LProp || !LProp->IsLightingProperty()) return;
 			NiAlphaProperty* AProp = (NiAlphaProperty*)Geo->GetProperty(NiProperty::PropertyType::kType_Alpha);
 			HasAlphaMask = AProp && (AProp->flags & (NiAlphaProperty::AlphaFlags::ALPHA_BLEND_MASK | NiAlphaProperty::AlphaFlags::TEST_ENABLE_MASK));
-			// FVF-only / skinned excluded. Overlay trees too: ShadowMapInstanced.vso reads only
+			// FVF-only / skinned excluded. Composited trees too: ShadowMapInstanced.vso reads only
 			// POSITION and the instance columns, so it cannot apply the branch wind transform.
-			BaseInstanceable = ModelBuff->VertexDeclaration && !Geo->skinInstance && !OverlayTree;
+			BaseInstanceable = ModelBuff->VertexDeclaration && !Geo->skinInstance && !CollectTreesOnly;
 		}
 		// SpeedTree leaves draw via SetupSpeedTreeLeafShader and are never instanced.
 	}
@@ -1287,24 +1362,28 @@ void ShadowManager::FlushInstanceGroups(D3DXVECTOR4* ShadowData) {
 	}
 }
 
-void ShadowManager::RenderShadowMap(ShadowMapTypeEnum ShadowMapType, SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors, D3DXVECTOR3* At, D3DXVECTOR4* ShadowLightDir, D3DXVECTOR4* ShadowData, bool SkipTerrain) {
+void ShadowManager::RenderShadowMap(ShadowMapTypeEnum ShadowMapType, SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors, D3DXVECTOR3* At, D3DXVECTOR4* ShadowLightDir, D3DXVECTOR4* ShadowData, bool SkipTerrain, IDirect3DSurface9* Target, bool MinBlend) {
 	IDirect3DDevice9* Device = TheRenderManager->device;
 	NiDX9RenderState* RenderState = TheRenderManager->renderState;
-	ScopeTimer profile((ShadowPhase)(Phase_PassNear + (int)ShadowMapType)); // enum order matches Near/Far/Ortho/Skin
+	// Enum order matches Near/Far/Ortho/Skin; composites have their own phase.
+	ScopeTimer profile(MinBlend ? Phase_TreeDraw : (ShadowPhase)(Phase_PassNear + (int)ShadowMapType));
 
-	AlphaEnabled = ShadowsExteriors->AlphaEnabled[ShadowMapType];
+	// Never for composites: they draw only trees, whose leaves alpha-test anyway, and SetupAlphaTexture
+	// misreads a SpeedTree branch's property as a PP lighting one.
+	AlphaEnabled = ShadowsExteriors->AlphaEnabled[ShadowMapType] && !MinBlend;
 	// The caller set up the matrices and culled the pool to this map's frustum.
 	if (!ShadowMapSurface[ShadowMapType]) return;
-	Device->SetRenderTarget(0, ShadowMapSurface[ShadowMapType]);
+	Device->SetRenderTarget(0, Target ? Target : ShadowMapSurface[ShadowMapType]);
 	Device->SetDepthStencilSurface(ShadowMapDepthSurface[ShadowMapType]);
 	Device->SetViewport(&ShadowMapViewPort[ShadowMapType]);
-	Device->Clear(0L, NULL, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, D3DXCOLOR(1.0f, 0.25f, 0.25f, 0.55f), 1.0f, 0L);
+	if (!MinBlend) Device->Clear(0L, NULL, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, D3DXCOLOR(1.0f, 0.25f, 0.25f, 0.55f), 1.0f, 0L);
 	if (!ShadowsExteriors->Enabled[ShadowMapType]) return;
 
-	RenderState->SetRenderState(D3DRS_ZENABLE, D3DZB_TRUE, RenderStateArgs);
-	RenderState->SetRenderState(D3DRS_ZWRITEENABLE, 1, RenderStateArgs);
+	RenderState->SetRenderState(D3DRS_ZENABLE, MinBlend ? D3DZB_FALSE : D3DZB_TRUE, RenderStateArgs);
+	RenderState->SetRenderState(D3DRS_ZWRITEENABLE, MinBlend ? 0 : 1, RenderStateArgs);
 	RenderState->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE, RenderStateArgs);
-	RenderState->SetRenderState(D3DRS_ALPHABLENDENABLE, 0, RenderStateArgs);
+	RenderState->SetRenderState(D3DRS_ALPHABLENDENABLE, MinBlend ? 1 : 0, RenderStateArgs);
+	if (MinBlend) RenderState->SetRenderState(D3DRS_BLENDOP, D3DBLENDOP_MIN, RenderStateArgs);
 	RenderState->SetVertexShader(ShadowMapVertexShader, false);
 	RenderState->SetPixelShader(ShadowMapPixelShader, false);
 	Device->BeginScene();
@@ -1334,6 +1413,10 @@ void ShadowManager::RenderShadowMap(ShadowMapTypeEnum ShadowMapType, SettingsSha
 	}
 	if (UseInstancing) FlushInstanceGroups(ShadowData);
 	Device->EndScene();
+	if (MinBlend) {
+		RenderState->SetRenderState(D3DRS_BLENDOP, D3DBLENDOP_ADD, RenderStateArgs);
+		RenderState->SetRenderState(D3DRS_ALPHABLENDENABLE, 0, RenderStateArgs);
+	}
 }
 
 // The ortho depth map's only consumers are the precipitation effects (Rain/Snow/SnowAccumulation),
@@ -1391,13 +1474,6 @@ void ShadowManager::RenderExteriorShadows() {
 	ScopeTimer profile(Phase_ExtTotal);
 
 	SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors = SelectExteriorShadowSettings();
-	// Latched once here so the near bake and the overlay in this frame always agree on where trees
-	// are drawn; a live INI edit between them would otherwise drop or double them. Requires the
-	// overlay to be able to draw trees at all, since the near bake stops doing it: with MapSkin off
-	// or its Trees form disabled, this would delete near tree shadows rather than animate them.
-	DynamicTrees = ShadowsExteriors->DynamicTrees
-		&& ShadowsExteriors->Enabled[MapSkin]
-		&& ShadowsExteriors->Forms[MapSkin].Trees;
 	D3DXVECTOR4* ShadowData = &TheShaderManager->ShaderConst.Shadow.Data;
 	D3DXVECTOR4* OrthoData  = &TheShaderManager->ShaderConst.Shadow.OrthoData;
 	D3DXVECTOR4  OrthoDir   = D3DXVECTOR4(0.05f, 0.05f, 1.0f, 0.0f);
@@ -1432,6 +1508,8 @@ void ShadowManager::RenderExteriorShadows() {
 
 	if (DoSun) {
 		D3DXVECTOR4* SunDir = &TheShaderManager->ShaderConst.ShadowMap.ShadowLightDir;
+		// Before any bake, so the bakes and composites in this frame agree on where trees are drawn.
+		UpdateDynamicTreeRegions(ShadowsExteriors);
 		// Never-baked regions bake at once so they are never sampled unbaked. In
 		// steady state, bake whichever due region did not bake last, one per frame.
 		if (!ShadowsExteriors->CacheStaticShadows) {
@@ -1473,6 +1551,10 @@ void ShadowManager::RenderExteriorShadows() {
 			}
 			if (TheSettingManager->SettingsShadows.Exteriors.RebakeMovedStatics) RedrawMovedStaticRegions(ShadowsExteriors);
 		}
+
+		// After every bake and redraw, so each live map starts from this frame's static depth.
+		for (int r = 0; r < 2; r++)
+			if (TreesDynamic[r]) CompositeDynamicTrees((ShadowMapTypeEnum)(MapNear + r), ShadowsExteriors);
 
 		RenderActorOverlay(ShadowsExteriors, SunDir);
 
@@ -2100,7 +2182,7 @@ void ShadowManager::SetupSpeedTreeLeafShader(NiGeometry* Geo, D3DXVECTOR4* Shado
 // BLENDINDICES.x; ShadowMap.vso.hlsl reproduces that under TESR_ShadowData.x == 3. Only the matrix
 // palette is needed here -- no per-leaf table, no billboard vectors -- so this costs one
 // SetVertexShaderConstantF per branch draw.
-// It also uploads the tree collision constants, which bend only in the per-frame overlay.
+// It also uploads the tree collision constants, which bend only while compositing dynamic trees.
 void ShadowManager::SetupSpeedTreeBranchShader(NiGeometry* Geo, D3DXVECTOR4* ShadowData) {
 	ShadowData->x = 3.0f;
 	TheRenderManager->device->SetVertexShaderConstantF(67, (float*)kWindMatrixes, 16);
