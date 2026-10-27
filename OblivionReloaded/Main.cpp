@@ -17,6 +17,7 @@
 #include "TreeCollision.h"
 #include "TreeCover.h"
 #include "SunShadowStealth.h"
+#include "Wind.h"
 #include "WeatherSmoothing.h"
 #include "D3D9Hook.h"
 
@@ -60,6 +61,7 @@ extern "C" {
 			CreateTreeCollisionHook();
 			CreateTreeCoverHook();
 			CreateSunShadowStealthHook();
+			CreateWindHook();
 			if (TheSettingManager->SettingsMain.CameraMode.Enabled) CreateCameraModeHook();
 
 			if (TheSettingManager->SettingsMain.EquipmentMode.Enabled) {

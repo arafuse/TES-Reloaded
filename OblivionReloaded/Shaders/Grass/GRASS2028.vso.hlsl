@@ -74,6 +74,7 @@ struct VS_OUTPUT {
 // Code:
 
 #include "Includes/GrassCollision.hlsl"
+#include "Includes/GrassWind.hlsl"
 
 VS_OUTPUT main(VS_INPUT IN) {
     VS_OUTPUT OUT;
@@ -108,7 +109,7 @@ VS_OUTPUT main(VS_INPUT IN) {
     r2.y = dot(r0.wxz, r1.xyz);
     r2.x = dot(r0.xyz, r1.xyz);
     r0.z = r1.z;
-    r0.xy = (((sin(fracr((q0.x / 128) + WindData.w)) * WindData.z) * sqr(IN.LCOLOR_0.w)) * WindData.xy) + r2.xy;
+    r0.xy = (((GrassWindSway(fracr((q0.x / 128) + WindData.w)) * WindData.z) * sqr(IN.LCOLOR_0.w)) * WindData.xy) + r2.xy;
 
     r0.xyz += GrassCollisionDisplacement(InstanceData[0 + IN.LTEXCOORD_1.x].xy, sqr(IN.LCOLOR_0.w));
 

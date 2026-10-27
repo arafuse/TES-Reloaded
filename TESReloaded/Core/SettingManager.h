@@ -584,7 +584,7 @@ struct SettingsBloomStruct {
 
 struct SettingsPrecipitationsStruct {
 	struct RainStruct {
-
+		float Slant;	///< Rain fall-line tilt (horizontal per vertical) at full wind speed; 0 keeps rain vertical
 	};
 	
 	struct SnowStruct {

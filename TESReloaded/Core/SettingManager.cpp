@@ -938,6 +938,8 @@ void SettingManager::LoadSettings() {
 	strcpy(Filename, CurrentPath);
 	strcat(Filename, SettingsPath);
 	strcat(Filename, "Precipitations\\Precipitations.ini");
+	GetPrivateProfileStringA("Rain", "Slant", "1.0", value, SettingStringBuffer, Filename);
+	SettingsPrecipitations.Rain.Slant = atof(value);
 	GetPrivateProfileStringA("Snow", "DepthStep", "2.5", value, SettingStringBuffer, Filename);
 	SettingsPrecipitations.Snow.DepthStep = atof(value);
 	GetPrivateProfileStringA("Snow", "Flakes", "0.5", value, SettingStringBuffer, Filename);
@@ -1659,6 +1661,11 @@ void SettingManager::SaveSettings(const char* Item, const char* Definition, cons
 			WritePrivateProfileStringA("Default", "JitterEnabled", ToString(SettingsTAA.JitterEnabled).c_str(), Filename);
 			WritePrivateProfileStringA("Default", "JitterPattern", ToString(SettingsTAA.JitterPattern).c_str(), Filename);
 		}
+		else if (!strcmp(Definition, "Precipitations")) {
+			WritePrivateProfileStringA("Effects", "Precipitations", ToString(SettingsMain.Effects.Precipitations).c_str(), SettingsMain.Main.MainFile);
+			strcat(Filename, "Precipitations\\Precipitations.ini");
+			WritePrivateProfileStringA("Rain", "Slant", ToString(SettingsPrecipitations.Rain.Slant).c_str(), Filename);
+		}
 		else if (!strcmp(Definition, "SnowAccumulation")) {
 			WritePrivateProfileStringA("Effects", "SnowAccumulation", ToString(SettingsMain.Effects.SnowAccumulation).c_str(), SettingsMain.Main.MainFile);
 			strcat(Filename, "Precipitations\\Precipitations.ini");
@@ -2326,6 +2333,9 @@ SettingsList SettingManager::GetMenuSettings(const char* Item, const char* Defin
 			Settings["MaterialThickness"] = SettingsSkin.MaterialThickness;
 			Settings["RimScalar"] = SettingsSkin.RimScalar;
 			Settings["SpecularPower"] = SettingsSkin.SpecularPower;
+		}
+		else if (!strcmp(Definition, "Precipitations")) {
+			Settings["RainSlant"] = SettingsPrecipitations.Rain.Slant;
 		}
 		else if (!strcmp(Definition, "SnowAccumulation")) {
 			Settings["Amount"] = SettingsPrecipitations.SnowAccumulation.Amount;
@@ -3138,6 +3148,10 @@ void SettingManager::SetMenuSetting(const char* Item, const char* Definition, co
 				SettingsSkin.UseVanillaShaders = Value;
 				TheShaderManager->SwitchShaderStatus("SkinVanilla");
 			}
+		}
+		else if (!strcmp(Definition, "Precipitations")) {
+			if (!strcmp(Setting, "RainSlant"))
+				SettingsPrecipitations.Rain.Slant = Value;
 		}
 		else if (!strcmp(Definition, "SnowAccumulation")) {
 			if (!strcmp(Setting, "Increase"))

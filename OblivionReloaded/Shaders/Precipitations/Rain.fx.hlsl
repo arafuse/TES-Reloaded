@@ -8,6 +8,7 @@ float4x4 TESR_ShadowCameraToLightTransformOrtho;
 float4 TESR_CameraPosition;
 float4 TESR_Tick;
 float4 TESR_RainData;
+float4 TESR_WindData;
 float4 TESR_FogColor;
 float4 TESR_OrthoData;
 
@@ -26,6 +27,14 @@ static const float3x3 p = float3x3(30.323122,30.323122,30.323122,30.323122,30.32
 // Combined world->ortho transform. Both operands are uniforms, so D3DX folds this to a
 // once-per-draw CPU preshader -- lets the occlusion march step incrementally (below).
 static const float4x4 OrthoCombined = mul(TESR_WorldViewProjectionTransform, TESR_ShadowCameraToLightTransformOrtho);
+
+// Streaks are vertical in the cylinder frame. Rotating the wind-tilted rain axis onto +Z (Rodrigues,
+// folded to a preshader) makes them fall downwind; RainData.y is the tilt at full wind speed.
+static const float RainSlant = TESR_RainData.y * TESR_WindData.z;
+static const float3 RainAxis = normalize(float3(-RainSlant * TESR_WindData.xy, 1.0f));
+static const float2 RainTurn = float2(RainAxis.y, -RainAxis.x);
+static const float3x3 RainSkew = float3x3(0.0f, 0.0f, RainTurn.y, 0.0f, 0.0f, -RainTurn.x, -RainTurn.y, RainTurn.x, 0.0f);
+static const float3x3 RainRotation = float3x3(1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f) + RainSkew + mul(RainSkew, RainSkew) / (1.0f + RainAxis.z);
 
 #define DEPTH 8.0
 #define SPEED 8.0
@@ -130,7 +139,7 @@ float4 Rain( VSOUT IN ) : COLOR0
 	float edge;
 	float sn = 0.0f;
 	int l = TESR_RainData.x * RainLayers;
-	float2 uv = cylindrical(world);
+	float2 uv = cylindrical(mul(RainRotation, world));
 	
 	for (int i = 3; i < l; i++) {
 		q = uv * (1.0f + i * DEPTH);

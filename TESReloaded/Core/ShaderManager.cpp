@@ -8,6 +8,7 @@
 #include <filesystem>
 #include "TreeCover.h"
 #include "SunShadowStealth.h"
+#include "Wind.h"
 #define EFFECTQUADFORMAT D3DFVF_XYZ | D3DFVF_TEX1
 
 #if defined(NEWVEGAS)
@@ -283,6 +284,8 @@ bool ShaderProgram::SetConstantTableValue1(LPCSTR Name, UInt32 Index) {
 		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.Precipitations.RainData;
 	else if (!strcmp(Name, "TESR_SnowData"))
 		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.Precipitations.SnowData;
+	else if (!strcmp(Name, "TESR_WindData"))
+		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.WindData;
 	else if (!strcmp(Name, "TESR_WorldTransform"))
 		FloatShaderValues[Index].Value = (D3DXVECTOR4*)&TheRenderManager->worldMatrix;
 	else if (!strcmp(Name, "TESR_ViewTransform"))
@@ -1858,6 +1861,7 @@ void ShaderManager::UpdateWetWorld(ShaderConstants& ShaderConst, TESWeather* cur
 
 void ShaderManager::UpdatePrecipitation(ShaderConstants& ShaderConst, TESWeather* currentWeather, TESWeather* previousWeather, float weatherPercent) {
 	const float RainRampStart = 0.5f;
+	ShaderConst.Precipitations.RainData.y = TheSettingManager->SettingsPrecipitations.Rain.Slant;
 	if (currentWeather->weatherType == TESWeather::WeatherType::kType_Rainy) {
 		if (weatherPercent > RainRampStart) {
 			ShaderConst.Precipitations.RainData.x = (weatherPercent - RainRampStart) / (1.0f - RainRampStart);
@@ -2662,8 +2666,10 @@ void ShaderManager::UpdateConstants() {
 		UpdateCelestialDirections(ShaderConst, SunRoot, Masser, Secunda, currentClimate, lastGameTime);
 		UpdateMoonPhaseCoeff(ShaderConst, currentClimate, GameDay);
 
-		if (isExteriorLike)
+		if (isExteriorLike) {
 			dayPercent = UpdateExteriorLighting(ShaderConst, currentWeather, previousWeather, weatherPercent);
+			UpdateWind(ShaderConst, currentWeather);
+		}
 		else
 			UpdateInteriorLighting(ShaderConst, currentCell, InteriorLighting, isFullyInitialized, InitFrameCount);
 
