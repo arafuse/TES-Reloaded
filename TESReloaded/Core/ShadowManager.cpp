@@ -761,6 +761,26 @@ void ShadowManager::SetupShadowMapMatrices(ShadowMapTypeEnum ShadowMapType, Sett
 	GetShadowFrustum(ShadowMapType, &TheShaderManager->ShaderConst.ShadowMap.ShadowViewProj);
 }
 
+void ShadowManager::SetupOrthoMapMatrices(SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors, const D3DXVECTOR3& At, const D3DXVECTOR2& Shear) {
+	float FarPlane = ShadowsExteriors->ShadowMapFarPlane;
+	float Radius = ShadowsExteriors->ShadowMapRadius[MapOrtho];
+	D3DXVECTOR3 Eye(At.x, At.y, At.z + FarPlane);
+	D3DXVECTOR3 North(0.0f, 1.0f, 0.0f);
+	D3DXMATRIX ShearAboutAt, View, Proj;
+	D3DXMatrixIdentity(&ShearAboutAt);
+	ShearAboutAt._31 = Shear.x;
+	ShearAboutAt._32 = Shear.y;
+	ShearAboutAt._41 = -Shear.x * At.z;
+	ShearAboutAt._42 = -Shear.y * At.z;
+	D3DXMatrixLookAtRH(&View, &Eye, &At, &North);
+	D3DXMatrixOrthoRH(&Proj, 2.0f * Radius, 2.0f * Radius, 0.0f, 2.0f * FarPlane);
+	TheShaderManager->ShaderConst.ShadowMap.ShadowViewProj = ShearAboutAt * View * Proj;
+	TheShaderManager->ShaderConst.ShadowMap.ShadowCameraToLight[MapOrtho] = TheRenderManager->InvViewProjMatrix * TheShaderManager->ShaderConst.ShadowMap.ShadowViewProj;
+	BillboardRight = { View._11, View._21, View._31, 0.0f };
+	BillboardUp    = { View._12, View._22, View._32, 0.0f };
+	GetShadowFrustum(MapOrtho, &TheShaderManager->ShaderConst.ShadowMap.ShadowViewProj);
+}
+
 // Anchor-relative variant of SetupShadowMapMatrices for the cached directional regions. The light matrix
 // is built with the snapped anchor at the ORIGIN (not absolute world coords) so all bake/sample math stays
 // near zero — using absolute world coords (~1e5) here destroys float32 precision and flickers shadow edges.
@@ -1437,6 +1457,20 @@ bool ShadowManager::OrthoNeeded() {
 	return false;
 }
 
+// Horizontal drift per unit of fall height for the ortho map, matching the slant Rain/Snow draw. Rain and
+// snow share the one map, so their slants blend by intensity; with neither falling (snow accumulation
+// only) the snow slant applies.
+static D3DXVECTOR2 GetOrthoShear() {
+	const ShaderConstants& Const = TheShaderManager->ShaderConst;
+	float Rain = Const.Precipitations.RainData.x;
+	float Snow = Const.Precipitations.SnowData.x;
+	float Slant = Const.Precipitations.SlantData.y;
+	if (Rain + Snow > 0.0f)
+		Slant = (Rain * Const.Precipitations.SlantData.x + Snow * Const.Precipitations.SlantData.y) / (Rain + Snow);
+	float Drift = Slant * Const.WindData.z;
+	return D3DXVECTOR2(Const.WindData.x * Drift, Const.WindData.y * Drift);
+}
+
 // Directional sun shadows only make sense in an exterior worldspace with the sun above the
 // horizon. ShadowLightDir.z is the sun's vertical component (published by ShaderManager); below a
 // small threshold (dusk/dawn/night) there is effectively no sun to cast shadows, so skip the whole
@@ -1451,8 +1485,8 @@ bool ShadowManager::SunShadowNeeded() {
 
 // Exterior shadow pass. Renders two independent, separately-gated things:
 //  - Ortho depth map (DoOrtho): sampled by the precipitation effects (Rain/Snow/SnowAccumulation)
-//    for occlusion; also publishes ShaderConst.ShadowMap.ShadowCameraToLight[MapOrtho]
-//    (-> TESR_ShadowCameraToLightTransformOrtho) via SetupShadowMapMatrices.
+//    for occlusion along the wind slant; also publishes ShaderConst.ShadowMap.ShadowCameraToLight[MapOrtho]
+//    (-> TESR_ShadowCameraToLightTransformOrtho) via SetupOrthoMapMatrices.
 //  - Directional sun maps MapNear/MapFar (DoSun): per-frame directional shadows, applied in image
 //    space by ShadowsExteriors.fx, plus the MapSkin per-frame actor overlay (RenderActorOverlay).
 // Point-light cube shadows are a separate pass (RenderPointShadows, driven from RenderShadowMaps).
@@ -1476,7 +1510,6 @@ void ShadowManager::RenderExteriorShadows() {
 	SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors = SelectExteriorShadowSettings();
 	D3DXVECTOR4* ShadowData = &TheShaderManager->ShaderConst.Shadow.Data;
 	D3DXVECTOR4* OrthoData  = &TheShaderManager->ShaderConst.Shadow.OrthoData;
-	D3DXVECTOR4  OrthoDir   = D3DXVECTOR4(0.05f, 0.05f, 1.0f, 0.0f);
 
 	CurrentVertex = ShadowMapVertex;
 	CurrentPixel  = ShadowMapPixel;
@@ -1486,11 +1519,11 @@ void ShadowManager::RenderExteriorShadows() {
 
 	if (DoOrtho) {
 		// Matrices first: collection culls against ShadowMapFrustum[MapOrtho].
-		SetupShadowMapMatrices(MapOrtho, ShadowsExteriors, &At, &OrthoDir);
+		SetupOrthoMapMatrices(ShadowsExteriors, At, GetOrthoShear());
 
 		{ ScopeTimer profileBuild(Phase_BuildGeoItems); BuildExteriorGeoItems(ShadowsExteriors, MapOrtho); }
 
-		RenderShadowMap(MapOrtho, ShadowsExteriors, &At, &OrthoDir, ShadowData);
+		RenderShadowMap(MapOrtho, ShadowsExteriors, &At, NULL, ShadowData);
 
 		OrthoData->z = 1.0f / (float)ShadowsExteriors->ShadowMapSize[MapOrtho];
 		// Precipitation occlusion bias in normalized ortho depth (the projection

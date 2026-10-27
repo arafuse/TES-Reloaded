@@ -89,6 +89,10 @@ public:
 	void					SetupAlphaTexture(NiGeometry* Geo, BSShaderProperty* LProp, D3DXVECTOR4* ShadowData);
 	void					RenderSkinnedGeo(NiGeometry* Geo, D3DXVECTOR4* ShadowData);
 	void					SetupShadowMapMatrices(ShadowMapTypeEnum ShadowMapType, SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors, D3DXVECTOR3* At, D3DXVECTOR4* ShadowLightDir);
+	/// Publishes the precipitation occlusion map's projection: top-down over At, sheared so each point
+	/// lands where precipitation passing through it falls (Shear = horizontal drift per unit of height).
+	/// The texel grid stays world-aligned whatever the wind, and is exactly vertical with no wind.
+	void					SetupOrthoMapMatrices(SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors, const D3DXVECTOR3& At, const D3DXVECTOR2& Shear);
 	void					SetupCachedRegionMatrices(ShadowMapTypeEnum ShadowMapType, SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors, D3DXVECTOR4* SunDir, const D3DXVECTOR3& Anchor);
 	// Publishes a cached region's anchor-relative projection for drawing into it (ShadowViewProj, culling
 	// frustum, leaf billboard vectors, CollectAnchor) without touching the region's bake state.
