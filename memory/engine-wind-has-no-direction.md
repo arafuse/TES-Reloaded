@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 43d8c7eb-ca8c-4b8d-b6c4-e659d55005e6
-  modified: 2026-10-26T23:51:54.084Z
+  modified: 2026-10-27T23:37:30.176Z
 ---
 
 Disassembly findings (2026-10-26), asked while scoping directional rain. You can't derive a wind
@@ -34,8 +34,9 @@ everything that should agree.
   TallGrassShader vtable slot 12 at 0xA92060) and substitutes the wind axis. The downwind lean is
   `Grass/Includes/GrassWind.hlsl` (`sin*0.6 + 0.5`), hardcoded because grass has no free constant
   ([[grass-vs-constant-budget]]).
-- Rain.fx rotates the view ray by a Rodrigues matrix (wind-tilted axis onto +Z, folded into the
-  preshader) before `cylindrical()`; tilt = `[Rain] Slant` × wind speed. The ortho occlusion march
-  still tests straight down, so slanted rain under overhangs is approximate.
+- Rain.fx and Snow.fx rotate the view ray by `WindSlantRotation` (`Precipitations/PrecipitationWind.hlsl`,
+  Rodrigues: wind-tilted axis onto +Z, folded into the preshader) before `cylindrical()`. Tilt =
+  `TESR_PrecipitationSlant` (x = `[Rain] Slant`, y = `[Snow] Slant`) × wind speed. The ortho
+  occlusion march still tests straight down, so slanted precipitation under overhangs is approximate.
 - Not done: trees (would need the per-tree hooks in [[speedtree-shader-variants]], displaced
-  identically in every multipass variant) and Snow.fx (all four SnowData slots are taken).
+  identically in every multipass variant).
