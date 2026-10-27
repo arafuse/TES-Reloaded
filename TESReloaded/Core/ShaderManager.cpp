@@ -284,6 +284,8 @@ bool ShaderProgram::SetConstantTableValue1(LPCSTR Name, UInt32 Index) {
 		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.Precipitations.RainData;
 	else if (!strcmp(Name, "TESR_SnowData"))
 		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.Precipitations.SnowData;
+	else if (!strcmp(Name, "TESR_PrecipitationSlant"))
+		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.Precipitations.SlantData;
 	else if (!strcmp(Name, "TESR_WindData"))
 		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.WindData;
 	else if (!strcmp(Name, "TESR_WorldTransform"))
@@ -1861,7 +1863,8 @@ void ShaderManager::UpdateWetWorld(ShaderConstants& ShaderConst, TESWeather* cur
 
 void ShaderManager::UpdatePrecipitation(ShaderConstants& ShaderConst, TESWeather* currentWeather, TESWeather* previousWeather, float weatherPercent) {
 	const float RainRampStart = 0.5f;
-	ShaderConst.Precipitations.RainData.y = TheSettingManager->SettingsPrecipitations.Rain.Slant;
+	ShaderConst.Precipitations.SlantData.x = TheSettingManager->SettingsPrecipitations.Rain.Slant;
+	ShaderConst.Precipitations.SlantData.y = TheSettingManager->SettingsPrecipitations.Snow.Slant;
 	if (currentWeather->weatherType == TESWeather::WeatherType::kType_Rainy) {
 		if (weatherPercent > RainRampStart) {
 			ShaderConst.Precipitations.RainData.x = (weatherPercent - RainRampStart) / (1.0f - RainRampStart);

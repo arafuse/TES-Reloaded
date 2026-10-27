@@ -133,6 +133,7 @@ struct ShaderConstants {
 	struct PrecipitationsStruct {
 		D3DXVECTOR4		RainData;
 		D3DXVECTOR4		SnowData;
+		D3DXVECTOR4		SlantData;	///< x = rain slant, y = snow slant (fall-line tilt at full wind speed)
 	};
 	struct WaterLensStruct {
 		D3DXVECTOR4		Time;

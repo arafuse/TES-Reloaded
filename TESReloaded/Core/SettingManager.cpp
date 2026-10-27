@@ -946,6 +946,8 @@ void SettingManager::LoadSettings() {
 	SettingsPrecipitations.Snow.Flakes = atof(value);
 	GetPrivateProfileStringA("Snow", "Speed", "1.8", value, SettingStringBuffer, Filename);
 	SettingsPrecipitations.Snow.Speed = atof(value);
+	GetPrivateProfileStringA("Snow", "Slant", "1.5", value, SettingStringBuffer, Filename);
+	SettingsPrecipitations.Snow.Slant = atof(value);
 	GetPrivateProfileStringA("WetWorld", "Amount", "1.0", value, SettingStringBuffer, Filename);
 	SettingsPrecipitations.WetWorld.Amount = atof(value);
 	GetPrivateProfileStringA("WetWorld", "Increase", "0.001", value, SettingStringBuffer, Filename);
@@ -1665,6 +1667,7 @@ void SettingManager::SaveSettings(const char* Item, const char* Definition, cons
 			WritePrivateProfileStringA("Effects", "Precipitations", ToString(SettingsMain.Effects.Precipitations).c_str(), SettingsMain.Main.MainFile);
 			strcat(Filename, "Precipitations\\Precipitations.ini");
 			WritePrivateProfileStringA("Rain", "Slant", ToString(SettingsPrecipitations.Rain.Slant).c_str(), Filename);
+			WritePrivateProfileStringA("Snow", "Slant", ToString(SettingsPrecipitations.Snow.Slant).c_str(), Filename);
 		}
 		else if (!strcmp(Definition, "SnowAccumulation")) {
 			WritePrivateProfileStringA("Effects", "SnowAccumulation", ToString(SettingsMain.Effects.SnowAccumulation).c_str(), SettingsMain.Main.MainFile);
@@ -2336,6 +2339,7 @@ SettingsList SettingManager::GetMenuSettings(const char* Item, const char* Defin
 		}
 		else if (!strcmp(Definition, "Precipitations")) {
 			Settings["RainSlant"] = SettingsPrecipitations.Rain.Slant;
+			Settings["SnowSlant"] = SettingsPrecipitations.Snow.Slant;
 		}
 		else if (!strcmp(Definition, "SnowAccumulation")) {
 			Settings["Amount"] = SettingsPrecipitations.SnowAccumulation.Amount;
@@ -3152,6 +3156,8 @@ void SettingManager::SetMenuSetting(const char* Item, const char* Definition, co
 		else if (!strcmp(Definition, "Precipitations")) {
 			if (!strcmp(Setting, "RainSlant"))
 				SettingsPrecipitations.Rain.Slant = Value;
+			else if (!strcmp(Setting, "SnowSlant"))
+				SettingsPrecipitations.Snow.Slant = Value;
 		}
 		else if (!strcmp(Definition, "SnowAccumulation")) {
 			if (!strcmp(Setting, "Increase"))

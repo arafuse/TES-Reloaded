@@ -591,6 +591,7 @@ struct SettingsPrecipitationsStruct {
 		float DepthStep;
 		float Flakes;
 		float Speed;
+		float Slant;	///< Snowfall tilt (horizontal per vertical) at full wind speed; 0 keeps snow vertical
 	};
 	
 	struct WetWorldStruct {
