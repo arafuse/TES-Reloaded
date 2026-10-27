@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 43d8c7eb-ca8c-4b8d-b6c4-e659d55005e6
-  modified: 2026-10-27T23:37:30.176Z
+  modified: 2026-10-27T23:45:17.178Z
 ---
 
 Disassembly findings (2026-10-26), asked while scoping directional rain. You can't derive a wind
@@ -36,7 +36,12 @@ everything that should agree.
   ([[grass-vs-constant-budget]]).
 - Rain.fx and Snow.fx rotate the view ray by `WindSlantRotation` (`Precipitations/PrecipitationWind.hlsl`,
   Rodrigues: wind-tilted axis onto +Z, folded into the preshader) before `cylindrical()`. Tilt =
-  `TESR_PrecipitationSlant` (x = `[Rain] Slant`, y = `[Snow] Slant`) × wind speed. The ortho
-  occlusion march still tests straight down, so slanted precipitation under overhangs is approximate.
+  `TESR_PrecipitationSlant` (x = `[Rain] Slant`, y = `[Snow] Slant`) × wind speed.
+- Occlusion matches the slant: `ShadowManager::SetupOrthoMapMatrices` renders the ortho map top-down,
+  SHEARED by drift = slant × speed × wind dir (not rotated), so the texel grid stays world-aligned and
+  zero wind is exactly vertical. The old map used a near-vertical (0.05,0.05,1) lookAt to dodge the
+  up=Z degeneracy, which biased occlusion about 4° toward NE. There is one map for all precipitation:
+  `GetOrthoShear` blends the rain and snow slants by RainData.x/SnowData.x, and SnowAccumulation's
+  per-frame mask follows the snow slant, so clear patches slide if the wind turns after snowfall.
 - Not done: trees (would need the per-tree hooks in [[speedtree-shader-variants]], displaced
   identically in every multipass variant).
