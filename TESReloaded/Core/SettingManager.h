@@ -416,6 +416,7 @@ struct SettingsGrassStruct {
 	bool WindEnabled;
 	int GrassDensity;
 	float WindCoefficient;
+	float SwaySpeed;					///< Grass sway animation speed; 1 matches the vanilla sway at timescale 30, at any timescale
 	float ScaleX;
 	float ScaleY;
 	float ScaleZ;

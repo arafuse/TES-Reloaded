@@ -5,13 +5,15 @@
 /// heading up to 90 degrees from the last, the wind turns toward it over real time, and it drifts
 /// slowly with the game clock.
 
-/// Points the engine's grass sway axis (TallGrassShader, hardcoded world north) at the wind. Always
-/// installed.
+/// Points the engine's grass sway axis (TallGrassShader, hardcoded world north) at the wind, and drives
+/// the grass sway phase from game frame time instead of the game clock, so the sway speed no longer
+/// follows the timescale. Always installed.
 void CreateWindHook();
 
 /// Advances the wind and writes it to ShaderConst.WindData as (direction x, direction y, speed 0-1, 0),
-/// where the direction is the unit horizontal vector the wind blows toward. Main thread, once per frame
-/// in exteriors, after the weather wind speed is blended.
+/// where the direction is the unit horizontal vector the wind blows toward, and advances the grass sway
+/// clock by the frame time (0 in menus) at the speed of timescale 30 times Grass.ini SwaySpeed. Main
+/// thread, once per frame in exteriors, after the weather wind speed is blended.
 void UpdateWind(ShaderConstants& ShaderConst, TESWeather* CurrentWeather);
 
 /// The direction the wind blows toward, in degrees measured like GetAngle Z (0 = north, 90 = east),
