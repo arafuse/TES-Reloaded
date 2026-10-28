@@ -15,7 +15,12 @@ carries only `windSpeed` (Skyrim added a direction).
 - **Speed:** `Sky::windSpeed` (+0xC0) is copied to 0xB2C670 in sub_53FF90 (0x540052). It drives both
   grass and trees. Our `ShaderConst.currentwindSpeed` is the same value lerped across transitions.
 - **Grass `WindData` (c4)** is the global block 0xB460B0..BC. z (0xB460B8) = lerp(GrassWindMagnitudeMin
-  0xB46064, Max 0xB46068, 0xB2C670), set in sub_7C78D0 at 0x7C7CC5. w (0xB460BC) = phase, in sub_7E8E10.
+  0xB46064, Max 0xB46068, 0xB2C670), set in sub_7C78D0 at 0x7C7CC5. w (0xB460BC) = phase, in sub_7E8E10
+  (TallGrassShader slot 10, 0xA92058): `fmod(t / 3600 x 2pi x Rate, 2pi)`, Rate = `[[property+0x9C]+0x30]`
+  (esi at the call, sway cycles per game hour), t = `call [0xB42D78](0, 1)` at 0x7E90AE. 0xB42D78 is the
+  engine clock sub_405290(bool frame, bool day): (1,0) = frame seconds 0xB33E9C (0 in menu mode, the
+  TES_OnIdle world delta, which SpeedTree wind uses), (0,1) = GameHour x 3600. So vanilla grass sways
+  at a speed proportional to the timescale and jumps at midnight.
   **x/y (0xB460B0/B4) are written by sub_7E6710 (0x7E6829/0x7E6833): the world vector (0,1,0) is
   multiplied by the inverse of the patch's world rotation×scale and normalised**, giving world NORTH in
   model space. The VS applies `sin(...) * WindData.z * WindData.xy`, a symmetric swing along the
@@ -50,5 +55,8 @@ everything that should agree.
 - OBSE `GetWeatherWindDirection` returns `GetWindHeading()`: the heading the wind blows TOWARD, in
   degrees like GetAngle Z (`atan2(x, y)`, 0 = north, 90 = east). That is not the meteorological
   "from" convention.
+- Grass sway clock (`CreateWindHook`): the 0x7E90AE call (6 bytes, NOP the 6th) goes to a naked thunk
+  that passes esi; it returns a double-precision clock wrapped to one cycle of that Rate. The clock
+  advances in `UpdateWind` by frame seconds x 30 (reference timescale) x Grass.ini `SwaySpeed`.
 - Not done: trees (would need the per-tree hooks in [[speedtree-shader-variants]], displaced
   identically in every multipass variant).
