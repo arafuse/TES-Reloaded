@@ -80,6 +80,9 @@
     <ClInclude Include="..\TESReloaded\Core\Wind.h">
       <Filter>Core</Filter>
     </ClInclude>
+    <ClInclude Include="..\TESReloaded\Core\RainProbe.h">
+      <Filter>Core</Filter>
+    </ClInclude>
     <ClInclude Include="..\TESReloaded\Core\WeatherSmoothing.h">
       <Filter>Core</Filter>
     </ClInclude>
@@ -212,6 +215,9 @@
       <Filter>Core</Filter>
     </ClCompile>
     <ClCompile Include="..\TESReloaded\Core\Wind.cpp">
+      <Filter>Core</Filter>
+    </ClCompile>
+    <ClCompile Include="..\TESReloaded\Core\RainProbe.cpp">
       <Filter>Core</Filter>
     </ClCompile>
     <ClCompile Include="..\TESReloaded\Core\WeatherSmoothing.cpp">

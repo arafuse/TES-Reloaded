@@ -79,3 +79,12 @@ void UpdateWind(ShaderConstants& ShaderConst, TESWeather* CurrentWeather) {
 	ShaderConst.WindData.w = 0.0f;
 
 }
+
+float GetWindHeading() {
+
+	if (!WindInitialized) return 0.0f;
+	const D3DXVECTOR4& Wind = TheShaderManager->ShaderConst.WindData;
+	float Heading = D3DXToDegree(atan2f(Wind.x, Wind.y));
+	return Heading < 0.0f ? Heading + 360.0f : Heading;
+
+}

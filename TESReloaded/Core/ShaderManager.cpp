@@ -9,6 +9,7 @@
 #include "TreeCover.h"
 #include "SunShadowStealth.h"
 #include "Wind.h"
+#include "RainProbe.h"
 #define EFFECTQUADFORMAT D3DFVF_XYZ | D3DFVF_TEX1
 
 #if defined(NEWVEGAS)
@@ -2690,6 +2691,7 @@ void ShaderManager::UpdateConstants() {
 
 	UpdateTreeCover();
 	UpdateSunShadowStealth();
+	UpdateRainProbe();
 
 	if (TheSettingManager->SettingsMain.Shaders.POM)     UpdatePOM(ShaderConst);
 	if (TheSettingManager->SettingsMain.Shaders.Terrain) UpdateTerrain(ShaderConst);
@@ -3372,6 +3374,7 @@ void ShaderManager::RenderEffects(IDirect3DSurface9* RenderTarget) {
 		if (Effects->Precipitations && isExteriorLike) {
 			if (ShaderConst.Precipitations.RainData.x > 0.0f) {
 				RunEffect(RainEffect, Device, RenderTarget, false, false);
+				RenderRainProbe(Device);
 			}
 			if (ShaderConst.Precipitations.SnowData.x > 0.0f) {
 				RunEffect(SnowEffect, Device, RenderTarget, false, false);

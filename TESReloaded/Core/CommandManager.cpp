@@ -1,6 +1,8 @@
 #include "PluginVersion.h"
 #include "WeatherMode.h"
 #include "FormHook.h"
+#include "RainProbe.h"
+#include "Wind.h"
 
 #if defined(NEWVEGAS)
 #define CommandPrefix "NVR"
@@ -73,6 +75,22 @@ static bool CommandExecuter_GetWeatherName(CommandArgs Args) {
 }
 static CommandInfo CommandInfo_GetWeatherName = { CommandPrefix"GetWeatherName", "", 0, "Returns the plugin version (console command only)", 0, 0, NULL, CommandExecuter_GetWeatherName, NULL, NULL, 0 };
 
+static bool CommandExecuter_IsRainHittingPlayer(CommandArgs Args) {
+
+	TheCommandManager->Commands.IsRainHittingPlayer(Args.result);
+	return true;
+
+}
+static CommandInfo CommandInfo_IsRainHittingPlayer = { "IsRainHittingPlayer", "", 0, "Returns 1 if falling rain reaches the player (not sheltered along the wind slant), otherwise 0", 0, 0, NULL, CommandExecuter_IsRainHittingPlayer, NULL, NULL, 0 };
+
+static bool CommandExecuter_GetWeatherWindDirection(CommandArgs Args) {
+
+	TheCommandManager->Commands.GetWeatherWindDirection(Args.result);
+	return true;
+
+}
+static CommandInfo CommandInfo_GetWeatherWindDirection = { "GetWeatherWindDirection", "", 0, "Returns the heading the wind blows toward in degrees, like GetAngle Z (0 = north, 90 = east)", 0, 0, NULL, CommandExecuter_GetWeatherWindDirection, NULL, NULL, 0 };
+
 CommandManager::CommandManager() {
 
 	Logger::Log("Starting the command manager...");
@@ -89,6 +107,8 @@ void CommandManager::AddCommands(const PluginInterface* Interface) {
 	Interface->RegisterCommand(&CommandInfo_SetExtraEffectEnabled);
 	Interface->RegisterCommand(&CommandInfo_SetCustomConstant);
 	Interface->RegisterCommand(&CommandInfo_GetWeatherName);
+	Interface->RegisterCommand(&CommandInfo_IsRainHittingPlayer); // append only: opcodes are assigned in order
+	Interface->RegisterCommand(&CommandInfo_GetWeatherWindDirection);
 
 }
 #elif defined (SKYRIM)
@@ -219,5 +239,19 @@ void CommandManager::PluginCommands::GetWeatherName(double* result) {
 		PrintToConsole(s.c_str());
 	}
 	*result = 1;
+
+}
+
+void CommandManager::PluginCommands::IsRainHittingPlayer(double* result) {
+
+	*result = ::IsRainHittingPlayer() ? 1 : 0;
+	if (MenuManager->IsActive(Menu::MenuType::kMenuType_Console)) PrintToConsole("IsRainHittingPlayer >> %.0f", *result);
+
+}
+
+void CommandManager::PluginCommands::GetWeatherWindDirection(double* result) {
+
+	*result = GetWindHeading();
+	if (MenuManager->IsActive(Menu::MenuType::kMenuType_Console)) PrintToConsole("GetWeatherWindDirection >> %.1f", *result);
 
 }

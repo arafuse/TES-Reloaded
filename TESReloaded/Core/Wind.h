@@ -13,3 +13,7 @@ void CreateWindHook();
 /// where the direction is the unit horizontal vector the wind blows toward. Main thread, once per frame
 /// in exteriors, after the weather wind speed is blended.
 void UpdateWind(ShaderConstants& ShaderConst, TESWeather* CurrentWeather);
+
+/// The direction the wind blows toward, in degrees measured like GetAngle Z (0 = north, 90 = east),
+/// in [0, 360). 0 until the first exterior frame; interiors keep the last exterior value.
+float GetWindHeading();
