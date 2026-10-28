@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 43d8c7eb-ca8c-4b8d-b6c4-e659d55005e6
-  modified: 2026-10-27T23:45:17.178Z
+  modified: 2026-10-28T00:02:14.984Z
 ---
 
 Disassembly findings (2026-10-26), asked while scoping directional rain. You can't derive a wind
@@ -43,5 +43,12 @@ everything that should agree.
   up=Z degeneracy, which biased occlusion about 4° toward NE. There is one map for all precipitation:
   `GetOrthoShear` blends the rain and snow slants by RainData.x/SnowData.x, and SnowAccumulation's
   per-frame mask follows the snow slant, so clear patches slide if the wind turns after snowfall.
+- OBSE `IsRainHittingPlayer` (`RainProbe.cpp`, `Precipitations/RainProbe.fx`): an 8-point GPU probe of
+  the ortho map, drawn right after RainEffect in RenderEffects and read back via an event-query ring
+  (the SunShadowStealth pattern). Points are pushed up the rain fall line out of a body capsule. It is
+  registered LAST in AddCommands (opcodes come from base 0x3000 in registration order, so append only).
+- OBSE `GetWeatherWindDirection` returns `GetWindHeading()`: the heading the wind blows TOWARD, in
+  degrees like GetAngle Z (`atan2(x, y)`, 0 = north, 90 = east). That is not the meteorological
+  "from" convention.
 - Not done: trees (would need the per-tree hooks in [[speedtree-shader-variants]], displaced
   identically in every multipass variant).
