@@ -50,7 +50,9 @@ everything that should agree.
   per-frame mask follows the snow slant, so clear patches slide if the wind turns after snowfall.
 - OBSE `IsRainHittingPlayer` (`RainProbe.cpp`, `Precipitations/RainProbe.fx`): an 8-point GPU probe of
   the ortho map, drawn right after RainEffect in RenderEffects and read back via an event-query ring
-  (the SunShadowStealth pattern). Points are pushed up the rain fall line out of a body capsule. It is
+  (the SunShadowStealth pattern). Points are pushed up the rain fall line out of a body capsule. The
+  probe runs only with `[Rain] IsRainHittingPlayer = 1` in Precipitations.ini (default 0, which also
+  makes the command return 0). It is
   registered LAST in AddCommands (opcodes come from base 0x3000 in registration order, so append only).
 - OBSE `GetWeatherWindDirection` returns `GetWindHeading()`: the heading the wind blows TOWARD, in
   degrees like GetAngle Z (`atan2(x, y)`, 0 = north, 90 = east). That is not the meteorological
