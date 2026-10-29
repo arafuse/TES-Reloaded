@@ -95,7 +95,7 @@ Always installed: WeatherMode, Animation (plus the core hooks above).
 
 Installed from `Main.cpp` based on INI settings: MemoryManagement, RagdollCollision (`Main.RagdollActorCollision`), WeatherSmoothing (`Main.WeatherMinTransitionTime > 0`), GrassMode, CameraMode, EquipmentMode (`CreateEquipmentHook` in EquipmentManager.cpp), MountedCombat (requires EquipmentMode), SleepingMode, Dodge, FlyCam, D3D9Hook (`Develop.LogShaders`).
 
-Other Core modules: WindowedMode (applied from a setting in SettingManager), PluginVersion, FrameProfiler (per-bucket render timing, `Develop.ProfileFrame`), SampleProfiler (main-thread sampling profiler, `Develop.ProfileSampler`).
+Other Core modules: CoSave (the OBSE `.obse` co-save; every saved record goes through it), WindowedMode (applied from a setting in SettingManager), PluginVersion, FrameProfiler (per-bucket render timing, `Develop.ProfileFrame`), SampleProfiler (main-thread sampling profiler, `Develop.ProfileSampler`).
 
 ### Multi-Game Conditionals
 

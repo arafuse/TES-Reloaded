@@ -60,5 +60,10 @@ everything that should agree.
 - Grass sway clock (`CreateWindHook`): the 0x7E90AE call (6 bytes, NOP the 6th) goes to a naked thunk
   that passes esi; it returns a double-precision clock wrapped to one cycle of that Rate. The clock
   advances in `UpdateWind` by frame seconds x 30 (reference timescale) x Grass.ini `SwaySpeed`.
+- Persisted in the OBSE co-save (`CoSave.cpp`, record 'WIND' v1 = `WindState`: heading, target,
+  weather refID run through ResolveRefID, last emitted WindData.xy). Without the weather refID, the
+  first frame after a load would see a "new" weather and turn up to 90°. A save without the record,
+  or a new game, resets to uninitialized (fresh roll). `WindWeather` is a refID, not a pointer, for this.
+  OBSE allows ONE save/load/new-game callback per plugin, so future records go in CoSave.cpp too.
 - Not done: trees (would need the per-tree hooks in [[speedtree-shader-variants]], displaced
   identically in every multipass variant).
