@@ -19,3 +19,21 @@ void UpdateWind(ShaderConstants& ShaderConst, TESWeather* CurrentWeather);
 /// The direction the wind blows toward, in degrees measured like GetAngle Z (0 = north, 90 = east),
 /// in [0, 360). 0 until the first exterior frame; interiors keep the last exterior value.
 float GetWindHeading();
+
+/// The wind as stored in the OBSE co-save, so a loaded game resumes the wind it was saved with instead
+/// of rolling a new one. Its layout is the record format: change it only with a new record version.
+struct WindState {
+	float	Heading;		///< Radians, the heading the wind is turning from
+	float	Target;			///< Radians, the heading it is turning toward
+	UInt32	WeatherRefID;	///< Weather the target was picked for, so reloading in it does not turn the wind
+	float	DirectionX;		///< Last direction written to WindData, drift included, so interiors report it
+	float	DirectionY;
+};
+
+/// Fills State and returns true once the wind has a direction; false before the first exterior frame.
+bool GetWindState(WindState& State);
+
+/// Restores a saved wind, with WeatherRefID already resolved against the current load order (0 if the
+/// weather's plugin is gone, which turns the wind on the next exterior frame). NULL forgets the wind,
+/// so the next exterior frame picks a fresh heading as on a first load.
+void SetWindState(const WindState* State);

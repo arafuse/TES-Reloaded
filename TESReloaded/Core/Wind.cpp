@@ -17,7 +17,7 @@ typedef float (__cdecl* EngineClockFunction)(bool FrameSeconds, bool GameDaySeco
 static EngineClockFunction* const kEngineClock = (EngineClockFunction*)0x00B42D78;
 
 static bool			WindInitialized	= false;
-static TESWeather*	WindWeather		= NULL;
+static UInt32		WindWeather		= 0;
 static float		WindHeading		= 0.0f;
 static float		WindTarget		= 0.0f;
 static double		WindLastMs		= -1.0;
@@ -87,14 +87,14 @@ void UpdateWind(ShaderConstants& ShaderConst, TESWeather* CurrentWeather) {
 	double NowMs = TheFrameRateManager->GetPerformance();
 	float GameHours = TimeGlobals::GetGameDaysPassed() * 24.0f + ShaderConst.GameTime.y;
 
-	if (CurrentWeather && CurrentWeather != WindWeather) {
+	if (CurrentWeather && CurrentWeather->refID != WindWeather) {
 		float Roll = HashUnit(CurrentWeather->refID ^ (UInt32)(GameHours * 60.0f));
 		if (WindInitialized)
 			WindTarget = WindHeading + (Roll * 2.0f - 1.0f) * kWindMaxTurn;
 		else
 			WindHeading = WindTarget = Roll * kWindTwoPi;
 		WindInitialized = true;
-		WindWeather = CurrentWeather;
+		WindWeather = CurrentWeather->refID;
 	}
 
 	double StepMs = WindLastMs < 0.0 ? 0.0 : NowMs - WindLastMs;
@@ -112,6 +112,37 @@ void UpdateWind(ShaderConstants& ShaderConst, TESWeather* CurrentWeather) {
 	ShaderConst.WindData.y = sinf(Angle);
 	ShaderConst.WindData.z = ShaderConst.currentwindSpeed;
 	ShaderConst.WindData.w = 0.0f;
+
+}
+
+bool GetWindState(WindState& State) {
+
+	if (!WindInitialized) return false;
+	const D3DXVECTOR4& Wind = TheShaderManager->ShaderConst.WindData;
+	State.Heading = WindHeading;
+	State.Target = WindTarget;
+	State.WeatherRefID = WindWeather;
+	State.DirectionX = Wind.x;
+	State.DirectionY = Wind.y;
+	return true;
+
+}
+
+void SetWindState(const WindState* State) {
+
+	D3DXVECTOR4& Wind = TheShaderManager->ShaderConst.WindData;
+	WindLastMs = -1.0;
+	if (!State) {
+		WindInitialized = false;
+		WindWeather = 0;
+		return;
+	}
+	WindInitialized = true;
+	WindHeading = State->Heading;
+	WindTarget = State->Target;
+	WindWeather = State->WeatherRefID;
+	Wind.x = State->DirectionX;
+	Wind.y = State->DirectionY;
 
 }
 
