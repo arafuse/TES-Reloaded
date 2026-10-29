@@ -14,6 +14,7 @@ public:
 		void GetWeatherName(double* result);
 		void IsRainHittingPlayer(double* result);
 		void GetWeatherWindDirection(double* result);
+		void IsPlayerInSunShadow(double* result);
 	}; 
 
 	void							AddCommands(const PluginInterface* Interface);

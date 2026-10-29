@@ -5,6 +5,7 @@ static const UInt32	kShadowSceneLightContribution	= 0x007D31B0;
 
 static volatile float PlayerSunLightScale = 1.0f;
 static volatile float LastPlayerSunTerm = 0.0f;
+static volatile LONG PlayerInSunShadow = 0;
 
 static const UInt32	kShadowSceneNode	= 0x00B42F54;
 static const int	kProbePointCount	= 8;
@@ -19,6 +20,7 @@ static const float	kExitMargin			= 10.0f;
 static const UInt32	kMovementSneak		= 0x400;
 static const DWORD	kLogIntervalMs		= 1000;
 static const int	kReadbackTimeoutFrames	= 30;
+static const float	kInShadowThreshold	= 1.0f; // shadowed fraction of the probe points
 
 /// One in-flight probe: its render target and the event query issued after it was drawn.
 struct ProbeSlot {
@@ -88,35 +90,26 @@ static void DiscardProbes() {
 	for (int i = 0; i < kProbeRingSize; i++) Ring[i].Pending = false;
 	FramesSinceReadback = 0;
 	PlayerSunLightScale = 1.0f;
+	PlayerInSunShadow = 0;
 
 }
 
 void UpdateSunShadowStealth() {
 
-	if (!TheSettingManager->SettingsShadows.Exteriors.SunShadowStealth) {
-		ReleaseProbeResources();
-		ProbeFailed = false;
-		ProbeArmed = false;
-		LoggedD3DFailure = false;
-		FramesSinceReadback = 0;
-		PlayerSunLightScale = 1.0f;
-		return;
-	}
 	ProbeArmed = SunMapsProbeable();
 	if (!ProbeArmed) {
 		DiscardProbes();
 		return;
 	}
 	if (!ProbeEffect && !ProbeFailed && !CreateProbeResources(TheRenderManager->device)) {
-		Logger::Log("SunShadowStealth: probe resources unavailable (is Shadows\\ShadowProbe.fx compiled?); the player's light level stays vanilla.");
+		Logger::Log("SunShadowStealth: probe resources unavailable (is Shadows\\ShadowProbe.fx compiled?); the player's light level stays vanilla and IsPlayerInSunShadow stays 0.");
 		ReleaseProbeResources();
 		ProbeFailed = true;
 	}
 
-	// Watchdog: if a slot never comes back S_OK (e.g. a device error), stop waiting on it.
-	bool AnyPending = false;
-	for (int i = 0; i < kProbeRingSize; i++) AnyPending |= Ring[i].Pending;
-	if (AnyPending && ++FramesSinceReadback > kReadbackTimeoutFrames) DiscardProbes();
+	// Watchdog: no readback for a while (a device error, or the shadow apply not running) drops the
+	// results to their defaults instead of leaving them stale.
+	if (++FramesSinceReadback > kReadbackTimeoutFrames) DiscardProbes();
 
 }
 
@@ -151,7 +144,7 @@ static void BuildProbePoints(D3DXVECTOR4* Points) {
 
 }
 
-static void PublishScale() {
+static void PublishProbeResult() {
 
 	float Sum = 0.0f;
 	for (int i = 0; i < kProbePointCount; i++) {
@@ -159,19 +152,21 @@ static void PublishScale() {
 		Sum += (V >= 0.0f && V <= 1.0f) ? V : 1.0f;
 	}
 	LastShadowed = 1.0f - Sum / kProbePointCount;
+	PlayerInSunShadow = LastShadowed >= kInShadowThreshold ? 1 : 0;
 	// No dawn/dusk fade: the moon keeps casting shadows, so shade hides the player at any hour.
 	float Scale = std::lerp(1.0f, TheShaderManager->ShaderConst.Shadow.Data.y, LastShadowed);
 	PlayerSunLightScale = (Scale >= 0.0f && Scale <= 1.0f) ? Scale : 1.0f;
 
 }
 
-// Publishes the vanilla scale and logs once on a probe D3D call failure.
+// Publishes the defaults and logs once on a probe D3D call failure.
 static void ProbeFailure() {
 
 	PlayerSunLightScale = 1.0f;
+	PlayerInSunShadow = 0;
 	if (!LoggedD3DFailure) {
 		LoggedD3DFailure = true;
-		Logger::Log("SunShadowStealth: probe D3D call failed; the player's light level stays vanilla.");
+		Logger::Log("SunShadowStealth: probe D3D call failed; the player's light level stays vanilla and IsPlayerInSunShadow reports 0.");
 	}
 
 }
@@ -192,7 +187,7 @@ static void ReadFinishedProbes(IDirect3DDevice9* Device) {
 		memcpy(Visibility, Locked.pBits, sizeof(Visibility));
 		Slot.Target->UnlockRect();
 		FramesSinceReadback = 0;
-		PublishScale();
+		PublishProbeResult();
 	}
 
 }
@@ -295,7 +290,7 @@ static float CallShadowSceneLightContribution(void* Light, float X, float Y, flo
 static float __fastcall SunTermHook(void* SunLight, Actor* Owner, float X, float Y, float Z, UInt32 Exclude) {
 
 	float Term = CallShadowSceneLightContribution(SunLight, X, Y, Z, Exclude);
-	if (Owner != (Actor*)Player) return Term;
+	if (Owner != (Actor*)Player || !TheSettingManager->SettingsShadows.Exteriors.SunShadowStealth) return Term;
 	LastPlayerSunTerm = Term;
 	return Term * PlayerSunLightScale;
 
@@ -308,6 +303,12 @@ static __declspec(naked) void SunTermStub() {
 		mov		edx, edi
 		jmp		SunTermHook
 	}
+
+}
+
+bool IsPlayerInSunShadow() {
+
+	return PlayerInSunShadow != 0;
 
 }
 

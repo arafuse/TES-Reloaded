@@ -3092,7 +3092,7 @@ void SettingManager::SetMenuSetting(const char* Item, const char* Definition, co
 				else if (!strcmp(Setting, "BiasMaxSlope")) {
 					SettingsShadows.Exteriors.BiasMaxSlope = Value;
 				}
-				// UpdateSunShadowStealth creates or releases the probe on the next frame.
+				// Read live by the sun-term hook; the probe itself runs regardless.
 				else if (!strcmp(Setting, "SunShadowStealth")) {
 					SettingsShadows.Exteriors.SunShadowStealth = Value;
 				}
