@@ -347,6 +347,7 @@ struct SettingsShadowStruct {
 		float				FadeTime;				// [Exteriors] FadeTime: static-map crossfade seconds (0 = off)
 		bool                UsePostProcessing;
 		bool				SunShadowStealth;		// [Exteriors] SunShadowStealth: sun shadow lowers the player's light level
+		bool				IsPlayerInSunShadow;	// [Exteriors] IsPlayerInSunShadow: run the player sun shadow probe for the OBSE command
 		bool				UseIntervalUpdate;
 		bool				UseInstancing;
 		float				deferredNormBias;
@@ -586,6 +587,7 @@ struct SettingsBloomStruct {
 struct SettingsPrecipitationsStruct {
 	struct RainStruct {
 		float Slant;	///< Rain fall-line tilt (horizontal per vertical) at full wind speed; 0 keeps rain vertical
+		bool IsRainHittingPlayer;	///< Runs the player rain probe for the OBSE command; off, the command returns 0
 	};
 	
 	struct SnowStruct {

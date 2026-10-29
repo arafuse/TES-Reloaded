@@ -81,6 +81,14 @@ static void DiscardProbes() {
 
 void UpdateRainProbe() {
 
+	if (!TheSettingManager->SettingsPrecipitations.Rain.IsRainHittingPlayer) {
+		ReleaseProbeResources();
+		ProbeFailed = false;
+		ProbeArmed = false;
+		LoggedD3DFailure = false;
+		DiscardProbes();
+		return;
+	}
 	ProbeArmed = RainDrawn();
 	if (!ProbeArmed) {
 		DiscardProbes();
@@ -233,6 +241,6 @@ void RenderRainProbe(IDirect3DDevice9* Device) {
 
 bool IsRainHittingPlayer() {
 
-	return RainHitting != 0;
+	return TheSettingManager->SettingsPrecipitations.Rain.IsRainHittingPlayer && RainHitting != 0;
 
 }

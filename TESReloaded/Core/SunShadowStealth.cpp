@@ -94,8 +94,24 @@ static void DiscardProbes() {
 
 }
 
+// Either consumer keeps the probe running.
+static bool ProbeWanted() {
+
+	SettingsShadowStruct::ExteriorsStruct* Exteriors = &TheSettingManager->SettingsShadows.Exteriors;
+	return Exteriors->SunShadowStealth || Exteriors->IsPlayerInSunShadow;
+
+}
+
 void UpdateSunShadowStealth() {
 
+	if (!ProbeWanted()) {
+		ReleaseProbeResources();
+		ProbeFailed = false;
+		ProbeArmed = false;
+		LoggedD3DFailure = false;
+		DiscardProbes();
+		return;
+	}
 	ProbeArmed = SunMapsProbeable();
 	if (!ProbeArmed) {
 		DiscardProbes();
@@ -308,7 +324,7 @@ static __declspec(naked) void SunTermStub() {
 
 bool IsPlayerInSunShadow() {
 
-	return PlayerInSunShadow != 0;
+	return TheSettingManager->SettingsShadows.Exteriors.IsPlayerInSunShadow && PlayerInSunShadow != 0;
 
 }
 
