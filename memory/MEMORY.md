@@ -34,3 +34,4 @@
 - [Actor light level formula](actor-light-level-formula.md) — GetLightLevel 0x655FE0 = Σ point falloff + unoccluded sun max(diffuse) (one call at 0x6561FD, actor in edi) ×100; no occlusion anywhere
 - [Engine wind has no direction](engine-wind-has-no-direction.md) — grass sways on hardcoded world +Y (sub_7E6710 → 0xB460B0), tree wind matrices are zero-mean local wobbles; only speed (Sky+0xC0); grass sway phase runs on GameHour (the timescale bug, fixed in Wind.cpp); Wind.cpp invents a direction and feeds grass, rain and snow
 - [No dusk fade for shadow gameplay](moon-shadows-no-dusk-fade.md) — moon casts shadows; shadow-driven effects use Darkness directly, never the ShadowLightDir.w dawn/dusk/moon ramp
+- [Sun shadow probe consumers](sun-shadow-probe-consumers.md) — one 8-point probe feeds stealth scaling AND OBSE IsPlayerInSunShadow (0x3007, ≥50% shadowed, ignores Darkness); runs whenever sun maps are live, the SunShadowStealth setting gates only the light scaling
