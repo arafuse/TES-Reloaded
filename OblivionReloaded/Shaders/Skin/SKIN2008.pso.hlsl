@@ -42,6 +42,7 @@ struct PS_OUTPUT {
 
 // Code:
 
+#include "../ExtraShaders/Includes/WetActor.hlsl"
 #include "includes/Skin.hlsl"
 
 PS_OUTPUT main(VS_OUTPUT IN) {
@@ -66,7 +67,8 @@ PS_OUTPUT main(VS_OUTPUT IN) {
     float3 q13;
     float3 q9;
 
-    norm = normalize(expand(tex2D(NormalMap, IN.NormalUV.xy).xyz));
+    float4 normSample = tex2D(NormalMap, IN.NormalUV.xy);
+    norm = normalize(expand(normSample.xyz));
 	att11 = tex2D(AttenuationMap, IN.Att1UV.xy).x;
     att7 = tex2D(AttenuationMap, IN.Att1UV.zw).x;
     att6 = tex2D(AttenuationMap, IN.Att2UV.xy).x;
@@ -84,7 +86,7 @@ PS_OUTPUT main(VS_OUTPUT IN) {
     q13 += saturate(1 - att6  - att8) * q9;
 
     OUT.Color.a = 1;
-    OUT.Color.rgb = q13;
+    OUT.Color.rgb = q13 * WetLightScale(normSample.a);
 
     return OUT;
 };
