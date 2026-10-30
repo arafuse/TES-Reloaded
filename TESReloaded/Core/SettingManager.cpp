@@ -988,10 +988,10 @@ void SettingManager::LoadSettings() {
 	GetPrivateProfileStringA("WetActors", "DryPerSkippedHour", "0.5", value, SettingStringBuffer, Filename);
 	SettingsPrecipitations.WetActors.DryPerSkippedHour = atof(value);
 	SettingsPrecipitations.WetActors.NPCExposure = GetPrivateProfileIntA("WetActors", "NPCExposure", 1, Filename);
-	GetPrivateProfileStringA("WetActors", "ProbeRadius", "1500.0", value, SettingStringBuffer, Filename);
+	GetPrivateProfileStringA("WetActors", "ProbeRadius", "2048.0", value, SettingStringBuffer, Filename);
 	SettingsPrecipitations.WetActors.ProbeRadius = atof(value);
 	SettingsPrecipitations.WetActors.MaxProbedNPCs = GetPrivateProfileIntA("WetActors", "MaxProbedNPCs", 16, Filename);
-	GetPrivateProfileStringA("WetActors", "Darkening", "0.5", value, SettingStringBuffer, Filename);
+	GetPrivateProfileStringA("WetActors", "Darkening", "0.2", value, SettingStringBuffer, Filename);
 	SettingsPrecipitations.WetActors.Darkening = atof(value);
 	GetPrivateProfileStringA("WetActors", "Sheen", "0.75", value, SettingStringBuffer, Filename);
 	SettingsPrecipitations.WetActors.Sheen = atof(value);
