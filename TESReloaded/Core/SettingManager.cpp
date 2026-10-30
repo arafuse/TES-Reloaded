@@ -441,6 +441,7 @@ SettingManager::SettingManager() {
 	SettingsMain.Develop.ProfileSamplerHz = GetPrivateProfileIntA("Develop", "ProfileSamplerHz", 1000, Filename);
 	SettingsMain.Develop.NearShellDebug = GetPrivateProfileIntA("Develop", "NearShellDebug", 0, Filename);
 	SettingsMain.Develop.LogSunShadowStealth = GetPrivateProfileIntA("Develop", "LogSunShadowStealth", 0, Filename);
+	SettingsMain.Develop.LogWetActors = GetPrivateProfileIntA("Develop", "LogWetActors", 0, Filename);
 
 	GameLoading = false;
 
@@ -977,6 +978,23 @@ void SettingManager::LoadSettings() {
 	SettingsPrecipitations.SnowAccumulation.BlurNormDropThreshhold = atof(value);
 	GetPrivateProfileStringA("SnowAccumulation", "BlurRadiusMultiplier", "1", value, SettingStringBuffer, Filename);
 	SettingsPrecipitations.SnowAccumulation.BlurRadiusMultiplier = atof(value);
+	SettingsPrecipitations.WetActors.Enabled = GetPrivateProfileIntA("WetActors", "Enabled", 1, Filename);
+	GetPrivateProfileStringA("WetActors", "SoakTime", "90.0", value, SettingStringBuffer, Filename);
+	SettingsPrecipitations.WetActors.SoakTime = atof(value);
+	GetPrivateProfileStringA("WetActors", "DryTime", "480.0", value, SettingStringBuffer, Filename);
+	SettingsPrecipitations.WetActors.DryTime = atof(value);
+	GetPrivateProfileStringA("WetActors", "DryPerSkippedHour", "0.5", value, SettingStringBuffer, Filename);
+	SettingsPrecipitations.WetActors.DryPerSkippedHour = atof(value);
+	SettingsPrecipitations.WetActors.NPCExposure = GetPrivateProfileIntA("WetActors", "NPCExposure", 1, Filename);
+	GetPrivateProfileStringA("WetActors", "ProbeRadius", "1500.0", value, SettingStringBuffer, Filename);
+	SettingsPrecipitations.WetActors.ProbeRadius = atof(value);
+	SettingsPrecipitations.WetActors.MaxProbedNPCs = GetPrivateProfileIntA("WetActors", "MaxProbedNPCs", 16, Filename);
+	GetPrivateProfileStringA("WetActors", "Darkening", "0.4", value, SettingStringBuffer, Filename);
+	SettingsPrecipitations.WetActors.Darkening = atof(value);
+	GetPrivateProfileStringA("WetActors", "Sheen", "0.6", value, SettingStringBuffer, Filename);
+	SettingsPrecipitations.WetActors.Sheen = atof(value);
+	GetPrivateProfileStringA("WetActors", "Glossiness", "48.0", value, SettingStringBuffer, Filename);
+	SettingsPrecipitations.WetActors.Glossiness = atof(value);
 
 	strcpy(Filename, CurrentPath);
 	strcat(Filename, SettingsPath);
@@ -1675,6 +1693,16 @@ void SettingManager::SaveSettings(const char* Item, const char* Definition, cons
 			WritePrivateProfileStringA("Rain", "Slant", ToString(SettingsPrecipitations.Rain.Slant).c_str(), Filename);
 			WritePrivateProfileStringA("Rain", "IsRainHittingPlayer", ToString(SettingsPrecipitations.Rain.IsRainHittingPlayer).c_str(), Filename);
 			WritePrivateProfileStringA("Snow", "Slant", ToString(SettingsPrecipitations.Snow.Slant).c_str(), Filename);
+			WritePrivateProfileStringA("WetActors", "Enabled", ToString(SettingsPrecipitations.WetActors.Enabled).c_str(), Filename);
+			WritePrivateProfileStringA("WetActors", "SoakTime", ToString(SettingsPrecipitations.WetActors.SoakTime).c_str(), Filename);
+			WritePrivateProfileStringA("WetActors", "DryTime", ToString(SettingsPrecipitations.WetActors.DryTime).c_str(), Filename);
+			WritePrivateProfileStringA("WetActors", "DryPerSkippedHour", ToString(SettingsPrecipitations.WetActors.DryPerSkippedHour).c_str(), Filename);
+			WritePrivateProfileStringA("WetActors", "NPCExposure", ToString(SettingsPrecipitations.WetActors.NPCExposure).c_str(), Filename);
+			WritePrivateProfileStringA("WetActors", "ProbeRadius", ToString(SettingsPrecipitations.WetActors.ProbeRadius).c_str(), Filename);
+			WritePrivateProfileStringA("WetActors", "MaxProbedNPCs", ToString(SettingsPrecipitations.WetActors.MaxProbedNPCs).c_str(), Filename);
+			WritePrivateProfileStringA("WetActors", "Darkening", ToString(SettingsPrecipitations.WetActors.Darkening).c_str(), Filename);
+			WritePrivateProfileStringA("WetActors", "Sheen", ToString(SettingsPrecipitations.WetActors.Sheen).c_str(), Filename);
+			WritePrivateProfileStringA("WetActors", "Glossiness", ToString(SettingsPrecipitations.WetActors.Glossiness).c_str(), Filename);
 		}
 		else if (!strcmp(Definition, "SnowAccumulation")) {
 			WritePrivateProfileStringA("Effects", "SnowAccumulation", ToString(SettingsMain.Effects.SnowAccumulation).c_str(), SettingsMain.Main.MainFile);
@@ -2350,6 +2378,16 @@ SettingsList SettingManager::GetMenuSettings(const char* Item, const char* Defin
 			Settings["RainSlant"] = SettingsPrecipitations.Rain.Slant;
 			Settings["IsRainHittingPlayer"] = SettingsPrecipitations.Rain.IsRainHittingPlayer;
 			Settings["SnowSlant"] = SettingsPrecipitations.Snow.Slant;
+			Settings["WetActorsEnabled"] = SettingsPrecipitations.WetActors.Enabled;
+			Settings["WetActorsSoakTime"] = SettingsPrecipitations.WetActors.SoakTime;
+			Settings["WetActorsDryTime"] = SettingsPrecipitations.WetActors.DryTime;
+			Settings["WetActorsDryPerSkippedHour"] = SettingsPrecipitations.WetActors.DryPerSkippedHour;
+			Settings["WetActorsNPCExposure"] = SettingsPrecipitations.WetActors.NPCExposure;
+			Settings["WetActorsProbeRadius"] = SettingsPrecipitations.WetActors.ProbeRadius;
+			Settings["WetActorsMaxProbedNPCs"] = SettingsPrecipitations.WetActors.MaxProbedNPCs;
+			Settings["WetActorsDarkening"] = SettingsPrecipitations.WetActors.Darkening;
+			Settings["WetActorsSheen"] = SettingsPrecipitations.WetActors.Sheen;
+			Settings["WetActorsGlossiness"] = SettingsPrecipitations.WetActors.Glossiness;
 		}
 		else if (!strcmp(Definition, "SnowAccumulation")) {
 			Settings["Amount"] = SettingsPrecipitations.SnowAccumulation.Amount;
@@ -3175,6 +3213,26 @@ void SettingManager::SetMenuSetting(const char* Item, const char* Definition, co
 				SettingsPrecipitations.Rain.IsRainHittingPlayer = Value; // UpdateRainProbe creates or releases the probe next frame
 			else if (!strcmp(Setting, "SnowSlant"))
 				SettingsPrecipitations.Snow.Slant = Value;
+			else if (!strcmp(Setting, "WetActorsEnabled"))
+				SettingsPrecipitations.WetActors.Enabled = Value; // UpdateWetActors clears all wetness next frame when off
+			else if (!strcmp(Setting, "WetActorsSoakTime"))
+				SettingsPrecipitations.WetActors.SoakTime = Value;
+			else if (!strcmp(Setting, "WetActorsDryTime"))
+				SettingsPrecipitations.WetActors.DryTime = Value;
+			else if (!strcmp(Setting, "WetActorsDryPerSkippedHour"))
+				SettingsPrecipitations.WetActors.DryPerSkippedHour = Value;
+			else if (!strcmp(Setting, "WetActorsNPCExposure"))
+				SettingsPrecipitations.WetActors.NPCExposure = (int)Value;
+			else if (!strcmp(Setting, "WetActorsProbeRadius"))
+				SettingsPrecipitations.WetActors.ProbeRadius = Value;
+			else if (!strcmp(Setting, "WetActorsMaxProbedNPCs"))
+				SettingsPrecipitations.WetActors.MaxProbedNPCs = (int)Value;
+			else if (!strcmp(Setting, "WetActorsDarkening"))
+				SettingsPrecipitations.WetActors.Darkening = Value;
+			else if (!strcmp(Setting, "WetActorsSheen"))
+				SettingsPrecipitations.WetActors.Sheen = Value;
+			else if (!strcmp(Setting, "WetActorsGlossiness"))
+				SettingsPrecipitations.WetActors.Glossiness = Value;
 		}
 		else if (!strcmp(Definition, "SnowAccumulation")) {
 			if (!strcmp(Setting, "Increase"))
