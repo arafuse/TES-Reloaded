@@ -481,6 +481,8 @@ bool ShaderProgram::SetConstantTableValue2(LPCSTR Name, UInt32 Index) {
 		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.Terrain.ParallaxData;
 	else if (!strcmp(Name, "TESR_TerrainReliefData"))
 		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.Terrain.ReliefData;
+	else if (!strcmp(Name, "TESR_WetActorData"))
+		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.WetActor.Data;
 	else {
 		return false;
 	}
@@ -493,6 +495,8 @@ bool ShaderProgram::SetPerGeomConstantTableValue(LPCSTR Name, UInt32 Index) {
 		PerGeomFloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.Specular.EyePosition;
 	else if (!strcmp(Name, "TESR_GEOM_Toggles"))
 		PerGeomFloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.Geometry.Toggles;
+	else if (!strcmp(Name, "TESR_GEOM_Wetness"))
+		PerGeomFloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.WetActor.Geometry;
 	else {
 		return false;
 	}
@@ -2692,6 +2696,10 @@ void ShaderManager::UpdateConstants() {
 	UpdateTreeCover();
 	UpdateSunShadowStealth();
 	UpdateRainProbe();
+	const SettingsPrecipitationsStruct::WetActorsStruct& WetSettings = TheSettingManager->SettingsPrecipitations.WetActors;
+	ShaderConst.WetActor.Data = WetSettings.Enabled
+		? D3DXVECTOR4(WetSettings.Darkening, WetSettings.Sheen, WetSettings.Glossiness, 0.0f)
+		: D3DXVECTOR4(0.0f, 0.0f, 0.0f, 0.0f);
 
 	if (TheSettingManager->SettingsMain.Shaders.POM)     UpdatePOM(ShaderConst);
 	if (TheSettingManager->SettingsMain.Shaders.Terrain) UpdateTerrain(ShaderConst);
