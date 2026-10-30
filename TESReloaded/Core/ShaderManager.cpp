@@ -10,6 +10,7 @@
 #include "SunShadowStealth.h"
 #include "Wind.h"
 #include "RainProbe.h"
+#include "WetActors.h"
 #define EFFECTQUADFORMAT D3DFVF_XYZ | D3DFVF_TEX1
 
 #if defined(NEWVEGAS)
@@ -2700,6 +2701,7 @@ void ShaderManager::UpdateConstants() {
 	ShaderConst.WetActor.Data = WetSettings.Enabled
 		? D3DXVECTOR4(WetSettings.Darkening, WetSettings.Sheen, WetSettings.Glossiness, 0.0f)
 		: D3DXVECTOR4(0.0f, 0.0f, 0.0f, 0.0f);
+	UpdateWetActors();
 
 	if (TheSettingManager->SettingsMain.Shaders.POM)     UpdatePOM(ShaderConst);
 	if (TheSettingManager->SettingsMain.Shaders.Terrain) UpdateTerrain(ShaderConst);
