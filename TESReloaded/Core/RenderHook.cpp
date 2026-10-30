@@ -758,7 +758,8 @@ static const ActorDrawRoot* FindActorDrawRoot(NiAVObject* Object) {
 }
 
 // OR compiles every override as shader model 3, and D3D9 pairs model 3 only with model 3. Logs once
-// per capture each pair in which one shader is overridden and the other is stock.
+// per capture each pair in which one shader is overridden and the other is stock. Stock SM3* shaders
+// are already model 3, so pairs naming them are legal.
 static void LogShaderPairMismatch(NiD3DVertexShaderEx* VertexShader, NiD3DPixelShaderEx* PixelShader) {
 
 	if ((VertexShader->ShaderProg != NULL) == (PixelShader->ShaderProg != NULL)) return;
