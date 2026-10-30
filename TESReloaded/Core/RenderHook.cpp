@@ -974,7 +974,7 @@ UInt32 RenderHook::TrackSetupShaderPrograms(NiGeometry* Geometry, NiSkinInstance
 		// Every flagged draw uploads, so a wet value never carries over to the next draw.
 		if (PixelShader->ShaderProg && PixelShader->isWetActor) {
 			TheShaderManager->ShaderConst.WetActor.Geometry.x = GetDrawWetness(Geometry);
-			TheShaderManager->ShaderConst.WetActor.Geometry.y = VertexShader->hasNewHalfVector ? 0.0f : 1.0f;
+			TheShaderManager->ShaderConst.WetActor.Geometry.y = (VertexShader->hasNewHalfVector && VertexShader->ShaderProg) ? 0.0f : 1.0f;
 		}
 #endif
 		if (PixelShader->ShaderProg && PixelShader->isSkin) { //TODO this condition isnt quite right for all tree situations but it just so happens to work

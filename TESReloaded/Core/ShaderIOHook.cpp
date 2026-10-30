@@ -106,8 +106,8 @@ NiD3DVertexShader* ShaderIOHook::TrackCreateVertexShader(char* FileName, char* A
 	VertexShader->isSun = strstr(SunVertexShaders, VertexShader->ShaderName) != NULL;
 	VertexShader->isTree = strstr(TreeVertexShaders, VertexShader->ShaderName) != NULL;
 	VertexShader->isGrass = !memcmp(VertexShader->ShaderName, "GRASS", 5);
-	VertexShader->hasNewHalfVector = strstr(NewHalfVectorVertexShaders, VertexShader->ShaderName) != NULL;
 	TheShaderManager->LoadShader(VertexShader);
+	VertexShader->hasNewHalfVector = VertexShader->ShaderProg && strstr(NewHalfVectorVertexShaders, VertexShader->ShaderName) != NULL;
 	return (NiD3DVertexShader*)VertexShader;
 
 }
