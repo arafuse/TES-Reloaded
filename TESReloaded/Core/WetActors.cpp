@@ -38,6 +38,7 @@ static std::vector<RainProbeActor>				ProbeActors;
 static UInt32	Frame			= 0;
 static double	LastMs			= -1.0;
 static double	LastScanMs		= -1.0;
+static TESObjectCELL*	LastScanCell	= NULL;	// compared by pointer only, never dereferenced
 static double	LastGameHours	= -1.0;	// < 0: resync on the next update
 static double	LastLogMs		= -1.0;
 static float	LogSkippedHours	= 0.0f;
@@ -56,7 +57,7 @@ static bool IsSwimming(Actor* Act) {
 
 static double GameHoursNow() {
 
-	return (double)kTimeGlobals->GameDaysPassed->data * 24.0 + (double)kTimeGlobals->GameHour->data;
+	return floor((double)kTimeGlobals->GameDaysPassed->data) * 24.0 + (double)kTimeGlobals->GameHour->data;
 
 }
 
@@ -65,10 +66,11 @@ static void ScanCell(TESObjectCELL* Cell) {
 	if (!Cell) return;
 	for (TList<TESObjectREFR>::Entry* Entry = &Cell->objectList.First; Entry; Entry = Entry->next) {
 		TESObjectREFR* Ref = Entry->item;
-		NiNode* Root;
-		if (!Ref || Ref == Player || !Ref->baseForm || !(Root = Ref->GetNode())) continue;
+		if (!Ref || Ref == Player || !Ref->baseForm) continue;
 		UInt8 TypeID = Ref->baseForm->formType;
 		if (TypeID < TESForm::FormType::kFormType_NPC || TypeID > TESForm::FormType::kFormType_LeveledCreature) continue;
+		NiNode* Root = Ref->GetNode();
+		if (!Root) continue;
 		ScannedActor Item;
 		Item.RefID = Ref->refID;
 		Item.Root = Root;
@@ -183,6 +185,7 @@ void UpdateWetActors() {
 		ProbeActors.clear();
 		SetRainProbeActors(NULL, 0);
 		LastMs = LastScanMs = LastGameHours = -1.0;
+		LastScanCell = NULL;
 		return;
 	}
 	Frame++;
@@ -209,8 +212,9 @@ void UpdateWetActors() {
 	}
 	LastGameHours = Hours;
 
-	if (LastScanMs < 0.0 || NowMs - LastScanMs >= kScanIntervalMs) {
+	if (LastScanMs < 0.0 || NowMs - LastScanMs >= kScanIntervalMs || Player->parentCell != LastScanCell) {
 		LastScanMs = NowMs;
+		LastScanCell = Player->parentCell;
 		ScanActors(Settings);
 	}
 	SetRainProbeActors(ProbeActors.data(), (int)ProbeActors.size());
@@ -279,8 +283,11 @@ void SetWetActorRecords(const WetActorRecord* Records, UInt32 Count) {
 
 	Wetness.clear();
 	DrawRoots.clear();
+	Scanned.clear();
+	ProbeActors.clear();
+	LastScanCell = NULL;
 	for (UInt32 i = 0; Records && i < Count; i++)
 		if (Records[i].Wetness > 0.0f) Wetness[Records[i].RefID] = { min(Records[i].Wetness, 1.0f), 0 };
-	LastMs = LastGameHours = -1.0;
+	LastMs = LastScanMs = LastGameHours = -1.0;
 
 }
