@@ -19,6 +19,7 @@ float4 ToggleADTS : register(c5);
 float4 ToggleNumLights : register(c6);
 float4 TESR_ShadowData : register(c17);
 float4 TESR_ShadowLightPosition[12] : register(c18);
+#include "../ExtraShaders/Includes/WetActor.hlsl"
 sampler2D TESR_ShadowMapBufferNear : register(s8) = sampler_state
 {
     ADDRESSU = CLAMP;
@@ -171,6 +172,10 @@ PS_OUTPUT main(VS_OUTPUT IN)
     r4.xyz = mul(TanSpaceProj, LightData[1].xyz);
     eye99.xyz = mul(TanSpaceProj, EyePosition.xyz - IN.texcoord_6.xyz);
     r9.xyz = normalize(eye99.xyz);			// partial precision
+    float3 wetNormal = r5.xyz;
+    float3 wetView = r9.xyz;
+    float3 wetLight = r4.xyz;
+    float wetMask = r1.w;
     q3.xyz = normalize(r4.xyz + r9.xyz);			// partial precision
     r2.x = dot(r8.xyz, r4.xyz);			// partial precision
     r2.y = dot(r8.xyz, q3.xyz);			// partial precision
@@ -309,10 +314,11 @@ PS_OUTPUT main(VS_OUTPUT IN)
     r2.xyzw = tex2D(LayerMap, IN.BaseUV.xy);			// partial precision
     r0.xyzw = tex2D(BaseMap, IN.BaseUV.xy);			// partial precision
     r3.xyz = r1.xyz * IN.color_0.g;			// partial precision
-    r1.xyz = lerp(r0.xyz, r2.xyz, r2.w);			// partial precision
+    r1.xyz = WetAlbedo(lerp(r0.xyz, r2.xyz, r2.w), wetMask);			// partial precision
     r0.xyz = r4.xyz + ((ToggleADTS.x * AmbientColor.rgb) + (r6.z - ToggleADTS.x));			// partial precision
     q62.xyz = (((2 * ((IN.color_0.g * (r6.x + HairTint.rgb)) + 0.5)) * r1.xyz) * r0.xyz) + (r1.w * r3.xyz);			// partial precision
     OUT.color_0.a = r0.w * MatAlpha.x;			// partial precision
+    q62.xyz += WetSheen(wetNormal, wetView, wetLight, LightData[0].xyz, AmbientColor.rgb);
     OUT.color_0.rgb = (IN.texcoord_7.w * (IN.texcoord_7.xyz - q62.xyz)) + q62.xyz;			// partial precision
 
     return OUT;
