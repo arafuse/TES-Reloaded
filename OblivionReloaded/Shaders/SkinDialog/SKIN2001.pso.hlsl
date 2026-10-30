@@ -84,7 +84,8 @@ PS_OUTPUT main(VS_OUTPUT IN) {
     float3 r2;
     float3 r5;
     
-    norm = normalize(expand(tex2D(NormalMap, IN.BaseUV.xy).xyz));
+    float4 normSample = tex2D(NormalMap, IN.BaseUV.xy);
+    norm = normalize(expand(normSample.xyz));
     r2 = tex2D(FaceGenMap1, IN.BaseUV.xy).rgb;
     r1 = tex2D(FaceGenMap0, IN.BaseUV.xy).rgb;
 	camera = IN.CameraDir.xyz;
@@ -97,7 +98,7 @@ PS_OUTPUT main(VS_OUTPUT IN) {
     r5 = psSkin(r5, PSLightColor[0].rgb, camera, IN.Light0Dir.xyz, norm);
 	
     q7 = max((1.0f * r5) + AmbientColor.rgb, 0);
-    q8 = WetAlbedo(Toggles.x <= 0.0 ? q18 : (q18 * IN.Color.rgb), 0.0f);
+    q8 = WetAlbedo(Toggles.x <= 0.0 ? q18 : (q18 * IN.Color.rgb), 1.0f - normSample.a);
     q9 = q7 * q8;
     q9 += WetSheen(norm, camera, IN.Light0Dir.xyz, PSLightColor[0].rgb, AmbientColor.rgb);
     q10 = (Toggles.y <= 0.0 ? q9 : ((IN.Fog.a * (IN.Fog.rgb - q9)) + q9));
