@@ -1,6 +1,7 @@
 #include <CommCtrl.h>
 #include <intrin.h>
 #include "RenderHook.h"
+#include "WetActors.h"
 
 // --- Whole-frame plugin profiler (Develop.ProfileFrame) -----------------------
 // Definitions for FrameProfiler.h; see that header for the bucket model and for
@@ -754,13 +755,13 @@ static void LogActorDraw(NiGeometry* Geometry, NiSkinInstance* SkinInstance, NiD
 	const char* Scene = *kIsRenderingWaterReflections ? "reflection" :
 		TheShaderManager->InMainScenePass ? "main" :
 		RenderManager::CurrentPass == RenderManager::PassNear ? "shell" : "other";
-	Logger::Log("[ActorDraws] %04d ref=%08X%s geo=%s VS=%s%s PS=%s%s skin=%d rootParent=%d blend=%d scene=%s",
+	Logger::Log("[ActorDraws] %04d ref=%08X%s geo=%s VS=%s%s PS=%s%s skin=%d rootParent=%d blend=%d scene=%s wet=%.2f",
 		++ActorDrawCount, Root->RefID, Root->FirstPerson ? " (1st)" : "",
 		Geometry->m_pcName ? Geometry->m_pcName : "-",
 		VertexShader->ShaderName, VertexShader->ShaderProg ? "" : "(v)",
 		PixelShader->ShaderName, PixelShader->ShaderProg ? "" : "(v)",
 		SkinInstance ? 1 : 0, SkinInstance && SkinInstance->RootParent == Root->Root ? 1 : 0,
-		Blended ? 1 : 0, Scene);
+		Blended ? 1 : 0, Scene, GetDrawWetness(Geometry));
 
 	for (ActorShaderPair& Pair : ActorShaderPairs) {
 		if (Pair.VertexShader == VertexShader && Pair.PixelShader == PixelShader) {
@@ -969,11 +970,23 @@ UInt32 RenderHook::TrackSetupShaderPrograms(NiGeometry* Geometry, NiSkinInstance
 			VertexShader->ShaderProg->SetPerGeomCT();
 		}
 
+#if defined(OBLIVION)
+		// Every flagged draw uploads, so a wet value never carries over to the next draw.
+		if (PixelShader->ShaderProg && PixelShader->isWetActor) {
+			TheShaderManager->ShaderConst.WetActor.Geometry.x = GetDrawWetness(Geometry);
+			TheShaderManager->ShaderConst.WetActor.Geometry.y = VertexShader->hasNewHalfVector ? 0.0f : 1.0f;
+		}
+#endif
 		if (PixelShader->ShaderProg && PixelShader->isSkin) { //TODO this condition isnt quite right for all tree situations but it just so happens to work
 			TheShaderManager->ShaderConst.Geometry.Toggles.x = VertexShader->isSkin ? 1.0f : 0.0f;
 			TheShaderManager->ShaderConst.Geometry.Toggles.y = VertexShader->isTree ? 1.0f : 0.0f;
 			PixelShader->ShaderProg->SetPerGeomCT();
 		}
+#if defined(OBLIVION)
+		else if (PixelShader->ShaderProg && PixelShader->isWetActor) {
+			PixelShader->ShaderProg->SetPerGeomCT();
+		}
+#endif
 
 		if (PixelShader->isRefraction) {
 			RenderState->SetRenderState(D3DRS_ZWRITEENABLE, FALSE, 0);
