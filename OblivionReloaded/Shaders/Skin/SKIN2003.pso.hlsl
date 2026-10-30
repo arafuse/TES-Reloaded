@@ -113,7 +113,7 @@ PS_OUTPUT main(VS_OUTPUT IN) {
     r5  = saturate(1 - att4 - att23) * q10;
     r5 += 1.0f * q11;
     q12 = max(r5 + AmbientColor.rgb, 0);
-    q9 = WetAlbedo(Toggles.x <= 0.0 ? q27 : (q27 * IN.Color.rgb), 1.0f - normSample.a);
+    q9 = WetAlbedo(Toggles.x <= 0.0 ? q27 : (q27 * IN.Color.rgb), normSample.a);
     q13 = q12 * q9;
     q13 += WetSheen(norm, camera, IN.Light0Dir.xyz, PSLightColor[0].rgb, AmbientColor.rgb);
     q14 = (Toggles.y <= 0.0 ? q13 : ((IN.Fog.a * (IN.Fog.rgb - q13)) + q13));
