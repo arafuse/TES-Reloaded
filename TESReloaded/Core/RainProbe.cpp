@@ -32,6 +32,7 @@ static RainProbeSlot		Ring[kProbeRingSize] = {};
 static int					NextSlot = 0;
 static bool					ProbeFailed = false;
 static bool					ProbeArmed = false;
+static bool					ProbeAnswered = false;
 static bool					LoggedD3DFailure = false;
 static int					FramesSinceReadback = 0;
 static RainProbeActor		Actors[RainProbeMaxActors];
@@ -64,6 +65,8 @@ static bool CreateProbeResources(IDirect3DDevice9* Device) {
 	}
 	ProbePointsHandle = ProbeEffect->Effect->GetParameterByName(NULL, "RainProbePoints");
 	if (!ProbePointsHandle) return false;
+	D3DXPARAMETER_DESC Desc;
+	if (FAILED(ProbeEffect->Effect->GetParameterDesc(ProbePointsHandle, &Desc)) || Desc.Elements != (UINT)kMaxPointCount) return false;
 	for (int i = 0; i < kProbeRingSize; i++) {
 		if (FAILED(Device->CreateRenderTarget(kMaxPointCount, 1, D3DFMT_R32F, D3DMULTISAMPLE_NONE, 0, TRUE, &Ring[i].Target, NULL))) return false;
 		if (FAILED(Device->CreateQuery(D3DQUERYTYPE_EVENT, &Ring[i].Done))) return false;
@@ -84,6 +87,7 @@ static void DiscardProbes() {
 	for (int i = 0; i < kProbeRingSize; i++) Ring[i].Pending = false;
 	FramesSinceReadback = 0;
 	RainHitting = 0;
+	ProbeAnswered = false;
 	ActorExposure.clear();
 
 }
@@ -174,6 +178,7 @@ static void BuildProbePoints(D3DXVECTOR4* Points) {
 static void ProbeFailure() {
 
 	RainHitting = 0;
+	ProbeAnswered = false;
 	ActorExposure.clear();
 	if (!LoggedD3DFailure) {
 		LoggedD3DFailure = true;
@@ -203,6 +208,7 @@ static void ReadFinishedProbes() {
 		for (int i = 0; i < kPlayerPointCount; i++)
 			if (Exposure[i] > 0.5f) Hit = 1;
 		RainHitting = Hit;
+		ProbeAnswered = true;
 		ActorExposure.clear();
 		for (int a = 0; a < Slot.ActorCount; a++) {
 			const float* Points = Exposure + kPlayerPointCount + a * kActorPointCount;
@@ -284,7 +290,7 @@ bool IsRainHittingPlayer() {
 
 bool IsRainProbeWorking() {
 
-	return ProbeArmed && ProbeEffect != NULL;
+	return ProbeArmed && ProbeEffect != NULL && ProbeAnswered;
 
 }
 

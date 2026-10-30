@@ -34,7 +34,7 @@ bool IsRainHittingPlayer();
 /// the player is in an exterior-like cell, and the weather's rain ramp is above 0.
 bool IsRainFalling();
 
-/// True while the probe is armed and its resources exist, so its answers can be used.
+/// True once the armed probe has produced an answer since it was last discarded or failed, so its answers can be used.
 bool IsRainProbeWorking();
 
 /// The player's answer at the last readback, whatever the IsRainHittingPlayer switch says.
