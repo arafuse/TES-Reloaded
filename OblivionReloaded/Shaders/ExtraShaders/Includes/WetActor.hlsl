@@ -5,10 +5,16 @@
 float4 TESR_GEOM_Wetness : register(c102);	// x = wetness 0..1, y = 1 to keep the legacy base-pass highlight
 float4 TESR_WetActorData : register(c103);	// x = Darkening, y = Sheen, z = Glossiness
 
+// Scale for light that a later pass multiplies by the texture: darker where water soaks in, exactly 1
+// when dry. SpecMask (normal map alpha) marks shiny, non-porous parts.
+float WetLightScale(float SpecMask) {
+	float Soak = TESR_GEOM_Wetness.x * (1.0f - saturate(SpecMask));
+	return 1.0f - TESR_WetActorData.x * Soak;
+}
+
 // Darker albedo where water soaks in. SpecMask (normal map alpha) marks shiny, non-porous parts.
 float3 WetAlbedo(float3 Albedo, float SpecMask) {
-	float Soak = TESR_GEOM_Wetness.x * (1.0f - saturate(SpecMask));
-	return Albedo * (1.0f - TESR_WetActorData.x * Soak);
+	return Albedo * WetLightScale(SpecMask);
 }
 
 // The unscaled water-film light: a sky sheen at glancing angles tinted by the ambient light, and a
