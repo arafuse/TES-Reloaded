@@ -11,6 +11,7 @@ float4 PSLightColor[4] : register(c2);
 float4 Toggles : register(c7);
 float4 TESR_SkinData : register(c8);
 float4 TESR_SkinColor : register(c9);
+#include "../ExtraShaders/Includes/WetActor.hlsl"
 sampler2D BaseMap : register(s0);
 sampler2D NormalMap : register(s1);
 sampler2D FaceGenMap0 : register(s2);
@@ -96,9 +97,10 @@ PS_OUTPUT main(VS_OUTPUT IN) {
     r5 = psSkin(r5, PSLightColor[0].rgb, camera, IN.Light0Dir.xyz, norm);
 	
     q7 = max((1.0f * r5) + AmbientColor.rgb, 0);
-    q8 = (Toggles.x <= 0.0 ? q18 : (q18 * IN.Color.rgb));
+    q8 = WetAlbedo(Toggles.x <= 0.0 ? q18 : (q18 * IN.Color.rgb), 0.0f);
     q9 = q7 * q8;
-    q10 = (Toggles.y <= 0.0 ? q9 : ((IN.Fog.a * (IN.Fog.rgb - (q8 * q7))) + q9));
+    q9 += WetSheen(norm, camera, IN.Light0Dir.xyz, PSLightColor[0].rgb, AmbientColor.rgb);
+    q10 = (Toggles.y <= 0.0 ? q9 : ((IN.Fog.a * (IN.Fog.rgb - q9)) + q9));
     OUT.Color.a = r0.w * AmbientColor.a;
     OUT.Color.rgb = q10;
 
