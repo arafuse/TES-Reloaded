@@ -983,6 +983,8 @@ void SettingManager::LoadSettings() {
 	SettingsPrecipitations.WetActors.SoakTime = atof(value);
 	GetPrivateProfileStringA("WetActors", "DryTime", "480.0", value, SettingStringBuffer, Filename);
 	SettingsPrecipitations.WetActors.DryTime = atof(value);
+	GetPrivateProfileStringA("WetActors", "InteriorDryTime", "90.0", value, SettingStringBuffer, Filename);
+	SettingsPrecipitations.WetActors.InteriorDryTime = atof(value);
 	GetPrivateProfileStringA("WetActors", "DryPerSkippedHour", "0.5", value, SettingStringBuffer, Filename);
 	SettingsPrecipitations.WetActors.DryPerSkippedHour = atof(value);
 	SettingsPrecipitations.WetActors.NPCExposure = GetPrivateProfileIntA("WetActors", "NPCExposure", 1, Filename);
@@ -1696,6 +1698,7 @@ void SettingManager::SaveSettings(const char* Item, const char* Definition, cons
 			WritePrivateProfileStringA("WetActors", "Enabled", ToString(SettingsPrecipitations.WetActors.Enabled).c_str(), Filename);
 			WritePrivateProfileStringA("WetActors", "SoakTime", ToString(SettingsPrecipitations.WetActors.SoakTime).c_str(), Filename);
 			WritePrivateProfileStringA("WetActors", "DryTime", ToString(SettingsPrecipitations.WetActors.DryTime).c_str(), Filename);
+			WritePrivateProfileStringA("WetActors", "InteriorDryTime", ToString(SettingsPrecipitations.WetActors.InteriorDryTime).c_str(), Filename);
 			WritePrivateProfileStringA("WetActors", "DryPerSkippedHour", ToString(SettingsPrecipitations.WetActors.DryPerSkippedHour).c_str(), Filename);
 			WritePrivateProfileStringA("WetActors", "NPCExposure", ToString(SettingsPrecipitations.WetActors.NPCExposure).c_str(), Filename);
 			WritePrivateProfileStringA("WetActors", "ProbeRadius", ToString(SettingsPrecipitations.WetActors.ProbeRadius).c_str(), Filename);
@@ -2381,6 +2384,7 @@ SettingsList SettingManager::GetMenuSettings(const char* Item, const char* Defin
 			Settings["WetActorsEnabled"] = SettingsPrecipitations.WetActors.Enabled;
 			Settings["WetActorsSoakTime"] = SettingsPrecipitations.WetActors.SoakTime;
 			Settings["WetActorsDryTime"] = SettingsPrecipitations.WetActors.DryTime;
+			Settings["WetActorsInteriorDryTime"] = SettingsPrecipitations.WetActors.InteriorDryTime;
 			Settings["WetActorsDryPerSkippedHour"] = SettingsPrecipitations.WetActors.DryPerSkippedHour;
 			Settings["WetActorsNPCExposure"] = SettingsPrecipitations.WetActors.NPCExposure;
 			Settings["WetActorsProbeRadius"] = SettingsPrecipitations.WetActors.ProbeRadius;
@@ -3219,6 +3223,8 @@ void SettingManager::SetMenuSetting(const char* Item, const char* Definition, co
 				SettingsPrecipitations.WetActors.SoakTime = Value;
 			else if (!strcmp(Setting, "WetActorsDryTime"))
 				SettingsPrecipitations.WetActors.DryTime = Value;
+			else if (!strcmp(Setting, "WetActorsInteriorDryTime"))
+				SettingsPrecipitations.WetActors.InteriorDryTime = Value;
 			else if (!strcmp(Setting, "WetActorsDryPerSkippedHour"))
 				SettingsPrecipitations.WetActors.DryPerSkippedHour = Value;
 			else if (!strcmp(Setting, "WetActorsNPCExposure"))

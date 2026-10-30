@@ -12,10 +12,11 @@ static const UInt32	kMovementSwim		= 0x800;
 static const int	kMaxParentHops		= 32;
 static TimeGlobals* const kTimeGlobals	= (TimeGlobals*)0x00B332E0;
 
-/// One actor's wetness and the update frame that last advanced it.
+/// One actor's wetness, the update frame that last advanced it, and whether it was then in an interior.
 struct WetState {
 	float	Wetness;
 	UInt32	Frame;
+	bool	Indoors;
 };
 
 /// One loaded NPC as of the last scan. Values only: the ref is not dereferenced after the scan, and
@@ -24,6 +25,7 @@ struct ScannedActor {
 	UInt32		RefID;
 	NiNode*		Root;
 	bool		Outdoors;
+	bool		Indoors;
 	bool		Swimming;
 	bool		Probed;
 	NiPoint3	Position;
@@ -48,6 +50,18 @@ static float	LogSkippedHours	= 0.0f;
 static bool IsExteriorLikeCell(TESObjectCELL* Cell) {
 
 	return Cell && (Cell->worldSpace || (Cell->flags0 & TESObjectCELL::kFlags0_BehaveLikeExterior));
+
+}
+
+static bool IsInteriorCell(TESObjectCELL* Cell) {
+
+	return Cell && !Cell->worldSpace;
+
+}
+
+static float DrySeconds(bool Indoors, const SettingsPrecipitationsStruct::WetActorsStruct& Settings) {
+
+	return max(Indoors ? Settings.InteriorDryTime : Settings.DryTime, 0.01f);
 
 }
 
@@ -77,6 +91,7 @@ static void ScanCell(TESObjectCELL* Cell) {
 		Item.RefID = Ref->refID;
 		Item.Root = Root;
 		Item.Outdoors = IsExteriorLikeCell(Ref->parentCell);
+		Item.Indoors = IsInteriorCell(Ref->parentCell);
 		Item.Swimming = IsSwimming((Actor*)Ref);
 		Item.Probed = false;
 		Item.Position = Ref->pos;
@@ -121,12 +136,12 @@ static void ScanActors(const SettingsPrecipitationsStruct::WetActorsStruct& Sett
 }
 
 // Advances one actor this frame. Only actors that are wet, exposed or swimming get an entry.
-static void Advance(UInt32 RefID, bool Swimming, bool Exposed, float ActiveSeconds, float Intensity, const SettingsPrecipitationsStruct::WetActorsStruct& Settings) {
+static void Advance(UInt32 RefID, bool Indoors, bool Swimming, bool Exposed, float ActiveSeconds, float Intensity, const SettingsPrecipitationsStruct::WetActorsStruct& Settings) {
 
 	std::unordered_map<UInt32, WetState>::iterator It = Wetness.find(RefID);
 	if (It == Wetness.end()) {
 		if (!Swimming && !(Exposed && Intensity > 0.0f)) return;
-		It = Wetness.insert({ RefID, { 0.0f, Frame } }).first;
+		It = Wetness.insert({ RefID, { 0.0f, Frame, Indoors } }).first;
 	}
 	float& Wet = It->second.Wetness;
 	if (Swimming)
@@ -134,9 +149,10 @@ static void Advance(UInt32 RefID, bool Swimming, bool Exposed, float ActiveSecon
 	else if (Exposed)
 		Wet += ActiveSeconds / max(Settings.SoakTime, 0.01f) * Intensity;
 	else
-		Wet -= ActiveSeconds / max(Settings.DryTime, 0.01f);
+		Wet -= ActiveSeconds / DrySeconds(Indoors, Settings);
 	Wet = min(max(Wet, 0.0f), 1.0f);
 	It->second.Frame = Frame;
+	It->second.Indoors = Indoors;
 
 }
 
@@ -147,7 +163,7 @@ static void AddDrawRoot(NiAVObject* Root, UInt32 RefID) {
 
 }
 
-static void LogWetActors(double NowMs, bool Raining, float Intensity, bool PlayerExposed, bool PlayerSwimming, float ActiveSeconds, float SkippedHours) {
+static void LogWetActors(double NowMs, bool Raining, float Intensity, bool PlayerIndoors, bool PlayerExposed, bool PlayerSwimming, float ActiveSeconds, float SkippedHours) {
 
 	LogSkippedHours += SkippedHours;
 	if (!TheSettingManager->SettingsMain.Develop.LogWetActors) return;
@@ -161,8 +177,8 @@ static void LogWetActors(double NowMs, bool Raining, float Intensity, bool Playe
 		Probed += Item.Probed ? 1 : 0;
 		if (!Nearest || Item.DistanceSq < Nearest->DistanceSq) Nearest = &Item;
 	}
-	Logger::Log("[WetActors] player wet=%.3f exposed=%d swim=%d | rain=%d intensity=%.2f probe=%d | step=%.3fs skipped=%.3fh | tracked=%d scanned=%d probed=%d roots=%d",
-		PlayerIt != Wetness.end() ? PlayerIt->second.Wetness : 0.0f, PlayerExposed, PlayerSwimming,
+	Logger::Log("[WetActors] player wet=%.3f indoors=%d exposed=%d swim=%d | rain=%d intensity=%.2f probe=%d | step=%.3fs skipped=%.3fh | tracked=%d scanned=%d probed=%d roots=%d",
+		PlayerIt != Wetness.end() ? PlayerIt->second.Wetness : 0.0f, PlayerIndoors, PlayerExposed, PlayerSwimming,
 		Raining, Intensity, IsRainProbeWorking(), ActiveSeconds, LogSkippedHours,
 		(int)Wetness.size(), (int)Scanned.size(), Probed, (int)DrawRoots.size());
 	if (Nearest) {
@@ -231,9 +247,10 @@ void UpdateWetActors() {
 	float Intensity = Raining ? min(max(TheShaderManager->ShaderConst.Precipitations.RainData.x, 0.0f), 1.0f) : 0.0f;
 	bool ProbeWorking = IsRainProbeWorking();
 
+	bool PlayerIndoors = IsInteriorCell(Player->parentCell);
 	bool PlayerSwimming = IsSwimming((Actor*)Player);
 	bool PlayerExposed = Raining && (ProbeWorking ? IsRainReachingPlayer() : Player->IsExteriorLike());
-	Advance(Player->refID, PlayerSwimming, PlayerExposed, ActiveSeconds, Intensity, Settings);
+	Advance(Player->refID, PlayerIndoors, PlayerSwimming, PlayerExposed, ActiveSeconds, Intensity, Settings);
 
 	for (const ScannedActor& Item : Scanned) {
 		bool Exposed = false;
@@ -244,14 +261,13 @@ void UpdateWetActors() {
 			else
 				Exposed = true;
 		}
-		Advance(Item.RefID, Item.Swimming, Exposed, ActiveSeconds, Intensity, Settings);
+		Advance(Item.RefID, Item.Indoors, Item.Swimming, Exposed, ActiveSeconds, Intensity, Settings);
 	}
 
-	// Actors not advanced this frame (unloaded, or between scans out of range) keep drying.
+	// Actors not advanced this frame (unloaded, or between scans out of range) keep drying where they were last seen.
 	float SkipLoss = SkippedHours * Settings.DryPerSkippedHour;
-	float DryLoss = ActiveSeconds / max(Settings.DryTime, 0.01f);
 	for (std::unordered_map<UInt32, WetState>::iterator It = Wetness.begin(); It != Wetness.end();) {
-		if (It->second.Frame != Frame) It->second.Wetness -= DryLoss;
+		if (It->second.Frame != Frame) It->second.Wetness -= ActiveSeconds / DrySeconds(It->second.Indoors, Settings);
 		It->second.Wetness -= SkipLoss;
 		if (It->second.Wetness <= 0.0f)
 			It = Wetness.erase(It);
@@ -264,7 +280,7 @@ void UpdateWetActors() {
 	AddDrawRoot(Player->firstPersonNiNode, Player->refID);
 	for (const ScannedActor& Item : Scanned) AddDrawRoot(Item.Root, Item.RefID);
 
-	LogWetActors(NowMs, Raining, Intensity, PlayerExposed, PlayerSwimming, ActiveSeconds, SkippedHours);
+	LogWetActors(NowMs, Raining, Intensity, PlayerIndoors, PlayerExposed, PlayerSwimming, ActiveSeconds, SkippedHours);
 
 }
 
@@ -295,7 +311,7 @@ void SetWetActorRecords(const WetActorRecord* Records, UInt32 Count) {
 	ProbeActors.clear();
 	LastScanCell = NULL;
 	for (UInt32 i = 0; Records && i < Count; i++)
-		if (Records[i].Wetness > 0.0f) Wetness[Records[i].RefID] = { min(Records[i].Wetness, 1.0f), 0 };
+		if (Records[i].Wetness > 0.0f) Wetness[Records[i].RefID] = { min(Records[i].Wetness, 1.0f), 0, false };
 	LastMs = LastScanMs = LastGameHours = -1.0;
 
 }
