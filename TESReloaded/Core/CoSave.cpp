@@ -1,6 +1,7 @@
 #include "CoSave.h"
 #include "Wind.h"
 #include "WetActors.h"
+#include "RainProbe.h"
 
 static const UInt32 kCoSaveMinObseVersion	= 15; // First OBSE with GetPluginHandle
 static const UInt32 kWindRecordType			= 'WIND';
@@ -63,6 +64,7 @@ static void LoadCallback(void* Reserved) {
 
 	SetWindState(NULL);
 	SetWetActorRecords(NULL, 0);
+	ResetRainProbe();
 	while (CoSave->GetNextRecordInfo(&Type, &Version, &Length)) {
 		if (Type == kWindRecordType && !LoadWindRecord(Version, Length))
 			Logger::Log("CoSave: skipped an unreadable wind record (version %u, %u bytes); the wind starts fresh.", Version, Length);
@@ -76,6 +78,7 @@ static void NewGameCallback(void* Reserved) {
 
 	SetWindState(NULL);
 	SetWetActorRecords(NULL, 0);
+	ResetRainProbe();
 
 }
 

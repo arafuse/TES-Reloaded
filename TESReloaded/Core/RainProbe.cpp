@@ -315,3 +315,9 @@ bool GetRainProbeActorExposure(UInt32 RefID, bool* Exposed) {
 	return true;
 
 }
+
+void ResetRainProbe() {
+
+	DiscardProbes();
+
+}

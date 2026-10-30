@@ -44,6 +44,10 @@ bool IsRainReachingPlayer();
 /// Main thread, before RenderRainProbe in the same frame.
 void SetRainProbeActors(const RainProbeActor* Actors, int Count);
 
+/// Drops pending probes and the last answers, so nothing measured before a load or new game is used.
+/// Main thread, from the co-save load and new-game callbacks.
+void ResetRainProbe();
+
 /// Writes an NPC's answer from the last readback that tested it to *Exposed and returns true; returns
 /// false if that readback did not test this NPC.
 bool GetRainProbeActorExposure(UInt32 RefID, bool* Exposed);
