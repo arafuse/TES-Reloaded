@@ -18,6 +18,7 @@ sampler2D ShadowMaskMap : register(s7);
 float4 Toggles : register(c7);
 sampler2D TESR_ShadowMapBufferNear : register(s8) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
 sampler2D TESR_ShadowMapBufferFar : register(s9) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
+#include "Includes/WetActor.hlsl"
 
 // Registers:
 //
@@ -43,6 +44,7 @@ struct VS_OUTPUT {
     float2 BaseUV : TEXCOORD0;
     float3 texcoord_1 : TEXCOORD1_centroid;
     float3 texcoord_2 : TEXCOORD2_centroid;
+    float3 texcoord_3 : TEXCOORD3_centroid;
     float4 texcoord_4 : TEXCOORD4;
     float4 texcoord_6 : TEXCOORD6;
     float4 texcoord_7 : TEXCOORD7;
@@ -90,11 +92,12 @@ PS_OUTPUT main(VS_OUTPUT IN) {
     att12.x = tex2D(AttenuationMap, IN.texcoord_4.zw);			// partial precision
     q1.xyz = normalize(expand(r6.xyz));			// partial precision
     q13.xyz = saturate((1 - att2.x) - att12.x) * (shades(q1.xyz, normalize(IN.texcoord_2.xyz)) * PSLightColor[1].rgb);			// partial precision
-    q6.xyz = (Toggles.x <= 0.0 ? r0.xyz : (r0.xyz * IN.color_0.rgb));			// partial precision
+    q6.xyz = WetAlbedo(Toggles.x <= 0.0 ? r0.xyz : (r0.xyz * IN.color_0.rgb), r6.w);			// partial precision
     q5.xyz = (Shadow * (shades(q1.xyz, IN.texcoord_1.xyz) * PSLightColor[0].rgb)) + q13.xyz;			// partial precision
     q17.xyz = max(q5.xyz + ((r1.xyz * EmittanceColor.rgb) + AmbientColor.rgb), 0);			// partial precision
     q7.xyz = q17.xyz * q6.xyz;			// partial precision
-    q8.xyz = (Toggles.y <= 0.0 ? q7.xyz : ((IN.color_1.a * (IN.color_1.rgb - (q6.xyz * q17.xyz))) + q7.xyz));			// partial precision
+    q7.xyz += WetSheen(q1.xyz, WetViewFromHalf(IN.texcoord_3.xyz, IN.texcoord_1.xyz), IN.texcoord_1.xyz, PSLightColor[0].rgb, AmbientColor.rgb);
+    q8.xyz = (Toggles.y <= 0.0 ? q7.xyz : ((IN.color_1.a * (IN.color_1.rgb - q7.xyz)) + q7.xyz));			// partial precision
     OUT.color_0.a = r0.w * AmbientColor.a;			// partial precision
     OUT.color_0.rgb = q8.xyz;			// partial precision
 

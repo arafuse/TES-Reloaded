@@ -42,6 +42,7 @@ sampler2D TESR_ShadowMapBufferSkin : register(s10) = sampler_state
 };
 float4 TESR_GEOM_Toggles : register(c100);
 float4 TESR_SpecularData : register(c101);
+#include "../ExtraShaders/Includes/WetActor.hlsl"
 
 // Registers:
 //
@@ -131,8 +132,9 @@ PS_OUTPUT main(VS_OUTPUT IN)
     r0.xyzw = tex2D(BaseMap, IN.BaseUV.xy);
     q5.x = dot(q18.xyz, IN.texcoord_1.xyz);
     q9.xyz = saturate((0.2 >= q5.x ? (r2.w * max(q5.x + 0.5, 0)) : r2.w) * PSLightColor[0].rgb) * q2.xyz;
-    r0.xyz = (Toggles.x <= 0.0 ? r0.xyz : (r0.xyz * IN.LCOLOR_0.xyz));
+    r0.xyz = WetAlbedo(Toggles.x <= 0.0 ? r0.xyz : (r0.xyz * IN.LCOLOR_0.xyz), s.x);
     q4.xyz = (r0.xyz * max((q2.xyz * (saturate(q5.x) * PSLightColor[0].rgb)) + AmbientColor.rgb, 0)) + q9.xyz;
+    q4.xyz += WetSheen(q18.xyz, IN.texcoord_4.xyz, IN.texcoord_1.xyz, PSLightColor[0].rgb, AmbientColor.rgb);
     OUT.color_0.a = r0.w * AmbientColor.a;
     OUT.color_0.rgb = (Toggles.y <= 0.0 ? q4.xyz : lerp(q4.xyz, IN.LCOLOR_1.xyz, IN.LCOLOR_1.w));
     return OUT;

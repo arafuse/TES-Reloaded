@@ -17,6 +17,7 @@ float4 ShadowProjTransform : register(c33);
 row_major float4x4 SkinModelViewProj : register(c1);
 row_major float4x4 TESR_ShadowCameraToLightTransform[2] : register(c34);
 row_major float4x4 TESR_InvViewProjectionTransform : register(c97);
+#include "Includes/WetActorVS.hlsl"
 
 // Registers:
 //
@@ -63,6 +64,7 @@ struct VS_OUTPUT {
     float2 texcoord_0 : TEXCOORD0;
     float3 texcoord_1 : TEXCOORD1;
     float3 texcoord_2 : TEXCOORD2;
+    float3 texcoord_3 : TEXCOORD3;
     float4 texcoord_4 : TEXCOORD4;
 	float4 texcoord_6 : TEXCOORD6;
     float4 texcoord_7 : TEXCOORD7;
@@ -167,6 +169,8 @@ VS_OUTPUT main(VS_INPUT IN) {
     OUT.position = mdl20;
     OUT.texcoord_0.xy = IN.LTEXCOORD_0.xy;
     OUT.texcoord_1.xyz = normalize(m26.xyz);
+    float3 wetEye = WetEyePosition(SkinModelViewProj);
+    OUT.texcoord_3.xyz = normalize(mul(float3x3(r5.xyz, q36.xyz, q25.xyz), normalize(normalize(wetEye - r0.xyz) + LightDirection[0].xyz)));
     OUT.texcoord_2.xyz = mul(float3x3(r5.xyz, q36.xyz, q25.xyz), normalize(lit1.xyz));
     OUT.texcoord_4.w = 0.5;
     OUT.texcoord_4.xyz = compress(lit1.xyz / LightPosition[1].w);	// [-1,+1] to [0,1]
