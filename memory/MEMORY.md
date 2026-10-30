@@ -36,4 +36,4 @@
 - [No dusk fade for shadow gameplay](moon-shadows-no-dusk-fade.md) — moon casts shadows; shadow-driven effects use Darkness directly, never the ShadowLightDir.w dawn/dusk/moon ramp
 - [Sun shadow probe consumers](sun-shadow-probe-consumers.md) — one 8-point probe feeds stealth scaling AND OBSE IsPlayerInSunShadow (0x3007, ≥50% shadowed, ignores Darkness); each has its own Shadows.ini switch, the probe runs while either is on
 - [Actor shader passes](actor-shader-passes.md) — MEASURED: base / sun spec SLS2039 / rim SLS2075 / hair SM3LL*; multipass lighting→texture→highlight path (SLS2031/1003/2037/2041); RootParent is NOT the actor root; outdoor + dialog shader swaps
-- [Wet actors](wet-actors.md) — feature map (per-draw c102 wetness, 56-point rain probe, co-save WETA); WetAlbedo takes the RAW normal alpha; interiors not covered
+- [Wet actors](wet-actors.md) — feature map (per-draw c102 wetness, 56-point rain probe, co-save WETA, multipass overrides, InteriorDryTime); WetAlbedo/WetLightScale take the RAW normal alpha; multipass VS keep stock position math
