@@ -11,23 +11,33 @@ float3 WetAlbedo(float3 Albedo, float SpecMask) {
 	return Albedo * (1.0f - TESR_WetActorData.x * Soak);
 }
 
-// Light reflected by the water film, added to the lit colour: a sky sheen at glancing angles tinted
-// by the ambient light, and a tight sun glint. N, V and L are tangent-space and need not be unit length.
-float3 WetSheen(float3 N, float3 V, float3 L, float3 SunColor, float3 Ambient) {
-	float Wet = TESR_GEOM_Wetness.x * TESR_WetActorData.y;
-	[branch] if (Wet <= 0.0f) return 0.0f;
-	N = normalize(N);
-	V = normalize(V);
-	L = normalize(L);
+// The unscaled water-film light: a sky sheen at glancing angles tinted by the ambient light, and a
+// tight sun glint. N, V and L are tangent-space and unit length. Call only inside a wetness branch.
+float3 WetSheenTerms(float3 N, float3 V, float3 L, float3 SunColor, float3 Ambient) {
 	float Fresnel = pow(1.0f - saturate(dot(N, V)), 5.0f);
 	float3 H = normalize(L + V);
 	float Glint = pow(saturate(dot(N, H)), max(TESR_WetActorData.z, 1.0f)) * saturate(dot(N, L) * 4.0f);
-	return Wet * (Fresnel * Ambient + Glint * SunColor);
+	return Fresnel * Ambient + Glint * SunColor;
 }
 
-// The view direction from a half vector H = normalize(L + V) and the light direction L.
-float3 WetViewFromHalf(float3 H, float3 L) {
-	H = normalize(H);
-	L = normalize(L);
-	return 2.0f * dot(H, L) * H - L;
+// Water-film light added to the lit colour from a view vector. Inputs need not be unit length.
+float3 WetSheen(float3 N, float3 V, float3 L, float3 SunColor, float3 Ambient) {
+	float Wet = TESR_GEOM_Wetness.x * TESR_WetActorData.y;
+	float3 Sheen = 0.0f;
+	[branch] if (Wet > 0.0f) {
+		Sheen = Wet * WetSheenTerms(normalize(N), normalize(V), normalize(L), SunColor, Ambient);
+	}
+	return Sheen;
+}
+
+// As WetSheen, with the view vector derived from the half vector H = normalize(L + V) inside the branch.
+float3 WetSheenFromHalf(float3 N, float3 H, float3 L, float3 SunColor, float3 Ambient) {
+	float Wet = TESR_GEOM_Wetness.x * TESR_WetActorData.y;
+	float3 Sheen = 0.0f;
+	[branch] if (Wet > 0.0f) {
+		H = normalize(H);
+		L = normalize(L);
+		Sheen = Wet * WetSheenTerms(normalize(N), 2.0f * dot(H, L) * H - L, L, SunColor, Ambient);
+	}
+	return Sheen;
 }

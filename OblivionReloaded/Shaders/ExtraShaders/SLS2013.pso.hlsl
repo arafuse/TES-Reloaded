@@ -96,7 +96,7 @@ PS_OUTPUT main(VS_OUTPUT IN) {
     q5.xyz = (Shadow * (shades(q1.xyz, IN.texcoord_1.xyz) * PSLightColor[0].rgb)) + q13.xyz;			// partial precision
     q17.xyz = max(q5.xyz + ((r1.xyz * EmittanceColor.rgb) + AmbientColor.rgb), 0);			// partial precision
     q7.xyz = q17.xyz * q6.xyz;			// partial precision
-    q7.xyz += WetSheen(q1.xyz, WetViewFromHalf(IN.texcoord_3.xyz, IN.texcoord_1.xyz), IN.texcoord_1.xyz, PSLightColor[0].rgb, AmbientColor.rgb);
+    q7.xyz += WetSheenFromHalf(q1.xyz, IN.texcoord_3.xyz, IN.texcoord_1.xyz, PSLightColor[0].rgb, AmbientColor.rgb);
     q8.xyz = (Toggles.y <= 0.0 ? q7.xyz : ((IN.color_1.a * (IN.color_1.rgb - q7.xyz)) + q7.xyz));			// partial precision
     OUT.color_0.a = r0.w * AmbientColor.a;			// partial precision
     OUT.color_0.rgb = q8.xyz;			// partial precision

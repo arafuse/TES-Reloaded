@@ -103,7 +103,7 @@ PS_OUTPUT main(VS_OUTPUT IN) {
     q6.xyz = (shadow * nl) + q4.xyz;
     q7.xyz = max(q6.xyz + AmbientColor.rgb, 0);
     q9.xyz = q7.xyz * q8.xyz;
-    q9.xyz += WetSheen(q1.xyz, WetViewFromHalf(IN.texcoord_3.xyz, IN.texcoord_1.xyz), IN.texcoord_1.xyz, PSLightColor[0].rgb, AmbientColor.rgb);
+    q9.xyz += WetSheenFromHalf(q1.xyz, IN.texcoord_3.xyz, IN.texcoord_1.xyz, PSLightColor[0].rgb, AmbientColor.rgb);
     q10.xyz = (Toggles.y <= 0.0 ? q9.xyz : ((IN.LCOLOR_1.w * (IN.LCOLOR_1.xyz - q9.xyz)) + q9.xyz));
     OUT.color_0.a = r0.w * AmbientColor.a;
     OUT.color_0.rgb = q10.xyz;

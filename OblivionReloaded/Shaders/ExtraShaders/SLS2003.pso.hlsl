@@ -106,7 +106,7 @@ PS_OUTPUT main(VS_OUTPUT IN) {
     q3.xyz = WetAlbedo(Toggles.x <= 0.0 ? r0.xyz : (r0.xyz * IN.LCOLOR_0.xyz), s);
     q3 += (((((coeff * spec) * shadow) * saturate(nl * 2.5f)) * baseIntensity) * 0.9f) * TESR_GEOM_Wetness.y;
     q4.xyz = q2.xyz * q3.xyz;
-    q4.xyz += WetSheen(wetNormal, WetViewFromHalf(IN.texcoord_4.xyz, IN.texcoord_1.xyz), IN.texcoord_1.xyz, PSLightColor[0].rgb, AmbientColor.rgb);
+    q4.xyz += WetSheenFromHalf(wetNormal, IN.texcoord_4.xyz, IN.texcoord_1.xyz, PSLightColor[0].rgb, AmbientColor.rgb);
     q5.xyz = (Toggles.y <= 0.0 ? q4.xyz : ((IN.LCOLOR_1.w * (IN.LCOLOR_1.xyz - q4.xyz)) + q4.xyz));
     OUT.color_0.a = r0.w * AmbientColor.a;
     OUT.color_0.rgb = q5.xyz;
