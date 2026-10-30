@@ -663,6 +663,7 @@ static void GrassOrderLogTrace(const char* Tag, void* Ra, NiPropertyState* Prope
 // scene render to the next, so the first-person, shell and reflection renders are included. Logs
 // every draw whose geometry hangs under a loaded actor's root node, then each shader pair actors used
 // and whether OR overrides it. Sizes the shader work for any per-actor material effect.
+// Also logs every OR/stock shader pairing drawn in the frame ([ShaderPairs]).
 
 /// One loaded actor's scene-graph root, captured when the capture is armed.
 struct ActorDrawRoot {
@@ -680,10 +681,17 @@ struct ActorShaderPair {
 	int						Blended;
 };
 
+/// A vertex/pixel shader pair seen during the capture where only one of the two is an OR override.
+struct MismatchedShaderPair {
+	NiD3DVertexShaderEx*	VertexShader;
+	NiD3DPixelShaderEx*		PixelShader;
+};
+
 static bool							ActorDrawCapture = false;
 static int							ActorDrawCount = 0;
 static std::vector<ActorDrawRoot>	ActorDrawRoots;
 static std::vector<ActorShaderPair>	ActorShaderPairs;
+static std::vector<MismatchedShaderPair>	MismatchedShaderPairs;
 
 static void AddActorDrawRoots(TESObjectCELL* Cell) {
 
@@ -705,6 +713,7 @@ static void ArmActorDrawCapture() {
 
 	ActorDrawRoots.clear();
 	ActorShaderPairs.clear();
+	MismatchedShaderPairs.clear();
 	ActorDrawCount = 0;
 	Logger::Log("[ActorDraws] ==== capture start ====");
 	if (NiNode* Node = Player->GetNode()) ActorDrawRoots.push_back({ Node, Player->refID, false });
@@ -725,6 +734,8 @@ static void FinishActorDrawCapture() {
 
 	ActorDrawCapture = false;
 	Logger::Log("[ActorDraws] ==== capture end: %d actor draws, %d shader pairs ====", ActorDrawCount, (int)ActorShaderPairs.size());
+	Logger::Log("[ShaderPairs] %d mismatched pairs", (int)MismatchedShaderPairs.size());
+	MismatchedShaderPairs.clear();
 	for (const ActorShaderPair& Pair : ActorShaderPairs) {
 		Logger::Log("[ActorDraws] pair VS=%s (%s) PS=%s (%s) draws=%d skinned=%d blended=%d",
 			Pair.VertexShader->ShaderName, Pair.VertexShader->ShaderProg ? "OR" : "vanilla",
@@ -746,6 +757,20 @@ static const ActorDrawRoot* FindActorDrawRoot(NiAVObject* Object) {
 
 }
 
+// OR compiles every override as shader model 3, and D3D9 pairs model 3 only with model 3. Logs once
+// per capture each pair in which one shader is overridden and the other is stock.
+static void LogShaderPairMismatch(NiD3DVertexShaderEx* VertexShader, NiD3DPixelShaderEx* PixelShader) {
+
+	if ((VertexShader->ShaderProg != NULL) == (PixelShader->ShaderProg != NULL)) return;
+	for (const MismatchedShaderPair& Pair : MismatchedShaderPairs)
+		if (Pair.VertexShader == VertexShader && Pair.PixelShader == PixelShader) return;
+	MismatchedShaderPairs.push_back({ VertexShader, PixelShader });
+	Logger::Log("[ShaderPairs] mismatch VS=%s%s PS=%s%s",
+		VertexShader->ShaderName, VertexShader->ShaderProg ? "" : "(v)",
+		PixelShader->ShaderName, PixelShader->ShaderProg ? "" : "(v)");
+
+}
+
 static void LogActorDraw(NiGeometry* Geometry, NiSkinInstance* SkinInstance, NiD3DVertexShaderEx* VertexShader, NiD3DPixelShaderEx* PixelShader, NiDX9RenderState* RenderState) {
 
 	const ActorDrawRoot* Root = FindActorDrawRoot(Geometry);
@@ -755,13 +780,14 @@ static void LogActorDraw(NiGeometry* Geometry, NiSkinInstance* SkinInstance, NiD
 	const char* Scene = *kIsRenderingWaterReflections ? "reflection" :
 		TheShaderManager->InMainScenePass ? "main" :
 		RenderManager::CurrentPass == RenderManager::PassNear ? "shell" : "other";
-	Logger::Log("[ActorDraws] %04d ref=%08X%s geo=%s VS=%s%s PS=%s%s skin=%d rootParent=%d blend=%d scene=%s wet=%.2f",
+	Logger::Log("[ActorDraws] %04d ref=%08X%s geo=%s VS=%s%s PS=%s%s skin=%d rootParent=%d blend=%d src=%d dst=%d zfunc=%d scene=%s wet=%.2f",
 		++ActorDrawCount, Root->RefID, Root->FirstPerson ? " (1st)" : "",
 		Geometry->m_pcName ? Geometry->m_pcName : "-",
 		VertexShader->ShaderName, VertexShader->ShaderProg ? "" : "(v)",
 		PixelShader->ShaderName, PixelShader->ShaderProg ? "" : "(v)",
 		SkinInstance ? 1 : 0, SkinInstance && SkinInstance->RootParent == Root->Root ? 1 : 0,
-		Blended ? 1 : 0, Scene, GetDrawWetness(Geometry));
+		Blended ? 1 : 0, (int)RenderState->GetRenderState(D3DRS_SRCBLEND), (int)RenderState->GetRenderState(D3DRS_DESTBLEND),
+		(int)RenderState->GetRenderState(D3DRS_ZFUNC), Scene, GetDrawWetness(Geometry));
 
 	for (ActorShaderPair& Pair : ActorShaderPairs) {
 		if (Pair.VertexShader == VertexShader && Pair.PixelShader == PixelShader) {
@@ -922,7 +948,10 @@ UInt32 RenderHook::TrackSetupShaderPrograms(NiGeometry* Geometry, NiSkinInstance
 	}
 
 	if (VertexShader && PixelShader) {
-		if (ActorDrawCapture) LogActorDraw(Geometry, SkinInstance, VertexShader, PixelShader, RenderState);
+		if (ActorDrawCapture) {
+			LogShaderPairMismatch(VertexShader, PixelShader);
+			LogActorDraw(Geometry, SkinInstance, VertexShader, PixelShader, RenderState);
+		}
 		if (GrassOrderCapture) { // [GrassOrderDbg]
 			void* Ra = _ReturnAddress();
 			GrassOrderSeq++;
