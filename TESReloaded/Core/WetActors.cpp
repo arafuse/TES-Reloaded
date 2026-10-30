@@ -39,6 +39,8 @@ static UInt32	Frame			= 0;
 static double	LastMs			= -1.0;
 static double	LastScanMs		= -1.0;
 static TESObjectCELL*	LastScanCell	= NULL;	// compared by pointer only, never dereferenced
+static SInt32	LastGridX		= 0;
+static SInt32	LastGridY		= 0;
 static double	LastGameHours	= -1.0;	// < 0: resync on the next update
 static double	LastLogMs		= -1.0;
 static float	LogSkippedHours	= 0.0f;
@@ -212,9 +214,15 @@ void UpdateWetActors() {
 	}
 	LastGameHours = Hours;
 
-	if (LastScanMs < 0.0 || NowMs - LastScanMs >= kScanIntervalMs || Player->parentCell != LastScanCell) {
+	// A grid shift unloads cells, so rescan at once to drop their actors' roots before the addresses are reused.
+	SInt32 GridX = Tes->gridCellArray ? Tes->gridCellArray->worldX : 0;
+	SInt32 GridY = Tes->gridCellArray ? Tes->gridCellArray->worldY : 0;
+	bool GridShifted = GridX != LastGridX || GridY != LastGridY;
+	if (LastScanMs < 0.0 || NowMs - LastScanMs >= kScanIntervalMs || Player->parentCell != LastScanCell || GridShifted) {
 		LastScanMs = NowMs;
 		LastScanCell = Player->parentCell;
+		LastGridX = GridX;
+		LastGridY = GridY;
 		ScanActors(Settings);
 	}
 	SetRainProbeActors(ProbeActors.data(), (int)ProbeActors.size());
