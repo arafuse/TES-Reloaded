@@ -658,8 +658,6 @@ static void GrassOrderLogTrace(const char* Tag, void* Ra, NiPropertyState* Prope
 
 }
 
-// SKY* vertex shaders write no depth in the near shell: they pin z == w, which the shell's sub-1.0
-// depth clear rejects, or sit far beyond its far plane at M.
 // [ActorDraws] retained diagnostic, armed by the Develop.LogShaders key for one frame: from one main
 // scene render to the next, so the first-person, shell and reflection renders are included. Logs
 // every draw whose geometry hangs under a loaded actor's root node, then each shader pair actors used
@@ -776,6 +774,8 @@ static void LogActorDraw(NiGeometry* Geometry, NiSkinInstance* SkinInstance, NiD
 
 }
 
+// SKY* vertex shaders write no depth in the near shell: they pin z == w, which the shell's sub-1.0
+// depth clear rejects, or sit far beyond its far plane at M.
 static bool IsSkyShader(NiD3DVertexShaderEx* VertexShader) {
 
 	return VertexShader && VertexShader->ShaderName && !memcmp(VertexShader->ShaderName, "SKY", 3);
