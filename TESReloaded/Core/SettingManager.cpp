@@ -440,6 +440,7 @@ SettingManager::SettingManager() {
 	SettingsMain.Develop.ProfileSampler = GetPrivateProfileIntA("Develop", "ProfileSampler", 0, Filename);
 	SettingsMain.Develop.ProfileSamplerHz = GetPrivateProfileIntA("Develop", "ProfileSamplerHz", 1000, Filename);
 	SettingsMain.Develop.NearShellDebug = GetPrivateProfileIntA("Develop", "NearShellDebug", 0, Filename);
+	SettingsMain.Develop.LogSunShadowStealth = GetPrivateProfileIntA("Develop", "LogSunShadowStealth", 0, Filename);
 
 	GameLoading = false;
 
@@ -567,6 +568,8 @@ void SettingManager::LoadSettings() {
 	SettingsGrass.GrassDensity = GetPrivateProfileIntA("Default", "GrassDensity", 6, Filename);
 	GetPrivateProfileStringA("Default", "WindCoefficient", "100", value, SettingStringBuffer, Filename);
 	SettingsGrass.WindCoefficient = atof(value);
+	GetPrivateProfileStringA("Default", "SwaySpeed", "1.0", value, SettingStringBuffer, Filename);
+	SettingsGrass.SwaySpeed = atof(value);
 	GetPrivateProfileStringA("Default", "ScaleX", "2.0", value, SettingStringBuffer, Filename);
 	SettingsGrass.ScaleX = atof(value);
 	GetPrivateProfileStringA("Default", "ScaleY", "2.0", value, SettingStringBuffer, Filename);
@@ -937,12 +940,17 @@ void SettingManager::LoadSettings() {
 	strcpy(Filename, CurrentPath);
 	strcat(Filename, SettingsPath);
 	strcat(Filename, "Precipitations\\Precipitations.ini");
+	GetPrivateProfileStringA("Rain", "Slant", "1.0", value, SettingStringBuffer, Filename);
+	SettingsPrecipitations.Rain.Slant = atof(value);
+	SettingsPrecipitations.Rain.IsRainHittingPlayer = GetPrivateProfileIntA("Rain", "IsRainHittingPlayer", 0, Filename);
 	GetPrivateProfileStringA("Snow", "DepthStep", "2.5", value, SettingStringBuffer, Filename);
 	SettingsPrecipitations.Snow.DepthStep = atof(value);
 	GetPrivateProfileStringA("Snow", "Flakes", "0.5", value, SettingStringBuffer, Filename);
 	SettingsPrecipitations.Snow.Flakes = atof(value);
 	GetPrivateProfileStringA("Snow", "Speed", "1.8", value, SettingStringBuffer, Filename);
 	SettingsPrecipitations.Snow.Speed = atof(value);
+	GetPrivateProfileStringA("Snow", "Slant", "1.5", value, SettingStringBuffer, Filename);
+	SettingsPrecipitations.Snow.Slant = atof(value);
 	GetPrivateProfileStringA("WetWorld", "Amount", "1.0", value, SettingStringBuffer, Filename);
 	SettingsPrecipitations.WetWorld.Amount = atof(value);
 	GetPrivateProfileStringA("WetWorld", "Increase", "0.001", value, SettingStringBuffer, Filename);
@@ -1249,10 +1257,14 @@ void SettingManager::LoadSettings() {
 	SettingsShadows.Exteriors.OrthoOcclusionBias = atof(value);
 
 	SettingsShadows.Exteriors.UsePostProcessing = GetPrivateProfileIntA("Exteriors", "UsePostProcessing", 1, Filename);
+	SettingsShadows.Exteriors.SunShadowStealth = GetPrivateProfileIntA("Exteriors", "SunShadowStealth", 0, Filename);
+	SettingsShadows.Exteriors.IsPlayerInSunShadow = GetPrivateProfileIntA("Exteriors", "IsPlayerInSunShadow", 0, Filename);
 	SettingsShadows.Exteriors.UseIntervalUpdate = GetPrivateProfileIntA("Exteriors", "UseIntervalUpdate", 1, Filename);
 	SettingsShadows.Exteriors.UseInstancing = GetPrivateProfileIntA("Exteriors", "UseInstancing", 1, Filename);
 	SettingsShadows.Exteriors.CacheStaticShadows = GetPrivateProfileIntA("Exteriors", "CacheStaticShadows", 1, Filename);
+	SettingsShadows.Exteriors.RebakeMovedStatics = GetPrivateProfileIntA("Exteriors", "RebakeMovedStatics", 1, Filename);
 	SettingsShadows.Exteriors.DynamicTrees = GetPrivateProfileIntA("Exteriors", "DynamicTrees", 0, Filename);
+	SettingsShadows.Exteriors.DynamicTreesFar = GetPrivateProfileIntA("Exteriors", "DynamicTreesFar", 1, Filename);
 	GetPrivateProfileStringA("Exteriors", "FadeTime", "1.0", value, SettingStringBuffer, Filename);
 	SettingsShadows.Exteriors.FadeTime = atof(value);
 	GetPrivateProfileStringA("Exteriors", "Darkness", "0.2", value, SettingStringBuffer, Filename);
@@ -1569,6 +1581,7 @@ void SettingManager::SaveSettings(const char* Item, const char* Definition, cons
 			WritePrivateProfileStringA("Default", "ScaleZ", ToString(SettingsGrass.ScaleZ).c_str(), Filename);
 			WritePrivateProfileStringA("Default", "WindCoefficient", ToString(SettingsGrass.WindCoefficient).c_str(), Filename);
 			WritePrivateProfileStringA("Default", "WindEnabled", ToString(SettingsGrass.WindEnabled).c_str(), Filename);
+			WritePrivateProfileStringA("Default", "SwaySpeed", ToString(SettingsGrass.SwaySpeed).c_str(), Filename);
 			WritePrivateProfileStringA("Default", "CollisionRadius", ToString(SettingsGrass.CollisionRadius).c_str(), Filename);
 			WritePrivateProfileStringA("Default", "CollisionStrength", ToString(SettingsGrass.CollisionStrength).c_str(), Filename);
 			WritePrivateProfileStringA("Default", "CollisionFlattenStrength", ToString(SettingsGrass.CollisionFlattenStrength).c_str(), Filename);
@@ -1617,6 +1630,8 @@ void SettingManager::SaveSettings(const char* Item, const char* Definition, cons
 		else if (!strcmp(Definition, "Shadows")) {
 			strcat(Filename, "Shadows\\Shadows.ini");
 			WritePrivateProfileStringA("Exteriors", "UsePostProcessing", ToString(SettingsShadows.Exteriors.UsePostProcessing).c_str(), Filename);
+			WritePrivateProfileStringA("Exteriors", "SunShadowStealth", ToString(SettingsShadows.Exteriors.SunShadowStealth).c_str(), Filename);
+			WritePrivateProfileStringA("Exteriors", "IsPlayerInSunShadow", ToString(SettingsShadows.Exteriors.IsPlayerInSunShadow).c_str(), Filename);
 			WritePrivateProfileStringA("Exteriors", "Darkness", ToString(SettingsShadows.Exteriors.Darkness).c_str(), Filename);
 			WritePrivateProfileStringA("Exteriors", "DarknessCloudy", ToString(SettingsShadows.ExteriorsAlt.Darkness).c_str(), Filename);
 			WritePrivateProfileStringA("Exteriors", "DarknessPrecipitation", ToString(SettingsShadows.ExteriorsPrecip.Darkness).c_str(), Filename);
@@ -1653,6 +1668,13 @@ void SettingManager::SaveSettings(const char* Item, const char* Definition, cons
 			WritePrivateProfileStringA("Default", "Sharpening", ToString(SettingsTAA.Sharpening).c_str(), Filename);
 			WritePrivateProfileStringA("Default", "JitterEnabled", ToString(SettingsTAA.JitterEnabled).c_str(), Filename);
 			WritePrivateProfileStringA("Default", "JitterPattern", ToString(SettingsTAA.JitterPattern).c_str(), Filename);
+		}
+		else if (!strcmp(Definition, "Precipitations")) {
+			WritePrivateProfileStringA("Effects", "Precipitations", ToString(SettingsMain.Effects.Precipitations).c_str(), SettingsMain.Main.MainFile);
+			strcat(Filename, "Precipitations\\Precipitations.ini");
+			WritePrivateProfileStringA("Rain", "Slant", ToString(SettingsPrecipitations.Rain.Slant).c_str(), Filename);
+			WritePrivateProfileStringA("Rain", "IsRainHittingPlayer", ToString(SettingsPrecipitations.Rain.IsRainHittingPlayer).c_str(), Filename);
+			WritePrivateProfileStringA("Snow", "Slant", ToString(SettingsPrecipitations.Snow.Slant).c_str(), Filename);
 		}
 		else if (!strcmp(Definition, "SnowAccumulation")) {
 			WritePrivateProfileStringA("Effects", "SnowAccumulation", ToString(SettingsMain.Effects.SnowAccumulation).c_str(), SettingsMain.Main.MainFile);
@@ -2245,6 +2267,7 @@ SettingsList SettingManager::GetMenuSettings(const char* Item, const char* Defin
 			Settings["ScaleZ"] = SettingsGrass.ScaleZ;
 			Settings["WindCoefficient"] = SettingsGrass.WindCoefficient;
 			Settings["WindEnabled"] = SettingsGrass.WindEnabled;
+			Settings["SwaySpeed"] = SettingsGrass.SwaySpeed;
 			Settings["CollisionRadius"] = SettingsGrass.CollisionRadius;
 			Settings["CollisionStrength"] = SettingsGrass.CollisionStrength;
 			Settings["CollisionFlattenStrength"] = SettingsGrass.CollisionFlattenStrength;
@@ -2276,6 +2299,8 @@ SettingsList SettingManager::GetMenuSettings(const char* Item, const char* Defin
 		else if (!strcmp(Definition, "Shadows")) {
 			if (!strcmp(Section, "Exteriors")) {
 				Settings["UsePostProcessing"] = SettingsShadows.Exteriors.UsePostProcessing;
+				Settings["SunShadowStealth"] = SettingsShadows.Exteriors.SunShadowStealth;
+				Settings["IsPlayerInSunShadow"] = SettingsShadows.Exteriors.IsPlayerInSunShadow;
 				Settings["Darkness"] = SettingsShadows.Exteriors.Darkness;
 				Settings["DarknessCloudy"] = SettingsShadows.ExteriorsAlt.Darkness;
 				Settings["DarknessPrecipitation"] = SettingsShadows.ExteriorsPrecip.Darkness;
@@ -2320,6 +2345,11 @@ SettingsList SettingManager::GetMenuSettings(const char* Item, const char* Defin
 			Settings["MaterialThickness"] = SettingsSkin.MaterialThickness;
 			Settings["RimScalar"] = SettingsSkin.RimScalar;
 			Settings["SpecularPower"] = SettingsSkin.SpecularPower;
+		}
+		else if (!strcmp(Definition, "Precipitations")) {
+			Settings["RainSlant"] = SettingsPrecipitations.Rain.Slant;
+			Settings["IsRainHittingPlayer"] = SettingsPrecipitations.Rain.IsRainHittingPlayer;
+			Settings["SnowSlant"] = SettingsPrecipitations.Snow.Slant;
 		}
 		else if (!strcmp(Definition, "SnowAccumulation")) {
 			Settings["Amount"] = SettingsPrecipitations.SnowAccumulation.Amount;
@@ -2979,6 +3009,8 @@ void SettingManager::SetMenuSetting(const char* Item, const char* Definition, co
 				SettingsGrass.WindCoefficient = Value;
 			else if (!strcmp(Setting, "WindEnabled"))
 				SettingsGrass.WindEnabled = Value;
+			else if (!strcmp(Setting, "SwaySpeed"))
+				SettingsGrass.SwaySpeed = Value;
 			else if (!strcmp(Setting, "CollisionRadius"))
 				SettingsGrass.CollisionRadius = Value;
 			else if (!strcmp(Setting, "CollisionStrength"))
@@ -3066,6 +3098,13 @@ void SettingManager::SetMenuSetting(const char* Item, const char* Definition, co
 				else if (!strcmp(Setting, "BiasMaxSlope")) {
 					SettingsShadows.Exteriors.BiasMaxSlope = Value;
 				}
+				// UpdateSunShadowStealth creates or releases the probe on the next frame.
+				else if (!strcmp(Setting, "SunShadowStealth")) {
+					SettingsShadows.Exteriors.SunShadowStealth = Value;
+				}
+				else if (!strcmp(Setting, "IsPlayerInSunShadow")) {
+					SettingsShadows.Exteriors.IsPlayerInSunShadow = Value;
+				}
 				else if (!strcmp(Setting, "UsePostProcessing")) {
 					// Special case for forward or post-process shadowing
 					SettingsShadows.Exteriors.UsePostProcessing = Value;
@@ -3128,6 +3167,14 @@ void SettingManager::SetMenuSetting(const char* Item, const char* Definition, co
 				SettingsSkin.UseVanillaShaders = Value;
 				TheShaderManager->SwitchShaderStatus("SkinVanilla");
 			}
+		}
+		else if (!strcmp(Definition, "Precipitations")) {
+			if (!strcmp(Setting, "RainSlant"))
+				SettingsPrecipitations.Rain.Slant = Value;
+			else if (!strcmp(Setting, "IsRainHittingPlayer"))
+				SettingsPrecipitations.Rain.IsRainHittingPlayer = Value; // UpdateRainProbe creates or releases the probe next frame
+			else if (!strcmp(Setting, "SnowSlant"))
+				SettingsPrecipitations.Snow.Slant = Value;
 		}
 		else if (!strcmp(Definition, "SnowAccumulation")) {
 			if (!strcmp(Setting, "Increase"))

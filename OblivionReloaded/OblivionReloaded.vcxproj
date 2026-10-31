@@ -148,6 +148,10 @@ copy "$(TargetDir)$(TargetName).pdb" "C:\Games\Steam\steamapps\common\Oblivion\D
     <ClInclude Include="..\TESReloaded\Core\TreeCollision.h" />
     <ClInclude Include="..\TESReloaded\Core\TreeCover.h" />
     <ClInclude Include="..\TESReloaded\Core\TreeCoverMath.h" />
+    <ClInclude Include="..\TESReloaded\Core\SunShadowStealth.h" />
+    <ClInclude Include="..\TESReloaded\Core\Wind.h" />
+    <ClInclude Include="..\TESReloaded\Core\CoSave.h" />
+    <ClInclude Include="..\TESReloaded\Core\RainProbe.h" />
     <ClInclude Include="..\TESReloaded\Core\WeatherSmoothing.h" />
     <ClInclude Include="..\TESReloaded\Core\MountedCombat.h" />
     <ClInclude Include="..\TESReloaded\Core\PluginVersion.h" />
@@ -190,6 +194,10 @@ copy "$(TargetDir)$(TargetName).pdb" "C:\Games\Steam\steamapps\common\Oblivion\D
     <ClCompile Include="..\TESReloaded\Core\RagdollCollision.cpp" />
     <ClCompile Include="..\TESReloaded\Core\TreeCollision.cpp" />
     <ClCompile Include="..\TESReloaded\Core\TreeCover.cpp" />
+    <ClCompile Include="..\TESReloaded\Core\SunShadowStealth.cpp" />
+    <ClCompile Include="..\TESReloaded\Core\Wind.cpp" />
+    <ClCompile Include="..\TESReloaded\Core\CoSave.cpp" />
+    <ClCompile Include="..\TESReloaded\Core\RainProbe.cpp" />
     <ClCompile Include="..\TESReloaded\Core\WeatherSmoothing.cpp" />
     <ClCompile Include="..\TESReloaded\Core\MountedCombat.cpp" />
     <ClCompile Include="..\TESReloaded\Core\PluginVersion.cpp" />

@@ -7,6 +7,9 @@
 #include <iostream>
 #include <filesystem>
 #include "TreeCover.h"
+#include "SunShadowStealth.h"
+#include "Wind.h"
+#include "RainProbe.h"
 #define EFFECTQUADFORMAT D3DFVF_XYZ | D3DFVF_TEX1
 
 #if defined(NEWVEGAS)
@@ -282,6 +285,10 @@ bool ShaderProgram::SetConstantTableValue1(LPCSTR Name, UInt32 Index) {
 		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.Precipitations.RainData;
 	else if (!strcmp(Name, "TESR_SnowData"))
 		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.Precipitations.SnowData;
+	else if (!strcmp(Name, "TESR_PrecipitationSlant"))
+		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.Precipitations.SlantData;
+	else if (!strcmp(Name, "TESR_WindData"))
+		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.WindData;
 	else if (!strcmp(Name, "TESR_WorldTransform"))
 		FloatShaderValues[Index].Value = (D3DXVECTOR4*)&TheRenderManager->worldMatrix;
 	else if (!strcmp(Name, "TESR_ViewTransform"))
@@ -1857,6 +1864,8 @@ void ShaderManager::UpdateWetWorld(ShaderConstants& ShaderConst, TESWeather* cur
 
 void ShaderManager::UpdatePrecipitation(ShaderConstants& ShaderConst, TESWeather* currentWeather, TESWeather* previousWeather, float weatherPercent) {
 	const float RainRampStart = 0.5f;
+	ShaderConst.Precipitations.SlantData.x = TheSettingManager->SettingsPrecipitations.Rain.Slant;
+	ShaderConst.Precipitations.SlantData.y = TheSettingManager->SettingsPrecipitations.Snow.Slant;
 	if (currentWeather->weatherType == TESWeather::WeatherType::kType_Rainy) {
 		if (weatherPercent > RainRampStart) {
 			ShaderConst.Precipitations.RainData.x = (weatherPercent - RainRampStart) / (1.0f - RainRampStart);
@@ -2433,11 +2442,12 @@ void ShaderManager::UpdateSharpening(ShaderConstants& ShaderConst) {
 void ShaderManager::UpdateVolumetricFog(ShaderConstants& ShaderConst, float weatherPercent) {
 	ShaderConst.VolumetricFog.Data.x = TheSettingManager->SettingsVolumetricFog.Exponent;
 	ShaderConst.VolumetricFog.Data.y = TheSettingManager->SettingsVolumetricFog.ColorCoeff;
-	// Data.w: 0-1 fog weight, off for weathers whose far fog exceeds MaxDistance.
+	// Data.w: 0-1 fog weight, off for weathers whose far fog exceeds MaxDistance and
+	// in interiors, including BehaveLikeExterior ones; the shadow darkness blends read it too.
 	float MaxDistance = TheSettingManager->SettingsVolumetricFog.MaxDistance;
 	float FromWeight = ShaderConst.oldfogEnd > MaxDistance ? 0.0f : 1.0f;
 	float ToWeight = ShaderConst.currentfogEnd > MaxDistance ? 0.0f : 1.0f;
-	ShaderConst.VolumetricFog.Data.w = std::lerp(FromWeight, ToWeight, weatherPercent);
+	ShaderConst.VolumetricFog.Data.w = Player->GetWorldSpace() ? std::lerp(FromWeight, ToWeight, weatherPercent) : 0.0f;
 	ShaderConst.VolumetricFog.Data.z = TheSettingManager->SettingsVolumetricFog.Amount * ShaderConst.VolumetricFog.Data.w;
 }
 
@@ -2660,8 +2670,10 @@ void ShaderManager::UpdateConstants() {
 		UpdateCelestialDirections(ShaderConst, SunRoot, Masser, Secunda, currentClimate, lastGameTime);
 		UpdateMoonPhaseCoeff(ShaderConst, currentClimate, GameDay);
 
-		if (isExteriorLike)
+		if (isExteriorLike) {
 			dayPercent = UpdateExteriorLighting(ShaderConst, currentWeather, previousWeather, weatherPercent);
+			UpdateWind(ShaderConst, currentWeather);
+		}
 		else
 			UpdateInteriorLighting(ShaderConst, currentCell, InteriorLighting, isFullyInitialized, InitFrameCount);
 
@@ -2678,6 +2690,8 @@ void ShaderManager::UpdateConstants() {
 	}
 
 	UpdateTreeCover();
+	UpdateSunShadowStealth();
+	UpdateRainProbe();
 
 	if (TheSettingManager->SettingsMain.Shaders.POM)     UpdatePOM(ShaderConst);
 	if (TheSettingManager->SettingsMain.Shaders.Terrain) UpdateTerrain(ShaderConst);
@@ -3360,6 +3374,7 @@ void ShaderManager::RenderEffects(IDirect3DSurface9* RenderTarget) {
 		if (Effects->Precipitations && isExteriorLike) {
 			if (ShaderConst.Precipitations.RainData.x > 0.0f) {
 				RunEffect(RainEffect, Device, RenderTarget, false, false);
+				RenderRainProbe(Device);
 			}
 			if (ShaderConst.Precipitations.SnowData.x > 0.0f) {
 				RunEffect(SnowEffect, Device, RenderTarget, false, false);
@@ -3380,7 +3395,8 @@ void ShaderManager::RenderEffects(IDirect3DSurface9* RenderTarget) {
 			RunEffect(VolumetricFogEffect, Device, RenderTarget, false, false);
 		}
 	}
-	if (Effects->VolumetricLight && isExteriorLike) {
+	// Real worldspaces only: BehaveLikeExterior interiors get the sun but no volumetrics.
+	if (Effects->VolumetricLight && Player->GetWorldSpace()) {
 		RunEffect(VolumetricLightEffect, Device, RenderTarget, true, false);
 	}
 	if (Effects->SMAA) {
@@ -3598,6 +3614,7 @@ void ShaderManager::RenderShadowsMidScene() {
 	if (DoSun) {
 		ShadowsExteriorsEffect->SetCT();
 		ShadowsExteriorsEffect->Render(Device, SceneRT, RenderedSurface, false);
+		RenderSunShadowProbe(Device);
 	}
 	if (DoPoint) {
 		ShadowsPointEffect->SetCT();

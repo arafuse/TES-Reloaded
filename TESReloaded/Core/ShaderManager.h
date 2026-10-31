@@ -133,6 +133,7 @@ struct ShaderConstants {
 	struct PrecipitationsStruct {
 		D3DXVECTOR4		RainData;
 		D3DXVECTOR4		SnowData;
+		D3DXVECTOR4		SlantData;	///< x = rain slant, y = snow slant (fall-line tilt at full wind speed)
 	};
 	struct WaterLensStruct {
 		D3DXVECTOR4		Time;
@@ -279,6 +280,7 @@ struct ShaderConstants {
 	TESWeather*				pWeather;
 	float					currentsunGlare;
 	float					currentwindSpeed;
+	D3DXVECTOR4				WindData;		///< x,y = unit world direction the wind blows toward, z = speed 0-1 (see Wind.h)
 	UInt8					oldsunGlare;
 	UInt8					oldwindSpeed;
 	D3DXVECTOR4				fogColor;

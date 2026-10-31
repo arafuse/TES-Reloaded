@@ -290,6 +290,7 @@ struct SettingsMainStruct {
 		UInt8	ProfileSampler;		// key code: toggles the main-thread sampling profiler
 		int		ProfileSamplerHz;
 		UInt8	NearShellDebug;
+		UInt8	LogSunShadowStealth;	// logs the player sun shadow probe about once a second
 	};
 
 	MainStruct					Main;
@@ -340,9 +341,13 @@ struct SettingsShadowStruct {
 		float				RebakeMarginFar;
 		float				RebakeSunInterval;
 		bool				CacheStaticShadows;
+		bool				RebakeMovedStatics;		// [Exteriors] RebakeMovedStatics: redraw a cached map when a static in it moves
 		bool				DynamicTrees;			// [Exteriors] DynamicTrees: redraw trees every frame so they sway
+		bool				DynamicTreesFar;		// [Exteriors] DynamicTreesFar: DynamicTrees for the far map too
 		float				FadeTime;				// [Exteriors] FadeTime: static-map crossfade seconds (0 = off)
 		bool                UsePostProcessing;
+		bool				SunShadowStealth;		// [Exteriors] SunShadowStealth: sun shadow lowers the player's light level
+		bool				IsPlayerInSunShadow;	// [Exteriors] IsPlayerInSunShadow: run the player sun shadow probe for the OBSE command
 		bool				UseIntervalUpdate;
 		bool				UseInstancing;
 		float				deferredNormBias;
@@ -412,6 +417,7 @@ struct SettingsGrassStruct {
 	bool WindEnabled;
 	int GrassDensity;
 	float WindCoefficient;
+	float SwaySpeed;					///< Grass sway animation speed; 1 matches the vanilla sway at timescale 30, at any timescale
 	float ScaleX;
 	float ScaleY;
 	float ScaleZ;
@@ -580,13 +586,15 @@ struct SettingsBloomStruct {
 
 struct SettingsPrecipitationsStruct {
 	struct RainStruct {
-
+		float Slant;	///< Rain fall-line tilt (horizontal per vertical) at full wind speed; 0 keeps rain vertical
+		bool IsRainHittingPlayer;	///< Runs the player rain probe for the OBSE command; off, the command returns 0
 	};
 	
 	struct SnowStruct {
 		float DepthStep;
 		float Flakes;
 		float Speed;
+		float Slant;	///< Snowfall tilt (horizontal per vertical) at full wind speed; 0 keeps snow vertical
 	};
 	
 	struct WetWorldStruct {

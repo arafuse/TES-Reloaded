@@ -8,6 +8,8 @@ float4x4 TESR_ShadowCameraToLightTransformOrtho;
 float4 TESR_CameraPosition;
 float4 TESR_Tick;
 float4 TESR_SnowData;
+float4 TESR_WindData;
+float4 TESR_PrecipitationSlant;
 float4 TESR_OrthoData;
 
 sampler2D TESR_RenderedBuffer : register(s0) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
@@ -25,6 +27,9 @@ static const float3x3 p = float3x3(30.323122,30.323122,30.323122,30.323122,30.32
 // Combined world->ortho transform. Both operands are uniforms, so D3DX folds this to a
 // once-per-draw CPU preshader -- lets the occlusion march step incrementally (below).
 static const float4x4 OrthoCombined = mul(TESR_WorldViewProjectionTransform, TESR_ShadowCameraToLightTransformOrtho);
+
+#include "PrecipitationWind.hlsl"
+static const float3x3 SnowRotation = WindSlantRotation(TESR_PrecipitationSlant.y);
 
 #define DEPTH 2.5
 #define WIDTH 0.5
@@ -130,7 +135,7 @@ float4 Snow( VSOUT IN ) : COLOR0
 	float sn = 0.0f;
 	float dof = 5.0f * sin(timetick * 0.1f);
 	int l = TESR_SnowData.x * SnowLayers;
-	float2 uv = cylindrical(world);
+	float2 uv = cylindrical(mul(SnowRotation, world));
 	
 	for (int i = 0; i < l; i++) {
 		q = uv * (1.0f + i * DEPTH) * 0.5f;

@@ -16,6 +16,9 @@
 #include "RagdollCollision.h"
 #include "TreeCollision.h"
 #include "TreeCover.h"
+#include "SunShadowStealth.h"
+#include "Wind.h"
+#include "CoSave.h"
 #include "WeatherSmoothing.h"
 #include "D3D9Hook.h"
 
@@ -58,6 +61,9 @@ extern "C" {
 			if (TheSettingManager->SettingsMain.GrassMode.Enabled) CreateGrassHook();
 			CreateTreeCollisionHook();
 			CreateTreeCoverHook();
+			CreateSunShadowStealthHook();
+			CreateWindHook();
+			CreateCoSave(Interface);
 			if (TheSettingManager->SettingsMain.CameraMode.Enabled) CreateCameraModeHook();
 
 			if (TheSettingManager->SettingsMain.EquipmentMode.Enabled) {
