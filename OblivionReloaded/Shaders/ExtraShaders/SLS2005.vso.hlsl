@@ -17,6 +17,7 @@ row_major float4x4 SkinModelViewProj : register(c1);
 row_major float4x4 TESR_ShadowCameraToLightTransform[2] : register(c34);
 row_major float4x4 TESR_ShadowCameraToLightTransformSkin : register(c120);
 row_major float4x4 TESR_InvViewProjectionTransform : register(c97);
+#include "Includes/WetActorVS.hlsl"
 
 // Registers:
 //
@@ -60,6 +61,7 @@ struct VS_OUTPUT {
     float4 position : POSITION;
     float2 texcoord_0 : TEXCOORD0;
     float3 texcoord_1 : TEXCOORD1;
+    float3 texcoord_4 : TEXCOORD4;
     float4 texcoord_6 : TEXCOORD6;
 	float4 texcoord_7 : TEXCOORD7;
     float4 texcoord_8 : TEXCOORD8;
@@ -117,6 +119,7 @@ VS_OUTPUT main(VS_INPUT IN) {
     r1.x = dot(Bones[0 + offset.w].xyz, IN.LTANGENT.xyz);
     r2.xyz = ((1 - weight(IN.LBLENDWEIGHT.xyz)) * r1.xyz) + r2.xyz;
     r1.xyz = normalize(r2.xyz);
+    float3 wetT = r1.xyz;
     r1.x = dot(r1.xyz, LightDirection[0].xyz);
     r2.z = dot(Bones[2 + offset.y].xyz, IN.LBINORMAL.xyz);
     r2.y = dot(Bones[1 + offset.y].xyz, IN.LBINORMAL.xyz);
@@ -140,7 +143,8 @@ VS_OUTPUT main(VS_INPUT IN) {
     r3.y = dot(Bones[1 + offset.x].xyz, IN.LNORMAL.xyz);
     r3.x = dot(Bones[0 + offset.x].xyz, IN.LNORMAL.xyz);
     r2.x = dot(Bones[0 + offset.w].xyz, IN.LBINORMAL.xyz);
-    r1.y = dot(normalize(((1 - weight(IN.LBLENDWEIGHT.xyz)) * r2.xyz) + r5.xyz), LightDirection[0].xyz);
+    float3 wetB = normalize(((1 - weight(IN.LBLENDWEIGHT.xyz)) * r2.xyz) + r5.xyz);
+    r1.y = dot(wetB, LightDirection[0].xyz);
     r4.xyz = (IN.LBLENDWEIGHT.x * r3.xyz) + r4.xyz;
     r3.z = dot(Bones[2 + offset.z].xyz, IN.LNORMAL.xyz);
     r3.y = dot(Bones[1 + offset.z].xyz, IN.LNORMAL.xyz);
@@ -149,7 +153,8 @@ VS_OUTPUT main(VS_INPUT IN) {
     r3.z = dot(Bones[2 + offset.w].xyz, IN.LNORMAL.xyz);
     r3.y = dot(Bones[1 + offset.w].xyz, IN.LNORMAL.xyz);
     r3.x = dot(Bones[0 + offset.w].xyz, IN.LNORMAL.xyz);
-    r1.z = dot(normalize(((1 - weight(IN.LBLENDWEIGHT.xyz)) * r3.xyz) + r4.xyz), LightDirection[0].xyz);
+    float3 wetN = normalize(((1 - weight(IN.LBLENDWEIGHT.xyz)) * r3.xyz) + r4.xyz);
+    r1.z = dot(wetN, LightDirection[0].xyz);
     r0.xyz = ((1 - weight(IN.LBLENDWEIGHT.xyz)) * q14.xyz) + q13.xyz;
 	
     mdl16 = mul(SkinModelViewProj, r0);
@@ -159,6 +164,8 @@ VS_OUTPUT main(VS_INPUT IN) {
     OUT.position = mdl16;
     OUT.texcoord_0.xy = IN.LTEXCOORD_0.xy;
     OUT.texcoord_1.xyz = normalize(r1.xyz);
+    float3 wetEye = WetEyePosition(SkinModelViewProj);
+    OUT.texcoord_4.xyz = normalize(mul(float3x3(wetT, wetB, wetN), normalize(normalize(wetEye - r0.xyz) + LightDirection[0].xyz)));
     OUT.texcoord_6 = mul(mdl16, TESR_ShadowCameraToLightTransform[0]);
 	OUT.texcoord_7 = mul(mdl16, TESR_ShadowCameraToLightTransform[1]);
     OUT.texcoord_9 = mul(mdl16, TESR_ShadowCameraToLightTransformSkin);

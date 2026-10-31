@@ -195,6 +195,10 @@ struct ShaderConstants {
 		D3DXVECTOR4		Coeffs;
 		D3DXVECTOR4		Data;
 	};
+	struct WetActorStruct {
+		D3DXVECTOR4		Geometry;	///< Per draw (TESR_GEOM_Wetness): x = drawn actor's wetness, y = 1 to keep the legacy base-pass highlight
+		D3DXVECTOR4		Data;		///< TESR_WetActorData: x = Darkening, y = Sheen, z = Glossiness; all 0 while WetActors is off
+	};
 	struct SharpeningStruct {
 		D3DXVECTOR4		Data;
 	};
@@ -318,6 +322,7 @@ struct ShaderConstants {
 	SnowAccumulationStruct	SnowAccumulation;
 	MotionBlurStruct		MotionBlur;
 	WetWorldStruct			WetWorld;
+	WetActorStruct			WetActor;
 	SharpeningStruct		Sharpening;
 	TAAStruct				TAA;
 	VolumetricFogStruct		VolumetricFog;

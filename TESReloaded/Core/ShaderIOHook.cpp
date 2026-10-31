@@ -14,6 +14,8 @@
 #define RefractionPixelShaders "SLS2063.pso SM3028.pso SM3029.pso SM3030.pso"
 #define POMShadowPixelShaders "PAR2000.pso PAR2002.pso PAR2004.pso PAR2006.pso PAR2010.pso PAR2016.pso PAR2018.pso PAR2026.pso SLS2048.pso"
 #define POMShadowBlendPixelShaders "SLS2049.pso"
+#define WetActorPixelShaders "SLS2003.pso SLS2012.pso SLS2013.pso SLS2018.pso SLS2019.pso SKIN2001.pso SKIN2003.pso SM3LL001.pso SM3LL003.pso SLS2031.pso SLS2032.pso SLS2035.pso SLS2037.pso SLS2041.pso SKIN2006.pso SKIN2008.pso"
+#define NewHalfVectorVertexShaders "SLS2005.vso SLS2010.vso"
 #elif defined(SKYRIM)
 #define kCreateVertexShader 0x00CCBB00
 #define kCreatePixelShader 0x00CCC420
@@ -105,6 +107,7 @@ NiD3DVertexShader* ShaderIOHook::TrackCreateVertexShader(char* FileName, char* A
 	VertexShader->isTree = strstr(TreeVertexShaders, VertexShader->ShaderName) != NULL;
 	VertexShader->isGrass = !memcmp(VertexShader->ShaderName, "GRASS", 5);
 	TheShaderManager->LoadShader(VertexShader);
+	VertexShader->hasNewHalfVector = VertexShader->ShaderProg && strstr(NewHalfVectorVertexShaders, VertexShader->ShaderName) != NULL;
 	return (NiD3DVertexShader*)VertexShader;
 
 }
@@ -130,6 +133,7 @@ NiD3DPixelShader* ShaderIOHook::TrackCreatePixelShader(char* FileName, char* Arg
 	PixelShader->isSkin = strstr(SkinPixelShaders, PixelShader->ShaderName) != NULL;
 	PixelShader->isRefraction = strstr(RefractionPixelShaders, PixelShader->ShaderName) != NULL;
 	PixelShader->isNearWater = IsNearWaterShader(PixelShader->ShaderName);
+	PixelShader->isWetActor = strstr(WetActorPixelShaders, PixelShader->ShaderName) != NULL;
 	TheShaderManager->LoadShader(PixelShader);
 	PixelShader->isPOMShadowWriter = PixelShader->ShaderProg && strstr(POMShadowPixelShaders, PixelShader->ShaderName) != NULL;
 	PixelShader->isPOMShadowBlender = PixelShader->ShaderProg && strstr(POMShadowBlendPixelShaders, PixelShader->ShaderName) != NULL;

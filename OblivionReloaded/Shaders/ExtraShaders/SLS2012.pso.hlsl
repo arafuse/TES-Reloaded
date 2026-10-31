@@ -17,6 +17,7 @@ float4 Toggles : register(c7);
 sampler2D TESR_ShadowMapBufferNear : register(s8) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
 sampler2D TESR_ShadowMapBufferFar : register(s9) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
 float4 TESR_SpecularData : register(c101);
+#include "Includes/WetActor.hlsl"
 
 // Registers:
 //
@@ -97,12 +98,13 @@ PS_OUTPUT main(VS_OUTPUT IN) {
     float coeff = min(gCoeff, rCoeff);
     coeff = min(coeff, TESR_SpecularData.x);
     float baseIntensity = smoothstep(.25f, 1.0f, length(r0.xyz));  
-    q8.xyz = (Toggles.x <= 0.0 ? r0.xyz : (r0.xyz * IN.LCOLOR_0.xyz));
-    q8.xyz += (((((coeff * spec) * shadow) * saturate(nl * 2.5f)) * baseIntensity));
+    q8.xyz = WetAlbedo(Toggles.x <= 0.0 ? r0.xyz : (r0.xyz * IN.LCOLOR_0.xyz), s);
+    q8.xyz += (((((coeff * spec) * shadow) * saturate(nl * 2.5f)) * baseIntensity)) * TESR_GEOM_Wetness.y;
     q6.xyz = (shadow * nl) + q4.xyz;
     q7.xyz = max(q6.xyz + AmbientColor.rgb, 0);
     q9.xyz = q7.xyz * q8.xyz;
-    q10.xyz = (Toggles.y <= 0.0 ? q9.xyz : ((IN.LCOLOR_1.w * (IN.LCOLOR_1.xyz - (q8.xyz * q7.xyz))) + q9.xyz));
+    q9.xyz += WetSheenFromHalf(q1.xyz, IN.texcoord_3.xyz, IN.texcoord_1.xyz, PSLightColor[0].rgb, AmbientColor.rgb);
+    q10.xyz = (Toggles.y <= 0.0 ? q9.xyz : ((IN.LCOLOR_1.w * (IN.LCOLOR_1.xyz - q9.xyz)) + q9.xyz));
     OUT.color_0.a = r0.w * AmbientColor.a;
     OUT.color_0.rgb = q10.xyz;
 

@@ -10,6 +10,7 @@
 #include "SunShadowStealth.h"
 #include "Wind.h"
 #include "RainProbe.h"
+#include "WetActors.h"
 #define EFFECTQUADFORMAT D3DFVF_XYZ | D3DFVF_TEX1
 
 #if defined(NEWVEGAS)
@@ -20,7 +21,7 @@
 #define CurrentBlend *WaterBlend
 #define TerrainShaders "SLS2001.vso SLS2001.pso SLS2064.vso SLS2068.pso SLS2042.vso SLS2048.pso SLS2043.vso SLS2049.pso"
 #define ExteriorExtraShaders "SM3LL003.pso SM3002.vso"
-#define InteriorShadowShaders "SLS2022.pso SLS2021.pso SLS2016.vso SLS2015.vso SLS2015.pso SLS2012.vso SLS2011.vso SLS2010.pso SLS2008.vso SLS2007.vso SLS2002.vso SLS2002.pso SLS2000.vso SLS2000.pso SLS1006.vso SLS1005.vso SLS1004.pso SLS1S006.vso SLS1S005.vso SLS1003.pso SLS2009.pso SLS2035.vso SLS2036.vso SLS2041.pso SM3002.vso SM3001.vso SM3001.pso SM3000.vso SM3LL003.pso SM3LL001.pso SM3LL000.pso"
+#define InteriorShadowShaders "SLS2022.pso SLS2021.pso SLS2016.vso SLS2015.vso SLS2015.pso SLS2012.vso SLS2011.vso SLS2010.pso SLS2008.vso SLS2007.vso SLS2002.vso SLS2002.pso SLS2000.vso SLS2000.pso SLS1006.vso SLS1005.vso SLS1004.pso SLS1S006.vso SLS1S005.vso SLS1003.pso SLS2009.pso SM3002.vso SM3001.vso SM3001.pso SM3000.vso SM3LL003.pso SM3LL001.pso SM3LL000.pso"
 #define ExteriorDialogShaders "SLS2003.pso SLS2018.pso SLS2039.pso SKIN2001.pso SKIN2003.pso SKIN2007.pso"
 #define BloodShaders "GDECALS.vso GDECAL.pso SLS2040.vso SLS2046.pso"
 #elif defined(SKYRIM)
@@ -481,6 +482,8 @@ bool ShaderProgram::SetConstantTableValue2(LPCSTR Name, UInt32 Index) {
 		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.Terrain.ParallaxData;
 	else if (!strcmp(Name, "TESR_TerrainReliefData"))
 		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.Terrain.ReliefData;
+	else if (!strcmp(Name, "TESR_WetActorData"))
+		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.WetActor.Data;
 	else {
 		return false;
 	}
@@ -493,6 +496,8 @@ bool ShaderProgram::SetPerGeomConstantTableValue(LPCSTR Name, UInt32 Index) {
 		PerGeomFloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.Specular.EyePosition;
 	else if (!strcmp(Name, "TESR_GEOM_Toggles"))
 		PerGeomFloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.Geometry.Toggles;
+	else if (!strcmp(Name, "TESR_GEOM_Wetness"))
+		PerGeomFloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.WetActor.Geometry;
 	else {
 		return false;
 	}
@@ -1978,10 +1983,9 @@ static void CollectActorsFromObjectList(TList<TESObjectREFR>::Entry* entry, TESO
                                         const GrassViewCull& cull, float cullRadius) {
 	while (entry) {
 		if (TESObjectREFR* ref = entry->item) {
-			if (ref->baseForm && ref != player) {
-				UInt8 formType = ref->baseForm->formType;
-				if (formType >= TESForm::FormType::kFormType_NPC &&
-				    formType <= TESForm::FormType::kFormType_LeveledCreature &&
+			if (ref != player) {
+				// Only ACHR/ACRE refs are Actor objects; a plain REFR can still have an actor base.
+				if ((ref->formType == TESForm::FormType::kFormType_ACHR || ref->formType == TESForm::FormType::kFormType_ACRE) &&
 				    !((Actor*)ref)->LifeState) {
 					float dx = ref->pos.x - player->pos.x;
 					float dy = ref->pos.y - player->pos.y;
@@ -2692,6 +2696,11 @@ void ShaderManager::UpdateConstants() {
 	UpdateTreeCover();
 	UpdateSunShadowStealth();
 	UpdateRainProbe();
+	const SettingsPrecipitationsStruct::WetActorsStruct& WetSettings = TheSettingManager->SettingsPrecipitations.WetActors;
+	ShaderConst.WetActor.Data = WetSettings.Enabled
+		? D3DXVECTOR4(WetSettings.Darkening, WetSettings.Sheen, WetSettings.Glossiness, 0.0f)
+		: D3DXVECTOR4(0.0f, 0.0f, 0.0f, 0.0f);
+	UpdateWetActors();
 
 	if (TheSettingManager->SettingsMain.Shaders.POM)     UpdatePOM(ShaderConst);
 	if (TheSettingManager->SettingsMain.Shaders.Terrain) UpdateTerrain(ShaderConst);

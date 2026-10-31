@@ -16,6 +16,9 @@ public:
 	bool					isSun;
 	bool					isTree;
 	bool					isGrass;
+	/// Our override outputs a sun half vector the stock shader never did (SLS2005, SLS2010), so OR's
+	/// legacy base-pass highlight, which used to read nothing there, is held off to keep dry actors unchanged.
+	bool					hasNewHalfVector;
 };
 
 class NiD3DPixelShaderEx : public NiD3DPixelShader {
@@ -42,6 +45,8 @@ public:
 	/// One of our alpha-blended pixel shaders (near-land layers) whose COLOR1 side channel is blended
 	/// into TESR_POMDepthBuffer by the draw's own blend state.
 	bool					isPOMShadowBlender;
+	/// A base-pass actor pixel shader that applies the wet-actors look from TESR_GEOM_Wetness.
+	bool					isWetActor;
 };
 
 class RenderManager: public NiDX9Renderer {

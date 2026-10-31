@@ -291,6 +291,7 @@ struct SettingsMainStruct {
 		int		ProfileSamplerHz;
 		UInt8	NearShellDebug;
 		UInt8	LogSunShadowStealth;	// logs the player sun shadow probe about once a second
+		UInt8	LogWetActors;			// logs player and nearest-NPC wetness about once a second
 	};
 
 	MainStruct					Main;
@@ -615,11 +616,27 @@ struct SettingsPrecipitationsStruct {
 		float BlurNormDropThreshhold;
 		float BlurRadiusMultiplier;
 	};
-	
+
+	/// [WetActors]: actors soak up rain and dry off again (WetActors.cpp).
+	struct WetActorsStruct {
+		bool	Enabled;			///< Master switch for wetness tracking and the shader terms
+		float	SoakTime;			///< Real seconds in full rain from dry to fully wet
+		float	DryTime;			///< Real seconds out of the rain from fully wet to dry
+		float	InteriorDryTime;	///< Real seconds in an interior cell (no worldspace) from fully wet to dry
+		float	DryPerSkippedHour;	///< Wetness lost per game hour skipped by waiting, sleeping or fast travel
+		int		NPCExposure;		///< 0 = Simple (raining and outdoors), 1 = Probe (rain probe within ProbeRadius)
+		float	ProbeRadius;		///< Probe NPCs within this distance of the player; capped at the ortho map radius
+		int		MaxProbedNPCs;		///< Most NPCs probed per frame, nearest first; capped at RainProbeMaxActors
+		float	Darkening;			///< How much fully wet porous surfaces darken, 0..1
+		float	Sheen;				///< Strength of the wet sky sheen and sun glint
+		float	Glossiness;			///< Sun glint exponent
+	};
+
 	RainStruct				Rain;
 	SnowStruct				Snow;
 	WetWorldStruct			WetWorld;
 	SnowAccumulationStruct	SnowAccumulation;
+	WetActorsStruct			WetActors;
 };
 
 struct SettingsMotionBlurStruct {
