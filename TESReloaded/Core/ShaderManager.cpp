@@ -1983,10 +1983,9 @@ static void CollectActorsFromObjectList(TList<TESObjectREFR>::Entry* entry, TESO
                                         const GrassViewCull& cull, float cullRadius) {
 	while (entry) {
 		if (TESObjectREFR* ref = entry->item) {
-			if (ref->baseForm && ref != player) {
-				UInt8 formType = ref->baseForm->formType;
-				if (formType >= TESForm::FormType::kFormType_NPC &&
-				    formType <= TESForm::FormType::kFormType_LeveledCreature &&
+			if (ref != player) {
+				// Only ACHR/ACRE refs are Actor objects; a plain REFR can still have an actor base.
+				if ((ref->formType == TESForm::FormType::kFormType_ACHR || ref->formType == TESForm::FormType::kFormType_ACRE) &&
 				    !((Actor*)ref)->LifeState) {
 					float dx = ref->pos.x - player->pos.x;
 					float dy = ref->pos.y - player->pos.y;

@@ -82,9 +82,9 @@ static void ScanCell(TESObjectCELL* Cell) {
 	if (!Cell) return;
 	for (TList<TESObjectREFR>::Entry* Entry = &Cell->objectList.First; Entry; Entry = Entry->next) {
 		TESObjectREFR* Ref = Entry->item;
-		if (!Ref || Ref == Player || !Ref->baseForm) continue;
-		UInt8 TypeID = Ref->baseForm->formType;
-		if (TypeID < TESForm::FormType::kFormType_NPC || TypeID > TESForm::FormType::kFormType_LeveledCreature) continue;
+		if (!Ref || Ref == Player) continue;
+		// A plain REFR can have an actor base (e.g. a leveled creature), but only ACHR/ACRE refs are Actor objects.
+		if (Ref->formType != TESForm::FormType::kFormType_ACHR && Ref->formType != TESForm::FormType::kFormType_ACRE) continue;
 		NiNode* Root = Ref->GetNode();
 		if (!Root) continue;
 		ScannedActor Item;
