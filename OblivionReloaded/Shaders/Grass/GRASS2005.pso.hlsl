@@ -16,6 +16,9 @@ sampler2D TESR_ShadowMapBufferNear : register(s4) = sampler_state { ADDRESSU = C
 sampler2D TESR_ShadowMapBufferFar : register(s5) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
 row_major float4x4 TESR_InvViewProjectionTransform : register(c20);
 row_major float4x4 TESR_ShadowCameraToLightTransformFar : register(c24);
+float4 TESR_GroundcoverPressParams : register(c32);
+float4 TESR_GroundcoverPressXY0 : register(c33);
+float4 TESR_GroundcoverPressXY1 : register(c34);
 //
 //
 // Registers:
@@ -34,7 +37,7 @@ row_major float4x4 TESR_ShadowCameraToLightTransformFar : register(c24);
 // Structures:
 
 struct VS_OUTPUT {
-    float2 DiffuseUV : TEXCOORD0;
+    float4 DiffuseUV : TEXCOORD0;	// zw = batch-relative XY
     float3 texcoord_4 : TEXCOORD4_centroid;
     float4 texcoord_5 : TEXCOORD5_centroid;
     float4 texcoord_1 : TEXCOORD1;
@@ -51,6 +54,7 @@ struct PS_OUTPUT {
 
 // Code:
 
+#include "Includes/GroundcoverPress.hlsl"
 
 PS_OUTPUT main(VS_OUTPUT IN) {
     PS_OUTPUT OUT;
@@ -85,13 +89,18 @@ PS_OUTPUT main(VS_OUTPUT IN) {
     }
     
     q3.rgb *= dimCoeff;
-    
+
+    float pressDarken = 0.0;
+    float pressCleared = 0.0;
+    [branch]
+    if (TESR_GroundcoverPressParams.y > 0.0) GroundcoverPress(IN.DiffuseUV.zw, pressDarken, pressCleared);
+
     q5.xyz = (saturate((1 - att0.x) - att4.x) * (0.4 * PointLightColor.xyz));
     q5.xyz += (saturate((1 - attCustom0.x) - attCustom4.x) * (0.4 * IN.texcoord_3.xyz));
     q5.xyz += q3.xyz;
-    OUT.color_0.a = (AlphaTestRef.x >= r0.w ? 0 : IN.texcoord_5.w);
-    OUT.color_0.rgb = (r0.xyz * q5.xyz) + ((IN.color_0.rgb - (r0.xyz * q5.xyz)) * IN.color_0.a);
-    return OUT;
+    q5.xyz *= 1.0 - pressDarken;
+    OUT.color_0.a = (AlphaTestRef.x >= r0.w || pressCleared > 0.0 ? 0 : IN.texcoord_5.w);
+    OUT.color_0.rgb = (r0.xyz * q5.xyz) + ((IN.color_0.rgb - (r0.xyz * q5.xyz)) * IN.color_0.a);    return OUT;
 };
 
 // approximately 24 instruction slots used (5 texture, 19 arithmetic)

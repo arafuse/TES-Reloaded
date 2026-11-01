@@ -67,7 +67,7 @@ struct VS_INPUT {
 struct VS_OUTPUT {
     float4 color_0 : COLOR0;
     float4 position : POSITION;
-    float2 texcoord_0 : TEXCOORD0;
+    float4 texcoord_0 : TEXCOORD0;	// zw = batch-relative XY for the groundcover press
     float4 texcoord_1 : TEXCOORD1;
     float4 texcoord_2 : TEXCOORD2;
     float3 texcoord_3 : TEXCOORD3;
@@ -140,9 +140,10 @@ VS_OUTPUT main(VS_INPUT IN) {
     r4.x = dot(DiffuseDir.xyz, r0.xyz);
     r1.xy = (((GrassWindSway(fracr((q0.x / 128) + WindData.w)) * WindData.z) * sqr(IN.color_0.a)) * WindData.xy) + r1.xy;
 
-    r1.xyz += GrassCollisionDisplacement(InstanceData[0 + IN.texcoord_1.x].xy, sqr(IN.color_0.a));
+    r1.xyz += GrassCollisionDisplacement(InstanceData[0 + IN.texcoord_1.x].xy, sqr(IN.color_0.a), r3.z);
 
     r1.xyz = r1.xyz + InstanceData[0 + IN.texcoord_1.x];
+    OUT.texcoord_0.zw = r1.xy;
     OUT.texcoord_1.w = 0.5;
     OUT.texcoord_1.xyz = compress((LightPosition.xyz - r1.xyz) / LightPosition.w);    if (distance(LightPosition.xyz, TESR_PointLightPosition[0].xyz) < 3.5f)   {        OUT.texcoord_2.w = 0.5;        OUT.texcoord_2.xyz = compress((TESR_PointLightPosition[1].xyz - r1.xyz) / TESR_PointLightPosition[1].w);        OUT.texcoord_3.xyz = TESR_PointLightColor[1];    }    else {        OUT.texcoord_2.w = 0.5;            OUT.texcoord_2.xyz = compress((TESR_PointLightPosition[0].xyz - r1.xyz) / TESR_PointLightPosition[0].w);        OUT.texcoord_3.xyz = TESR_PointLightColor[0];    }	// [-1,+1] to [0,1]
     r0 = mul(ModelViewProj, r1);

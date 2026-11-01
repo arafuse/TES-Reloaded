@@ -885,25 +885,97 @@ static void RestoreShellWaterDepthSamplers() {
 
 }
 
-// Uploads the grass collision sources relative to this instance (c254/c255), the only grass constants
-// that change per draw; SetCT already uploads c253 at every grass shader bind. The vertex constant
-// space is full, so the two recovery weights ride in c255.zw, which is why there are three sources.
-static void SetGrassCollisionConstants(NiTransform* WorldTransform) {
+/// Cached model height of one grass batch's geometry data. Vertices and BoundRadius detect a freed
+/// pointer reused by a different model.
+struct GrassModelHeight {
+	UInt16	Vertices;
+	float	BoundRadius;
+	float	Height;
+};
+static std::map<NiGeometryData*, GrassModelHeight> GrassModelHeights;
+static std::map<int, bool> GrassModelHeightsLogged;
 
+// Model-space height of a grass batch's model: the highest vertex when the CPU copy is kept,
+// otherwise the top of the bounding sphere (an overestimate for wide, flat models).
+static float GetGrassModelHeight(NiGeometry* Geometry) {
+
+	NiGeometryData* Data = Geometry->geomData;
+	if (!Data) return FLT_MAX;
+
+	auto Cached = GrassModelHeights.find(Data);
+	if (Cached != GrassModelHeights.end() && Cached->second.Vertices == Data->Vertices && Cached->second.BoundRadius == Data->Bound.Radius)
+		return Cached->second.Height;
+
+	float Height = Data->Bound.Center.z + Data->Bound.Radius;
+	bool FromVertices = Data->Vertex && Data->Vertices;
+	if (FromVertices) {
+		Height = -FLT_MAX;
+		for (UInt32 i = 0; i < Data->Vertices; i++) Height = max(Height, Data->Vertex[i].z);
+	}
+
+	if (GrassModelHeights.size() >= 4096) GrassModelHeights.clear();
+	GrassModelHeights[Data] = { Data->Vertices, Data->Bound.Radius, Height };
+
+	int HeightKey = (int)(Height * 10.0f);
+	if (GrassModelHeightsLogged.size() < 64 && GrassModelHeightsLogged.find(HeightKey) == GrassModelHeightsLogged.end()) {
+		GrassModelHeightsLogged[HeightKey] = true;
+		Logger::Log("[Groundcover] %s verts=%u bound=(z %.1f r %.1f) height=%.1f from %s -> %s",
+			Geometry->m_pcName ? Geometry->m_pcName : "-", Data->Vertices, Data->Bound.Center.z, Data->Bound.Radius,
+			Height, FromVertices ? "vertices" : "bound", Height <= TheSettingManager->SettingsGrass.GroundcoverMaxHeight ? "groundcover" : "grass");
+	}
+	return Height;
+
+}
+
+// Uploads the per-geometry grass constants: the collision sources relative to this geometry (VS
+// c254/c255), the collision params with groundcover's sources zeroed (VS c253), and the groundcover
+// press (PS c32-c34). Each value is also stored in ShaderConst, so a later SetCT re-uploads the same
+// thing. The vertex constant space is full, so the two recovery weights ride in c255.zw.
+static void SetGrassCollisionConstants(NiGeometry* Geometry, const NiTransform* WorldTransform) {
+
+	ShaderConstants::GrassStruct& Grass = TheShaderManager->ShaderConst.Grass;
 	float cx = WorldTransform->pos.x;
 	float cy = WorldTransform->pos.y;
-	D3DXVECTOR4 xy0(
+	bool Groundcover = GetGrassModelHeight(Geometry) <= TheSettingManager->SettingsGrass.GroundcoverMaxHeight;
+
+	Grass.CollisionParams.w = Groundcover ? 0.0f : (float)TheShaderManager->GrassCollisionSourceCount;
+	Grass.CollisionXY[0] = D3DXVECTOR4(
 		TheShaderManager->GrassCollisionSources[0].x - cx,
 		TheShaderManager->GrassCollisionSources[0].y - cy,
 		TheShaderManager->GrassCollisionSources[1].x - cx,
 		TheShaderManager->GrassCollisionSources[1].y - cy);
-	D3DXVECTOR4 xy1(
+	Grass.CollisionXY[1] = D3DXVECTOR4(
 		TheShaderManager->GrassCollisionSources[2].x - cx,
 		TheShaderManager->GrassCollisionSources[2].y - cy,
 		TheShaderManager->GrassCollisionWeights[0],
 		TheShaderManager->GrassCollisionWeights[1]);
-	TheRenderManager->device->SetVertexShaderConstantF(254, (const float*)&xy0, 1);
-	TheRenderManager->device->SetVertexShaderConstantF(255, (const float*)&xy1, 1);
+	TheRenderManager->device->SetVertexShaderConstantF(253, (const float*)&Grass.CollisionParams, 3);
+
+	const ShaderManager::GrassActorPos* Press = TheShaderManager->GroundcoverPressSources;
+	Grass.GroundcoverPress[0].y = Groundcover ? TheSettingManager->SettingsGrass.GroundcoverPressStrength : 0.0f;
+	Grass.GroundcoverPress[0].w = (float)TheShaderManager->GroundcoverPressSourceCount;
+	Grass.GroundcoverPress[1] = D3DXVECTOR4(Press[0].x - cx, Press[0].y - cy, Press[1].x - cx, Press[1].y - cy);
+	Grass.GroundcoverPress[2] = D3DXVECTOR4(Press[2].x - cx, Press[2].y - cy, 0.0f, 0.0f);
+	TheRenderManager->device->SetPixelShaderConstantF(32, (const float*)Grass.GroundcoverPress, 3);
+
+}
+
+/// TallGrassShader's per-geometry instance staging: thiscall (Geometry, TallGrassShaderProperty*),
+/// ret 8. The grass batch driver (0x7F7680) runs SetupShaderPrograms only for a batch's first
+/// geometry, but reaches this for every one, directly or through TallGrassShader slot 11.
+static const UInt32 kSetupGrassInstances = 0x007E6A90;
+
+class GrassInstanceHook {
+public:
+	void TrackSetupGrassInstances(NiGeometry* Geometry, void* GrassProperty);
+};
+
+void (__thiscall GrassInstanceHook::* SetupGrassInstances)(NiGeometry*, void*);
+void (__thiscall GrassInstanceHook::* TrackSetupGrassInstancesPtr)(NiGeometry*, void*);
+void GrassInstanceHook::TrackSetupGrassInstances(NiGeometry* Geometry, void* GrassProperty) {
+
+	(this->*SetupGrassInstances)(Geometry, GrassProperty);
+	if (Geometry && Geometry->geomData) SetGrassCollisionConstants(Geometry, &Geometry->m_worldTransform);
 
 }
 
@@ -1079,8 +1151,6 @@ UInt32 RenderHook::TrackSetupShaderPrograms(NiGeometry* Geometry, NiSkinInstance
 		FrameProfiler::Scope EngineScope(FrameProfiler::Buck_HookEngine);
 		result = (this->*SetupShaderPrograms)(Geometry, SkinInstance, SkinPartition, GeometryBufferData, PropertyState, EffectState, WorldTransform, WorldBound);
 	}
-
-	if (VertexShader && VertexShader->ShaderProg && VertexShader->isGrass) SetGrassCollisionConstants(WorldTransform);
 
 	return result;
 }
@@ -1539,6 +1609,8 @@ void CreateRenderHook() {
 	TrackWaterReflectionCull				= &RenderHook::TrackWaterReflectionCull;
 	*((int*)&SetSamplerState)				= 0x0077B610;
 	TrackSetSamplerState					= &RenderHook::TrackSetSamplerState;
+	*((int*)&SetupGrassInstances)			= kSetupGrassInstances;
+	TrackSetupGrassInstancesPtr				= &GrassInstanceHook::TrackSetupGrassInstances;
 #elif defined(SKYRIM)
 	*((int*)&SetupRenderingPass)			= 0x00CC4E80;
 	TrackSetupRenderingPass					= &RenderHook::TrackSetupRenderingPass;
@@ -1568,6 +1640,7 @@ void CreateRenderHook() {
 	DetourAttach(&(PVOID&)SaveGameScreenshot,					  &TrackSaveGameScreenshot);
 	//DetourAttach(&(PVOID&)SetShaderPackage,						  &TrackSetShaderPackage);
 	DetourAttach(&(PVOID&)RenderObject,							  &TrackRenderObject);
+	DetourAttach(&(PVOID&)SetupGrassInstances,			*((PVOID*)&TrackSetupGrassInstancesPtr));
 #elif defined(SKYRIM)
 	DetourAttach(&(PVOID&)SetupRenderingPass,			*((PVOID*)&TrackSetupRenderingPass));
 	DetourAttach(&(PVOID&)RenderWorldSceneGraph,		*((PVOID*)&TrackRenderWorldSceneGraph));

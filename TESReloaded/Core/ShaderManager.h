@@ -103,6 +103,10 @@ struct ShaderConstants {
 		D3DXVECTOR4		Scale;
 		D3DXVECTOR4		CollisionParams;
 		D3DXVECTOR4		CollisionXY[2];
+		/// Groundcover press (grass PS c32-c34): [0] = radius, per-draw strength (0 = not groundcover),
+		/// darkening, source count; [1] = sources 0-1 XY; [2].xy = source 2 XY. Positions are relative
+		/// to the drawn batch; unused sources are parked far away.
+		D3DXVECTOR4		GroundcoverPress[3];
 	};
 	struct POMStruct {
 		D3DXVECTOR4		ParallaxData;	// x = height scale, y = -0.5 * scale (offset bias), z = shadow relief scale
@@ -518,6 +522,10 @@ public:
 	/// Negative values are the spring overshoot past upright and are expected.
 	float					GrassCollisionWeights[2];
 	int						GrassCollisionSourceCount;
+	/// World-space actors pressing groundcover: the player, then up to two nearby visible actors.
+	/// Unused slots are parked at 1e7 so they press nothing.
+	GrassActorPos			GroundcoverPressSources[3];
+	int						GroundcoverPressSourceCount;
 	CustomConstants			CustomConst;
 	CellLocation			LocationState;
 	bool					DialogState;

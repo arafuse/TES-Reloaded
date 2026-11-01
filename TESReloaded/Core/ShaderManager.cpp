@@ -268,6 +268,12 @@ bool ShaderProgram::SetConstantTableValue1(LPCSTR Name, UInt32 Index) {
 		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.Grass.CollisionXY[0];
 	else if (!strcmp(Name, "TESR_GrassCollisionXY1"))
 		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.Grass.CollisionXY[1];
+	else if (!strcmp(Name, "TESR_GroundcoverPressParams"))
+		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.Grass.GroundcoverPress[0];
+	else if (!strcmp(Name, "TESR_GroundcoverPressXY0"))
+		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.Grass.GroundcoverPress[1];
+	else if (!strcmp(Name, "TESR_GroundcoverPressXY1"))
+		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.Grass.GroundcoverPress[2];
 	else if (!strcmp(Name, "TESR_TerrainData"))
 		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.Terrain.Data;
 	else if (!strcmp(Name, "TESR_SkinData"))
@@ -1168,6 +1174,8 @@ ShaderManager::ShaderManager() {
 	GrassCollisionSourceCount = 0;
 	GrassCollisionWeights[0] = GrassCollisionWeights[1] = 0.0f;
 	for (int i = 0; i < 3; i++) GrassCollisionSources[i].x = GrassCollisionSources[i].y = 0.0f;
+	GroundcoverPressSourceCount = 0;
+	for (int i = 0; i < 3; i++) GroundcoverPressSources[i].x = GroundcoverPressSources[i].y = 1.0e7f;
 	EffectVertex = NULL;
 	ShellMaskTexture = NULL;
 	ShellFlattenDepthSurface = NULL;
@@ -2123,6 +2131,13 @@ void ShaderManager::UpdateGrass(ShaderConstants& ShaderConst, GrassActorPos Gras
 	for (int i = 0; i < 3; i++)
 		GrassCollisionSources[i].x = GrassCollisionSources[i].y = 0.0f;
 
+	ShaderConst.Grass.GroundcoverPress[0].x = TheSettingManager->SettingsGrass.GroundcoverPressRadius;
+	ShaderConst.Grass.GroundcoverPress[0].z = TheSettingManager->SettingsGrass.GroundcoverPressDarkening;
+	// Unused press sources sit far outside any batch, so the pixel shader needs no source count.
+	TheShaderManager->GroundcoverPressSourceCount = 0;
+	for (int i = 0; i < 3; i++)
+		TheShaderManager->GroundcoverPressSources[i].x = TheShaderManager->GroundcoverPressSources[i].y = 1.0e7f;
+
 	if (!Player) {
 		ShaderConst.Grass.CollisionParams.w = 0.0f;
 		return;
@@ -2161,6 +2176,19 @@ void ShaderManager::UpdateGrass(ShaderConstants& ShaderConst, GrassActorPos Gras
 	}
 	if (npcCount == kGrassMaxNPCs && nearest[1].distSq < nearest[0].distSq) {
 		ActorDist swap = nearest[0]; nearest[0] = nearest[1]; nearest[1] = swap;
+	}
+
+	// Groundcover is pressed only by live actors; footprint stamps are spaced for tall grass
+	// and would leave a dotted trail of foot-sized discs.
+	GrassActorPos* pressSources = TheShaderManager->GroundcoverPressSources;
+	int& pressCount = TheShaderManager->GroundcoverPressSourceCount;
+	pressSources[0].x = Player->pos.x;
+	pressSources[0].y = Player->pos.y;
+	pressCount = 1;
+	for (int i = 0; i < npcCount && pressCount < 3; i++) {
+		pressSources[pressCount].x = nearest[i].x;
+		pressSources[pressCount].y = nearest[i].y;
+		pressCount++;
 	}
 
 	// Newest stamps first so the freshest footprint wins; TrailSlots applies after
