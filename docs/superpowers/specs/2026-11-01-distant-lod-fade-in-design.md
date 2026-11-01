@@ -69,8 +69,10 @@ One new manager, `LODFadeManager` (`TESReloaded/Core/LODFadeManager.h/.cpp`), si
   cell) and take `ring = max(|dx|, |dy|)` from the player's cell. Fade only when
   `ring >= *SettingGridsToLoad / 2 + 2`; otherwise skip.
 - **Empty placeholders.** The engine sometimes attaches an empty node and streams the mesh in after.
-  An arrival with `m_children.numObjs == 0` (and not a geometry leaf) is queued and promoted when it
-  gains children, or dropped after 8 s or when it leaves the set.
+  An arrival is *ready* when its world-bound radius is positive and it is a leaf or has children.
+  An unready arrival is queued and promoted when it becomes ready, or dropped after 8 s or when it
+  leaves the set. The far-edge rule runs at promotion, because an unready node's world bound is not
+  yet meaningful.
 - **Menu guard.** When `Player` or `Tes` is NULL, clear all state and return.
 
 ### Fade table
@@ -86,31 +88,38 @@ cleared whenever a record is added or removed, so no freed pointer is ever follo
 
 ### Draw-time plumbing
 
-- `ShaderConst.LODFade.Params` (float4): `.x` alpha, `.y` per-frame dither seed, `.zw` unused.
-- `ShaderProgram::SetPerGeomConstantTableValue` maps `TESR_GEOM_FadeParams` to it. `CreateCT`, which
-  already enumerates `TESR_GEOM_` constants, sets `ShaderProgram::HasFadeParams` when it finds it.
-- In `RenderHook::TrackSetupShaderPrograms`, after the existing Toggles/Wetness per-geometry blocks
-  (so `SetPerGeomCT()` re-uploads their already-set values), and only while the table is live or a
-  reset pass is pending, for pixel shaders with `HasFadeParams`:
-  1. Look the geometry up in `unordered_map<NiAVObject*, FadeRecord*>`. On a miss, walk `m_parent` up
-     to depth 10 looking for a live root; cache the result, including `nullptr`.
-  2. Publish the record's alpha, or `1.0` when there is none, and call `SetPerGeomCT()`.
-- After the last record retires, one more frame publishes `1.0` to every covered draw, then the block
-  goes quiet. With an empty table the hook costs one bool test.
+- `ShaderConst.LODFade.Params` (float4): `.x` **remaining fade** (`1 - alpha`; 0 = opaque), `.y`
+  per-frame dither seed, `.zw` unused. Zero means opaque so that D3D9's initial register value, and
+  a disabled feature, can never hide geometry.
+- `ShaderProgram::SetPerGeomConstantTableValue` maps `TESR_GEOM_FadeParams` to it, so it is not
+  treated as a custom constant. `CreateCT` sets `ShaderProgram::HasFadeParams` and records
+  `FadeParamsRegister` when it finds it. This also fixes `ShaderProgram`'s constructor, which leaves
+  `PerGeomFloatShaderValues` and its count uninitialized.
+- In `RenderHook::TrackSetupShaderPrograms`, after the existing Toggles/Wetness blocks, **every**
+  draw whose pixel shader has `HasFadeParams` uploads that one register directly with
+  `SetPixelShaderConstantF`, like the wet-actor constant (which also uploads on every flagged draw so
+  a value never carries over). Uploading only the one register, not `SetPerGeomCT()`, leaves the
+  other per-geometry constants of a shared shader exactly as they were.
+  The value is `GetFadeRemaining(Geometry)`: 0 immediately when no fade is live; otherwise a lookup in
+  `unordered_map<NiAVObject*, int>` (fade index, -1 for none), filled on a miss by walking `m_parent`
+  up to depth 10 for a live root. With no manager (feature disabled) the hook uploads 0.
+- Rejected: uploading only while fading. The last published value of a finished fade (about 0.01)
+  would stay in the register and keep thinning every covered draw, and anything else that writes
+  c110 between frames would leak into covered draws.
 
 ### Shader side
 
 New include `OblivionReloaded/Shaders/ExtraShaders/Includes/LODFade.hlsl`, beside `WetActor.hlsl`:
 
 ```hlsl
-float4 TESR_GEOM_FadeParams : register(c110);	// x = alpha, y = dither seed
+float4 TESR_GEOM_FadeParams : register(c110);	// x = remaining fade (0 = opaque), y = dither seed
 
 void LODFadeClip(float2 vpos) {
-	float a = TESR_GEOM_FadeParams.x;
+	float f = TESR_GEOM_FadeParams.x;
 	[branch]
-	if (a < 1.0) {
+	if (f > 0.0) {
 		float n = frac(52.9829189 * frac(dot(vpos, float2(0.06711056, 0.00583715))) + TESR_GEOM_FadeParams.y);
-		clip(a - n);
+		clip(n - f);
 	}
 }
 ```
@@ -159,8 +168,8 @@ Every failure degrades to today's pop:
 
 ## Performance
 
-Idle: one hash-set build of ~2075 pointers per frame and one bool test per draw. During a fade:
-one cached map probe and one per-geometry constant upload per covered draw.
+Idle: one hash-set build of ~2075 pointers per frame, one bool test per draw, and one single-register
+constant upload per covered draw. During a fade, add one cached map probe per covered draw.
 
 ## Verification
 
