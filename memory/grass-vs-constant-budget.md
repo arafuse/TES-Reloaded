@@ -18,6 +18,15 @@ Current packing: up to 3 collision sources (player + 2 trail slots); their XY po
 c254.xyzw + c255.xy, and the two recovery weights sit in c255.zw (source 0 = player at an
 implicit weight of 1.0).
 
+c253-c255 are all re-uploaded per draw in `SetGrassCollisionConstants` (RenderHook.cpp), and the
+values are mirrored into `ShaderConst.Grass` so a later SetCT re-uploads the same thing; groundcover
+draws get c253.w = 0 (no collision sources).
+
+Per-draw data for the grass PIXEL shaders goes through PS constants instead (plenty free): the
+groundcover press uses PS c32-c34 (`TESR_GroundcoverPress*`). The VS hands the PS its
+batch-relative XY in the spare `TEXCOORD0.zw` (TEXCOORD0 was float2), which avoids a new
+interpolator — GRASS2034 already uses 11 of the 12 vs_3_0 outputs.
+
 **Why:** any new per-frame grass VS data has to displace something already packed here.
 
 **How to apply:** before designing anything that needs new grass VS constants, check

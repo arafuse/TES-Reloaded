@@ -15,6 +15,7 @@
 - [BeginScene pre-init window](beginscene-pre-init-window.md) — Player/Tes are NULL at the main menu; guard any per-frame hook that touches them
 - [Effect quad UV + aspect trap](effect-quad-uv-and-aspect-bugs.md) — the EffectQuad `+0.5` texel UV offset is REQUIRED (D3D9 samples at integer coords); ReciprocalResolution.z aspect is integer-divided and AO's focal length cancels it — audit all consumers before touching it
 - [OR screenshot = raw DDS](or-screenshot-dds-diagnostic.md) — screenshot key saves the effect chain's target as a DDS named .jpg (FP16 pre-HDR when RenderEffectsBeforeHdr=1); decode with struct '<4e', no numpy needed
+- [Grass draws are batched](grass-batched-per-geometry-hook.md) — SetupShaderPrograms sees only a grass batch's FIRST geometry; per-geometry grass constants go in the Detour on TallGrassShader instance staging 0x7E6A90
 - [Grass VS constant budget](grass-vs-constant-budget.md) — no register free in ALL three grass shaders; c3 is free in 2028/2030 but is LightPosition in 2034; check all three before adding constants
 - [FrameRateManager ElapsedTime is dead](framerate-elapsedtime-is-dead.md) — Time/ElapsedTime are never assigned (always 0); use GetPerformance() + a stored LastMs for delta time
 - [Shader bake defines](shader-bake-defines.md) — INI-derived D3DXMACRO bake is NOT implemented (ShaderDefines.txt is an orphan); measured per-candidate savings and the unroll+break masking trap, for if it is revisited
