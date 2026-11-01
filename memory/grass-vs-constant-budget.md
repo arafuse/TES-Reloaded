@@ -14,16 +14,20 @@ c3 is free in GRASS2028/2030 but holds `LightPosition` in GRASS2034 (the point-l
 variant). So **there is no register free in all three**, and InstanceData can't be
 shrunk (the engine batches to 228).
 
-Current packing: up to 3 collision sources (player + 2 trail slots); their XY positions fill
-c254.xyzw + c255.xy. Source 0 = player at an implicit weight of 1.0, with the player's
-(actor-size-scaled) radius in c253.x. c255.zw describe sources 1-2 with a tag encoding: a value
-below `kGrassCollisionActorTag` (2.0) is a footprint's recovery weight (radius = c253.x); a value
-at or above it is tag + that actor's own radius at weight 1. The CPU keeps the true weights in
-`GrassCollisionWeights` (TreeCollision reads them) and the packed values in `GrassCollisionSlotData`.
+Current packing: up to 3 collision sources PER BATCH; their XY positions fill c254.xyzw + c255.xy.
+The CPU keeps one prioritised list per frame (`ShaderManager::GrassCollisionSources`, up to 20:
+player, visible actors nearest first, footprints newest first, each with its own weight), and
+`SetGrassCollisionConstants` (RenderHook.cpp) picks the first 3 whose radius reaches the batch's
+instance footprint ([[grass-batch-footprints]]). Source 0 has an implicit weight of 1.0 and its
+(actor-size-scaled) radius in c253.x; it is the player whenever the player or a footprint reaches
+the batch, otherwise an actor. c255.zw describe sources 1-2 with a tag encoding: a value below
+`kGrassCollisionActorTag` (2.0) is a footprint's recovery weight (radius = c253.x); a value at or
+above it is tag + that actor's own radius at weight 1. Batches nothing reaches get c253.w = 0.
+TreeCollision and the groundcover press pick from the same list (first 3 that reach).
 
-c253-c255 are all re-uploaded per draw in `SetGrassCollisionConstants` (RenderHook.cpp), and the
-values are mirrored into `ShaderConst.Grass` so a later SetCT re-uploads the same thing; groundcover
-draws get c253.w = 0 (no collision sources).
+c253-c255 are all re-uploaded per draw in `SetGrassCollisionConstants`, and the values are
+mirrored into `ShaderConst.Grass` so a later SetCT re-uploads the same thing; groundcover draws get
+c253.w = 0 (no collision sources).
 
 Per-draw data for the grass PIXEL shaders goes through PS constants instead (plenty free): the
 groundcover press uses PS c32-c34 (`TESR_GroundcoverPress*`). The VS hands the PS its
