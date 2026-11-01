@@ -930,7 +930,7 @@ static float GetGrassModelHeight(NiGeometry* Geometry) {
 // Uploads the per-geometry grass constants: the collision sources relative to this geometry (VS
 // c254/c255), the collision params with groundcover's sources zeroed (VS c253), and the groundcover
 // press (PS c32-c34). Each value is also stored in ShaderConst, so a later SetCT re-uploads the same
-// thing. The vertex constant space is full, so the two recovery weights ride in c255.zw.
+// thing. The vertex constant space is full, so sources 1-2's weight or radius ride in c255.zw.
 static void SetGrassCollisionConstants(NiGeometry* Geometry, const NiTransform* WorldTransform) {
 
 	ShaderConstants::GrassStruct& Grass = TheShaderManager->ShaderConst.Grass;
@@ -948,17 +948,19 @@ static void SetGrassCollisionConstants(NiGeometry* Geometry, const NiTransform* 
 	Grass.CollisionXY[1] = D3DXVECTOR4(
 		TheShaderManager->GrassCollisionSources[2].x - cx,
 		TheShaderManager->GrassCollisionSources[2].y - cy,
-		TheShaderManager->GrassCollisionWeights[0],
-		TheShaderManager->GrassCollisionWeights[1]);
+		TheShaderManager->GrassCollisionSlotData[0],
+		TheShaderManager->GrassCollisionSlotData[1]);
 	TheRenderManager->device->SetVertexShaderConstantF(253, (const float*)&Grass.CollisionParams, 3);
 
 	const ShaderManager::GrassActorPos* Press = TheShaderManager->GroundcoverPressSources;
+	float PressRadius = TheSettingManager->SettingsGrass.GroundcoverPressRadius;
 	// At 1 the press centre would squash to zero height.
 	float PressStrength = min(TheSettingManager->SettingsGrass.GroundcoverPressStrength, 0.9f);
+	Grass.GroundcoverPress[0].x = PressRadius * Press[0].radiusScale;
 	Grass.GroundcoverPress[0].y = Groundcover && TheSettingManager->SettingsGrass.GroundcoverPress ? PressStrength : 0.0f;
 	Grass.GroundcoverPress[0].w = ModelHeight;
 	Grass.GroundcoverPress[1] = D3DXVECTOR4(Press[0].x - cx, Press[0].y - cy, Press[1].x - cx, Press[1].y - cy);
-	Grass.GroundcoverPress[2] = D3DXVECTOR4(Press[2].x - cx, Press[2].y - cy, 0.0f, 0.0f);
+	Grass.GroundcoverPress[2] = D3DXVECTOR4(Press[2].x - cx, Press[2].y - cy, PressRadius * Press[1].radiusScale, PressRadius * Press[2].radiusScale);
 	TheRenderManager->device->SetPixelShaderConstantF(32, (const float*)Grass.GroundcoverPress, 3);
 
 }

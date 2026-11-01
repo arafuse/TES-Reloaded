@@ -54,26 +54,32 @@ void SetTreeCollisionConstants(NiGeometry* Geometry, const NiTransform* WorldTra
 	if (Tree && Tree->m_kWorldBound.Radius > 0.0f && Tree->m_kWorldBound.Radius <= Settings->TreeCollisionMaxBound) {
 		float Bound = Tree->m_kWorldBound.Radius;
 		float InvScale = 1.0f / WorldTransform->scale;
-		float Reach = Bound + Settings->TreeCollisionRadius;
 		float SourceWeights[3] = { 1.0f, TheShaderManager->GrassCollisionWeights[0], TheShaderManager->GrassCollisionWeights[1] };
 		float* Slots[3] = { &Constants[1].x, &Constants[1].z, &Constants[2].x };
+		float* Radii[3] = { &Constants[0].x, &Constants[2].w, &Constants[3].w };
 		float* Weights = &Constants[3].x;
 		int Count = 0;
 		int SourceCount = min(TheShaderManager->GrassCollisionSourceCount, 3);
 		for (int i = 0; i < SourceCount; i++) {
+			const ShaderManager::GrassActorPos& Source = TheShaderManager->GrassCollisionSources[i];
+			float Radius = Settings->TreeCollisionRadius * Source.radiusScale;
+			float Reach = Bound + Radius;
 			NiPoint3 Offset;
-			Offset.x = TheShaderManager->GrassCollisionSources[i].x - WorldTransform->pos.x;
-			Offset.y = TheShaderManager->GrassCollisionSources[i].y - WorldTransform->pos.y;
+			Offset.x = Source.x - WorldTransform->pos.x;
+			Offset.y = Source.y - WorldTransform->pos.y;
 			Offset.z = 0.0f;
 			if (Offset.x * Offset.x + Offset.y * Offset.y > Reach * Reach) continue;
 			NiPoint3 Local = WorldTransform->rot < Offset;
 			Slots[Count][0] = Local.x * InvScale;
 			Slots[Count][1] = Local.y * InvScale;
+			*Radii[Count] = Radius * InvScale;
 			Weights[Count] = SourceWeights[i];
 			Count++;
 		}
 		if (Count) {
-			Constants[0] = D3DXVECTOR4(Settings->TreeCollisionRadius * InvScale, Settings->TreeCollisionStrength * InvScale, Settings->TreeCollisionFlattenStrength * InvScale, (float)Count);
+			Constants[0].y = Settings->TreeCollisionStrength * InvScale;
+			Constants[0].z = Settings->TreeCollisionFlattenStrength * InvScale;
+			Constants[0].w = (float)Count;
 			Constants[2].z = WorldTransform->scale / Bound;
 		}
 	}

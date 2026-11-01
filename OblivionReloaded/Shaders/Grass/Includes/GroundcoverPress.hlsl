@@ -4,7 +4,8 @@
 // it instead of moving it: inside a foot-sized radius the diffuse texture is warped so the leaves
 // squash down toward the root and shrink toward the foot, and the area darkens. The includer
 // declares the TESR_GroundcoverPress* constants (c32-c34); the strength in
-// TESR_GroundcoverPressParams.y is zero for every draw that is not groundcover.
+// TESR_GroundcoverPressParams.y is zero for every draw that is not groundcover. Each source has its
+// own radius (c32.x, c34.z, c34.w), scaled by the size of the actor behind it.
 
 // Pos          : batch-relative XY (xy) and model-space height (z) of the pixel
 // PosDx, PosDy : screen-space derivatives of Pos
@@ -13,12 +14,12 @@
 // Above        : returns 1 where the squashed texture would be sampled above the model's top
 // Returns the offset to add to the diffuse UV.
 float2 GroundcoverPressOffset(float3 Pos, float3 PosDx, float3 PosDy, float2 UvDx, float2 UvDy, out float Darken, out float Above) {
-    float radius = TESR_GroundcoverPressParams.x;
     float strength = TESR_GroundcoverPressParams.y;
     float2 sources[3] = {
         TESR_GroundcoverPressXY0.xy, TESR_GroundcoverPressXY0.zw,
         TESR_GroundcoverPressXY1.xy
     };
+    float radii[3] = { TESR_GroundcoverPressParams.x, TESR_GroundcoverPressXY1.z, TESR_GroundcoverPressXY1.w };
 
     // Unused sources are parked far away by the CPU, so all three are always evaluated.
     float2 pull = 0.0;
@@ -27,9 +28,9 @@ float2 GroundcoverPressOffset(float3 Pos, float3 PosDx, float3 PosDy, float2 UvD
     for (int i = 0; i < 3; i++) {
         float2 fromSource = Pos.xy - sources[i];
         float d = length(fromSource);
-        float spread = saturate(1.0 - d / radius);
+        float spread = saturate(1.0 - d / radii[i]);
         pull += fromSource * spread * spread;
-        press = max(press, smoothstep(radius, radius * 0.35, d));
+        press = max(press, smoothstep(radii[i], radii[i] * 0.35, d));
     }
     Darken = press * TESR_GroundcoverPressParams.z;
 

@@ -103,9 +103,9 @@ struct ShaderConstants {
 		D3DXVECTOR4		Scale;
 		D3DXVECTOR4		CollisionParams;
 		D3DXVECTOR4		CollisionXY[2];
-		/// Groundcover press (grass PS c32-c34): [0] = radius, per-draw strength (0 = not groundcover),
-		/// darkening, drawn model's height; [1] = sources 0-1 XY; [2].xy = source 2 XY. Positions are relative
-		/// to the drawn batch; unused sources are parked far away.
+		/// Groundcover press (grass PS c32-c34): [0] = source 0 radius, per-draw strength (0 = not groundcover),
+		/// darkening, drawn model's height; [1] = sources 0-1 XY; [2] = source 2 XY, sources 1-2 radii.
+		/// Positions are relative to the drawn batch; unused sources are parked far away.
 		D3DXVECTOR4		GroundcoverPress[3];
 	};
 	struct POMStruct {
@@ -513,7 +513,9 @@ public:
 	int						InitFrameCount;
 	int						InitFrameTarget;
 	struct					EffectQuad { float x, y, z; float u, v; };
-	struct					GrassActorPos { float x, y; };
+	/// A grass collision or groundcover press source: world XY, and the factor the configured
+	/// collision radii are multiplied by for the actor behind it (1 when actor scaling is off).
+	struct					GrassActorPos { float x, y, radiusScale; };
 	ShaderConstants			ShaderConst;
 	/// World-space grass collision sources. Slot 0 is always the player's live position; slots 1-2
 	/// hold either a fading footprint left behind by the player or a nearby actor's live position.
@@ -521,6 +523,9 @@ public:
 	/// Recovery weights for sources 1 and 2. Source 0 is implicitly 1.0 and is not stored.
 	/// Negative values are the spring overshoot past upright and are expected.
 	float					GrassCollisionWeights[2];
+	/// Grass VS c255.zw for sources 1 and 2: a footprint's recovery weight (the shader gives it the
+	/// player's radius), or kGrassCollisionActorTag plus an actor's tall-grass radius (weight 1).
+	float					GrassCollisionSlotData[2];
 	int						GrassCollisionSourceCount;
 	/// World-space actors pressing groundcover: the player, then up to two nearby visible actors.
 	/// Unused slots are parked at 1e7 so they press nothing.
