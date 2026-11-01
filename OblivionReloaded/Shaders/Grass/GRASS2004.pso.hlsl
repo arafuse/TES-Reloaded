@@ -13,6 +13,9 @@ sampler2D ShadowMaskMap : register(s2);
 sampler2D TESR_ShadowMapBufferNear : register(s4) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
 sampler2D TESR_ShadowMapBufferFar : register(s5) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
 row_major float4x4 TESR_InvViewProjectionTransform : register(c20);
+float4 TESR_GroundcoverPressParams : register(c32);
+float4 TESR_GroundcoverPressXY0 : register(c33);
+float4 TESR_GroundcoverPressXY1 : register(c34);
 
 //
 //
@@ -30,8 +33,8 @@ row_major float4x4 TESR_InvViewProjectionTransform : register(c20);
 // Structures:
 
 struct VS_OUTPUT {
-    float2 DiffuseUV : TEXCOORD0;
-    float3 texcoord_4 : TEXCOORD4_centroid;
+    float4 DiffuseUV : TEXCOORD0;	// zw = batch-relative XY
+    float4 texcoord_4 : TEXCOORD4_centroid;	// w = model-space height
     float4 texcoord_5 : TEXCOORD5_centroid;
     float4 texcoord_6 : TEXCOORD6;
     float4 texcoord_7 : TEXCOORD7;
@@ -43,6 +46,7 @@ struct PS_OUTPUT {
     float4 color_0 : COLOR0;
 };
 
+#include "Includes/GroundcoverPress.hlsl"
 
 PS_OUTPUT main(VS_OUTPUT IN) {
     PS_OUTPUT OUT;
@@ -51,7 +55,18 @@ PS_OUTPUT main(VS_OUTPUT IN) {
     float4 ColorDiffuse;
     float shadow = 1.0f;
     float dimCoeff = 1.0f;
-    ColorDiffuse = tex2D(DiffuseMap, IN.DiffuseUV.xy);
+    float4 uvDx = ddx(IN.DiffuseUV);
+    float4 uvDy = ddy(IN.DiffuseUV);
+    float heightDx = ddx(IN.texcoord_4.w);
+    float heightDy = ddy(IN.texcoord_4.w);
+    float2 diffuseUV = IN.DiffuseUV.xy;
+    float pressDarken = 0.0;
+    float pressAbove = 0.0;
+    [branch]
+    if (TESR_GroundcoverPressParams.y > 0.0)
+        diffuseUV += GroundcoverPressOffset(float3(IN.DiffuseUV.zw, IN.texcoord_4.w), float3(uvDx.zw, heightDx), float3(uvDy.zw, heightDy), uvDx.xy, uvDy.xy, pressDarken, pressAbove);
+
+    ColorDiffuse = tex2Dgrad(DiffuseMap, diffuseUV, uvDx.xy, uvDy.xy);
     Color.rgb = (shadow * IN.texcoord_5.xyz) + IN.texcoord_4.xyz;
     
     if (shadow == 0.0f)
@@ -61,10 +76,11 @@ PS_OUTPUT main(VS_OUTPUT IN) {
     }
     
     Color.rgb *= dimCoeff;
-    
-    OUT.color_0.a = (AlphaTestRef.x >= ColorDiffuse.a ? 0 : IN.texcoord_5.w);
-    OUT.color_0.rgb = (ColorDiffuse.rgb * Color.rgb) + ((IN.color_0.rgb - (ColorDiffuse.rgb * Color.rgb)) * IN.color_0.a);
-    
+
+    Color.rgb *= 1.0 - pressDarken;
+
+    OUT.color_0.a = (AlphaTestRef.x >= ColorDiffuse.a || pressAbove > 0.0 ? 0 : IN.texcoord_5.w);
+    OUT.color_0.rgb = (ColorDiffuse.rgb * Color.rgb) + ((IN.color_0.rgb - (ColorDiffuse.rgb * Color.rgb)) * IN.color_0.a);    
 
     return OUT;
 };

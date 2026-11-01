@@ -2141,10 +2141,7 @@ public:
 
 	UInt16						Vertices;			// 008
 	UInt16						Unk00A;				// 00A
-	UInt32						Unk00C;				// 00C
-	UInt32						Unk010;				// 010
-	UInt32						Unk014;				// 014
-	UInt32						Unk018;				// 018
+	NiBound						Bound;				// 00C model-space bounding sphere
 	NiPoint3*					Vertex;				// 01C
 	NiPoint3*					Normal;				// 020
 	NiColorAlpha*				Color;				// 024

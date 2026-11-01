@@ -431,6 +431,13 @@ struct SettingsGrassStruct {
 	float CollisionRecoveryTime;
 	float CollisionSpringiness;
 	int CollisionTrailSlots;
+	bool CollisionScaleByActorSize;		///< Scale CollisionRadius, GroundcoverPressRadius and TreeCollisionRadius by each actor's first-seen bound radius
+	float CollisionReferenceRadius;		///< Actor bound radius at which the collision radii apply unscaled
+	float GroundcoverMaxHeight;			///< Grass models at or below this model-space height are groundcover: pressed, never bent
+	bool GroundcoverPress;				///< Press groundcover under nearby actors; off still keeps groundcover out of collision bending
+	float GroundcoverPressRadius;		///< World units around an actor that press groundcover
+	float GroundcoverPressStrength;		///< How far pressed groundcover squashes down and shrinks toward the foot; 0 disables the press, capped at 0.9
+	float GroundcoverPressDarkening;	///< Fraction of the light removed at the centre of the press
 	bool TreeCollision;					///< Bend small SpeedTree trees and shrubs away from nearby actors
 	float TreeCollisionMaxBound;		///< BSTreeNode world bound radius at or below which a tree bends
 	float TreeCollisionRadius;			///< World units around an actor that push foliage

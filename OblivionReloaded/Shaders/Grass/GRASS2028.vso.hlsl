@@ -62,8 +62,8 @@ struct VS_INPUT {
 struct VS_OUTPUT {
     float4 color_0 : COLOR0;
     float4 position : POSITION;
-    float2 texcoord_0 : TEXCOORD0;
-    float3 texcoord_4 : TEXCOORD4;
+    float4 texcoord_0 : TEXCOORD0;	// zw = batch-relative XY for the groundcover press
+    float4 texcoord_4 : TEXCOORD4;	// w = model-space height for the groundcover press
     float4 texcoord_5 : TEXCOORD5;
 	float4 texcoord_6 : TEXCOORD6;
     float4 texcoord_7 : TEXCOORD7;
@@ -111,9 +111,10 @@ VS_OUTPUT main(VS_INPUT IN) {
     r0.z = r1.z;
     r0.xy = (((GrassWindSway(fracr((q0.x / 128) + WindData.w)) * WindData.z) * sqr(IN.LCOLOR_0.w)) * WindData.xy) + r2.xy;
 
-    r0.xyz += GrassCollisionDisplacement(InstanceData[0 + IN.LTEXCOORD_1.x].xy, sqr(IN.LCOLOR_0.w));
+    r0.xyz += GrassCollisionDisplacement(InstanceData[0 + IN.LTEXCOORD_1.x].xy, sqr(IN.LCOLOR_0.w), r1.z);
 
     r1.xyz = r0.xyz + InstanceData[0 + IN.LTEXCOORD_1.x].xyz;
+    OUT.texcoord_0.zw = r1.xy;
     r0.xyzw = frac(InstanceData[0 + IN.LTEXCOORD_1.x]);
     r2.xyz = ((r0.w * IN.LCOLOR_0.xyz) * shades(DiffuseDir.xyz, expand(r0.xyz))) * DiffuseColor.rgb;
     r0 = mul(ModelViewProj, r1);
@@ -121,6 +122,7 @@ VS_OUTPUT main(VS_INPUT IN) {
     OUT.color_0.a = 1 - saturate((FogParam.x - length(r0.xyz)) / FogParam.y);
     OUT.position = r0;
     OUT.texcoord_4.xyz = AmbientColor.rgb;
+    OUT.texcoord_4.w = IN.LPOSITION.z;
     OUT.texcoord_5.w = r1.x * (1 - r1.y);
     OUT.texcoord_5.xyz = r2.xyz * AddlParams.x;
 	OUT.texcoord_6 = mul(r0, TESR_ShadowCameraToLightTransformNear);

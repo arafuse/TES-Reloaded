@@ -103,6 +103,10 @@ struct ShaderConstants {
 		D3DXVECTOR4		Scale;
 		D3DXVECTOR4		CollisionParams;
 		D3DXVECTOR4		CollisionXY[2];
+		/// Groundcover press (grass PS c32-c34): [0] = source 0 radius, per-draw strength (0 = not groundcover),
+		/// darkening, drawn model's height; [1] = sources 0-1 XY; [2] = source 2 XY, sources 1-2 radii.
+		/// Positions are relative to the drawn batch; unused sources are parked far away.
+		D3DXVECTOR4		GroundcoverPress[3];
 	};
 	struct POMStruct {
 		D3DXVECTOR4		ParallaxData;	// x = height scale, y = -0.5 * scale (offset bias), z = shadow relief scale
@@ -509,14 +513,20 @@ public:
 	int						InitFrameCount;
 	int						InitFrameTarget;
 	struct					EffectQuad { float x, y, z; float u, v; };
-	struct					GrassActorPos { float x, y; };
+	/// What is behind a grass collision source.
+	enum					GrassSourceKind { GrassSource_Player, GrassSource_Footprint, GrassSource_Actor };
+	/// A grass collision source: world XY, the factor the configured collision and press radii are
+	/// multiplied by for the actor behind it (1 when actor scaling is off), and its strength. A
+	/// footprint's strength is its spring recovery weight, which dips negative past upright; live
+	/// actors are always 1.
+	struct					GrassSource { float x, y, radiusScale, weight; GrassSourceKind kind; };
+	/// Most grass collision sources tracked per frame: the player, its footprints and visible actors.
+	static const int		GrassMaxSources = 20;
 	ShaderConstants			ShaderConst;
-	/// World-space grass collision sources. Slot 0 is always the player's live position; slots 1-2
-	/// hold either a fading footprint left behind by the player or a nearby actor's live position.
-	GrassActorPos			GrassCollisionSources[3];
-	/// Recovery weights for sources 1 and 2. Source 0 is implicitly 1.0 and is not stored.
-	/// Negative values are the spring overshoot past upright and are expected.
-	float					GrassCollisionWeights[2];
+	/// This frame's grass collision sources in priority order: the player first, then visible actors
+	/// nearest the player first, then the player's footprints newest first. Each grass batch and tree
+	/// takes the first three that reach it; groundcover is pressed by the live ones only.
+	GrassSource				GrassCollisionSources[GrassMaxSources];
 	int						GrassCollisionSourceCount;
 	CustomConstants			CustomConst;
 	CellLocation			LocationState;
@@ -634,7 +644,7 @@ private:
 	static void UpdateSnowAccumulation(ShaderConstants& ShaderConst, TESWeather* currentWeather, TESWeather* previousWeather);
 	static void UpdateWetWorld(ShaderConstants& ShaderConst, TESWeather* currentWeather, TESWeather* previousWeather, float weatherPercent);
 	static void UpdatePrecipitation(ShaderConstants& ShaderConst, TESWeather* currentWeather, TESWeather* previousWeather, float weatherPercent);
-	static void UpdateGrass(ShaderConstants& ShaderConst, GrassActorPos GrassCollisionSources[3], float GrassCollisionWeights[2], int& GrassCollisionSourceCount);
+	static void UpdateGrass(ShaderConstants& ShaderConst);
 	static void UpdatePOM(ShaderConstants& ShaderConst);
 	static void UpdateTerrain(ShaderConstants& ShaderConst);
 	static void UpdateSkin(ShaderConstants& ShaderConst);

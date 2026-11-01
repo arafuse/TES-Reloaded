@@ -4,6 +4,7 @@
 #include <cmath>
 #include <WeatherMode.h>
 #include <algorithm>
+#include <unordered_map>
 #include <iostream>
 #include <filesystem>
 #include "TreeCover.h"
@@ -268,6 +269,12 @@ bool ShaderProgram::SetConstantTableValue1(LPCSTR Name, UInt32 Index) {
 		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.Grass.CollisionXY[0];
 	else if (!strcmp(Name, "TESR_GrassCollisionXY1"))
 		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.Grass.CollisionXY[1];
+	else if (!strcmp(Name, "TESR_GroundcoverPressParams"))
+		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.Grass.GroundcoverPress[0];
+	else if (!strcmp(Name, "TESR_GroundcoverPressXY0"))
+		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.Grass.GroundcoverPress[1];
+	else if (!strcmp(Name, "TESR_GroundcoverPressXY1"))
+		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.Grass.GroundcoverPress[2];
 	else if (!strcmp(Name, "TESR_TerrainData"))
 		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.Terrain.Data;
 	else if (!strcmp(Name, "TESR_SkinData"))
@@ -1166,8 +1173,6 @@ ShaderManager::ShaderManager() {
 	PreWaterDepthBufferFilled = false;
 	InMainScenePass = false;
 	GrassCollisionSourceCount = 0;
-	GrassCollisionWeights[0] = GrassCollisionWeights[1] = 0.0f;
-	for (int i = 0; i < 3; i++) GrassCollisionSources[i].x = GrassCollisionSources[i].y = 0.0f;
 	EffectVertex = NULL;
 	ShellMaskTexture = NULL;
 	ShellFlattenDepthSurface = NULL;
@@ -1898,7 +1903,7 @@ void ShaderManager::UpdatePrecipitation(ShaderConstants& ShaderConst, TESWeather
 
 namespace {
 
-struct ActorDist { float x, y, distSq; };
+struct ActorDist { float x, y, distSq, radiusScale; };
 
 static void ApplyGrassDensitySettings(int density) {
 	static const int   kMinSize[]   = { 240, 240, 240, 240, 120, 120, 120, 120, 80, 80, 80, 80, 20, 20, 20, 20 };
@@ -1910,21 +1915,63 @@ static void ApplyGrassDensitySettings(int density) {
 	}
 }
 
-// The grass vertex shaders have room for three collision sources, one of which is always the
-// player, so at most two nearby actors can be tracked.
-const int kGrassMaxNPCs = 2;
+// Nearby actors tracked as grass collision sources. Each batch still takes at most three sources,
+// but picks them from this list by which ones reach it.
+const int kGrassMaxNPCs = 16;
 
-static void TryInsertActor(ActorDist nearest[], int& count, float x, float y, float distSq) {
+static void TryInsertActor(ActorDist nearest[], int& count, const ActorDist& actor) {
 	if (count < kGrassMaxNPCs) {
-		nearest[count++] = { x, y, distSq };
+		nearest[count++] = actor;
 	} else {
 		int farthestIdx = 0;
 		for (int i = 1; i < kGrassMaxNPCs; i++)
 			if (nearest[i].distSq > nearest[farthestIdx].distSq)
 				farthestIdx = i;
-		if (distSq < nearest[farthestIdx].distSq)
-			nearest[farthestIdx] = { x, y, distSq };
+		if (actor.distSq < nearest[farthestIdx].distSq)
+			nearest[farthestIdx] = actor;
 	}
+}
+
+// Limits on the actor radius scale, so a degenerate bound can neither erase a source nor make it
+// flatten a whole field.
+const float kGrassActorScaleMin = 0.25f;
+const float kGrassActorScaleMax = 4.0f;
+
+// An actor's root-node bound radius as first seen, per unit of reference scale. The live bound swells
+// and shrinks with the pose, so it is sampled once per 3D and re-sampled only when the root changes.
+struct GrassActorBound {
+	NiNode* node;
+	float   unitRadius;
+};
+
+// Entries for unloaded actors are harmless but never revisited, so the cache is dropped past this size.
+const size_t kGrassActorBoundCacheMax = 256;
+
+std::unordered_map<UInt32, GrassActorBound> GrassActorBounds;
+
+// The actor's cached bound radius at its current reference scale, or 0 while it has no usable 3D.
+static float GrassActorBoundRadius(TESObjectREFR* ref) {
+	NiNode* node = ref->GetNode();
+	if (!node || !(ref->scale > 0.0f)) return 0.0f;
+	std::unordered_map<UInt32, GrassActorBound>::iterator it = GrassActorBounds.find(ref->refID);
+	if (it != GrassActorBounds.end() && it->second.node == node) return it->second.unitRadius * ref->scale;
+
+	float bound = node->GetWorldBoundRadius();
+	if (!(bound > 0.0f)) return 0.0f;
+	if (GrassActorBounds.size() >= kGrassActorBoundCacheMax) GrassActorBounds.clear();
+	GrassActorBounds[ref->refID] = { node, bound / ref->scale };
+	return bound;
+}
+
+// The factor the collision radii are multiplied by for this actor: its first-seen bound radius over
+// CollisionReferenceRadius. 1 when actor scaling is off or the actor has no 3D yet.
+static float GrassActorRadiusScale(TESObjectREFR* ref) {
+	const SettingsGrassStruct& settings = TheSettingManager->SettingsGrass;
+	if (!settings.CollisionScaleByActorSize || settings.CollisionReferenceRadius <= 0.0f) return 1.0f;
+	float bound = GrassActorBoundRadius(ref);
+	if (bound <= 0.0f) return 1.0f;
+	float scale = bound / settings.CollisionReferenceRadius;
+	return scale < kGrassActorScaleMin ? kGrassActorScaleMin : (scale > kGrassActorScaleMax ? kGrassActorScaleMax : scale);
 }
 
 // Extra world units around an actor's collision footprint that still count as on screen, so an
@@ -1978,9 +2025,11 @@ static bool GrassSphereInView(const GrassViewCull& cull, float x, float y, float
 	       (cy - cull.bottom * depth) * cull.invBottom > -radius;
 }
 
+// collisionRadius is the unscaled tall-grass collision radius; each actor's own scale is applied to it
+// for the view test.
 static void CollectActorsFromObjectList(TList<TESObjectREFR>::Entry* entry, TESObjectREFR* player,
                                         ActorDist nearest[], int& count, float maxTrackDistSq,
-                                        const GrassViewCull& cull, float cullRadius) {
+                                        const GrassViewCull& cull, float collisionRadius) {
 	while (entry) {
 		if (TESObjectREFR* ref = entry->item) {
 			if (ref != player) {
@@ -1990,9 +2039,12 @@ static void CollectActorsFromObjectList(TList<TESObjectREFR>::Entry* entry, TESO
 					float dx = ref->pos.x - player->pos.x;
 					float dy = ref->pos.y - player->pos.y;
 					float distSq = dx * dx + dy * dy;
-					if (distSq < maxTrackDistSq &&
-					    GrassSphereInView(cull, ref->pos.x, ref->pos.y, ref->pos.z + kGrassActorHalfHeight, cullRadius))
-						TryInsertActor(nearest, count, ref->pos.x, ref->pos.y, distSq);
+					if (distSq < maxTrackDistSq) {
+						float scale = GrassActorRadiusScale(ref);
+						float cullRadius = collisionRadius * scale + kGrassActorHalfHeight + kGrassViewMargin;
+						if (GrassSphereInView(cull, ref->pos.x, ref->pos.y, ref->pos.z + kGrassActorHalfHeight, cullRadius))
+							TryInsertActor(nearest, count, { ref->pos.x, ref->pos.y, distSq, scale });
+					}
 				}
 			}
 		}
@@ -2010,6 +2062,7 @@ struct GrassStamp {
 };
 
 const int   kGrassStampCount    = 2;
+static_assert(1 + kGrassMaxNPCs + kGrassStampCount <= ShaderManager::GrassMaxSources, "grass collision source list too small");
 const float kGrassStampSpacing  = 0.75f;	// fraction of the collision radius between stamps
 const float kGrassMaxDeltaTime  = 0.1f;		// clamp for a hitched or paused frame
 const float kGrassTeleportDist  = 1024.0f;	// a jump this large is a load door or fast travel
@@ -2096,7 +2149,7 @@ static void UpdateGrassStamps(float px, float py, const void* space, float radiu
 
 } // namespace
 
-void ShaderManager::UpdateGrass(ShaderConstants& ShaderConst, GrassActorPos GrassCollisionSources[3], float GrassCollisionWeights[2], int& GrassCollisionSourceCount) {
+void ShaderManager::UpdateGrass(ShaderConstants& ShaderConst) {
 	ShaderConst.Grass.Scale.x = TheSettingManager->SettingsGrass.ScaleX;
 	ShaderConst.Grass.Scale.y = TheSettingManager->SettingsGrass.ScaleY;
 	ShaderConst.Grass.Scale.z = TheSettingManager->SettingsGrass.ScaleZ;
@@ -2111,31 +2164,29 @@ void ShaderManager::UpdateGrass(ShaderConstants& ShaderConst, GrassActorPos Gras
 		*SettingGrassWindMagnitudeMin = *LocalGrassWindMagnitudeMin = *SettingGrassWindMagnitudeMax * 0.5f;
 	}
 
+	// The per-batch source picks and their packing happen per draw, in RenderHook's
+	// SetGrassCollisionConstants; these are the defaults until the first grass draw.
 	float radius = TheSettingManager->SettingsGrass.CollisionRadius;
 	float recovery = TheSettingManager->SettingsGrass.CollisionRecoveryTime;
 	ShaderConst.Grass.CollisionParams.x = radius;
 	ShaderConst.Grass.CollisionParams.y = TheSettingManager->SettingsGrass.CollisionStrength;
 	ShaderConst.Grass.CollisionParams.z = TheSettingManager->SettingsGrass.CollisionFlattenStrength;
+	ShaderConst.Grass.CollisionParams.w = 0.0f;
 	memset(ShaderConst.Grass.CollisionXY, 0, sizeof(ShaderConst.Grass.CollisionXY));
+	ShaderConst.Grass.GroundcoverPress[0].z = TheSettingManager->SettingsGrass.GroundcoverPressDarkening;
 
-	GrassCollisionSourceCount = 0;
-	GrassCollisionWeights[0] = GrassCollisionWeights[1] = 0.0f;
-	for (int i = 0; i < 3; i++)
-		GrassCollisionSources[i].x = GrassCollisionSources[i].y = 0.0f;
+	GrassSource* sources = TheShaderManager->GrassCollisionSources;
+	int& sourceCount = TheShaderManager->GrassCollisionSourceCount;
+	sourceCount = 0;
+	if (!Player) return;
 
-	if (!Player) {
-		ShaderConst.Grass.CollisionParams.w = 0.0f;
-		return;
-	}
-
-	// Source 0 is always the player at full strength, crushing grass underfoot.
-	GrassCollisionSources[0].x = Player->pos.x;
-	GrassCollisionSources[0].y = Player->pos.y;
-	GrassCollisionSourceCount = 1;
+	float playerScale = GrassActorRadiusScale(Player);
+	float playerRadius = radius * playerScale;
+	sources[sourceCount++] = { Player->pos.x, Player->pos.y, playerScale, 1.0f, GrassSource_Player };
 
 	const void* space = Player->GetWorldSpace() ? (const void*)Player->GetWorldSpace() : (const void*)Player->parentCell;
-	UpdateGrassStamps(Player->pos.x, Player->pos.y, space, radius, recovery);
-	float spacing = radius * kGrassStampSpacing;
+	UpdateGrassStamps(Player->pos.x, Player->pos.y, space, playerRadius, recovery);
+	float spacing = playerRadius * kGrassStampSpacing;
 
 	ActorDist nearest[kGrassMaxNPCs] = {};
 	int npcCount = 0;
@@ -2144,7 +2195,6 @@ void ShaderManager::UpdateGrass(ShaderConstants& ShaderConst, GrassActorPos Gras
 	// Only actors whose bent grass could be on screen compete for the slots.
 	GrassViewCull cull;
 	BuildGrassViewCull(cull);
-	float cullRadius = radius + kGrassActorHalfHeight + kGrassViewMargin;
 
 	if (Player->parentCell) {
 		if (Player->GetWorldSpace()) {
@@ -2152,16 +2202,19 @@ void ShaderManager::UpdateGrass(ShaderConstants& ShaderConst, GrassActorPos Gras
 				for (UInt32 y = 0; y < *SettingGridsToLoad; y++) {
 					TESObjectCELL* Cell = Tes->gridCellArray->GetCell(x, y);
 					if (Cell)
-						CollectActorsFromObjectList(&Cell->objectList.First, Player, nearest, npcCount, maxTrackDistSq, cull, cullRadius);
+						CollectActorsFromObjectList(&Cell->objectList.First, Player, nearest, npcCount, maxTrackDistSq, cull, radius);
 				}
 			}
 		} else {
-			CollectActorsFromObjectList(&Player->parentCell->objectList.First, Player, nearest, npcCount, maxTrackDistSq, cull, cullRadius);
+			CollectActorsFromObjectList(&Player->parentCell->objectList.First, Player, nearest, npcCount, maxTrackDistSq, cull, radius);
 		}
 	}
-	if (npcCount == kGrassMaxNPCs && nearest[1].distSq < nearest[0].distSq) {
-		ActorDist swap = nearest[0]; nearest[0] = nearest[1]; nearest[1] = swap;
-	}
+
+	// Nearest first, so a batch reached by more actors than it has slots keeps the ones nearest
+	// the camera.
+	std::sort(nearest, nearest + npcCount, [](const ActorDist& a, const ActorDist& b) { return a.distSq < b.distSq; });
+	for (int i = 0; i < npcCount; i++)
+		sources[sourceCount++] = { nearest[i].x, nearest[i].y, nearest[i].radiusScale, 1.0f, GrassSource_Actor };
 
 	// Newest stamps first so the freshest footprint wins; TrailSlots applies after
 	// sorting, or a limit of 1 could keep the older stamp.
@@ -2180,33 +2233,18 @@ void ShaderManager::UpdateGrass(ShaderConstants& ShaderConst, GrassActorPos Gras
 	if (trailSlots > kGrassStampCount) trailSlots = kGrassStampCount;
 	if (stampCount > trailSlots) stampCount = trailSlots;
 
-	// Visible actors take the remaining sources first, nearest first; the
-	// player's footprints, newest first, take whatever is left.
-	int stampIdx = 0, npcIdx = 0;
-	while (GrassCollisionSourceCount < 3 && (stampIdx < stampCount || npcIdx < npcCount)) {
-		bool useStamp = npcIdx >= npcCount;
-		int slot = GrassCollisionSourceCount;
-		if (useStamp) {
-			const GrassStamp& stamp = GrassStamps[stampOrder[stampIdx++]];
-			GrassCollisionSources[slot].x = stamp.x;
-			GrassCollisionSources[slot].y = stamp.y;
-			// A stamp is planted underfoot where source 0 already crushes the grass, so
-			// fade it in as the player moves away rather than doubling the deformation.
-			float sdx = Player->pos.x - stamp.x;
-			float sdy = Player->pos.y - stamp.y;
-			float sep = (spacing > 0.0f) ? (sqrtf(sdx * sdx + sdy * sdy) / spacing) : 1.0f;
-			if (sep > 1.0f) sep = 1.0f;
-			GrassCollisionWeights[slot - 1] = sep * GrassSpringWeight(stamp.age, recovery, TheSettingManager->SettingsGrass.CollisionSpringiness);
-		} else {
-			GrassCollisionSources[slot].x = nearest[npcIdx].x;
-			GrassCollisionSources[slot].y = nearest[npcIdx].y;
-			GrassCollisionWeights[slot - 1] = 1.0f;
-			npcIdx++;
-		}
-		GrassCollisionSourceCount++;
+	// Footprints rank after every live actor, matching the old fixed slots.
+	for (int i = 0; i < stampCount; i++) {
+		const GrassStamp& stamp = GrassStamps[stampOrder[i]];
+		// A stamp is planted underfoot where the player already crushes the grass, so
+		// fade it in as the player moves away rather than doubling the deformation.
+		float sdx = Player->pos.x - stamp.x;
+		float sdy = Player->pos.y - stamp.y;
+		float sep = (spacing > 0.0f) ? (sqrtf(sdx * sdx + sdy * sdy) / spacing) : 1.0f;
+		if (sep > 1.0f) sep = 1.0f;
+		float weight = sep * GrassSpringWeight(stamp.age, recovery, TheSettingManager->SettingsGrass.CollisionSpringiness);
+		sources[sourceCount++] = { stamp.x, stamp.y, playerScale, weight, GrassSource_Footprint };
 	}
-
-	ShaderConst.Grass.CollisionParams.w = (float)GrassCollisionSourceCount;
 }
 
 /// Packs the parallax height scale and its centering bias so the shader offset is a single mad,
@@ -2690,7 +2728,7 @@ void ShaderManager::UpdateConstants() {
 		if (TheSettingManager->SettingsMain.Effects.Precipitations)
 			UpdatePrecipitation(ShaderConst, currentWeather, previousWeather, weatherPercent);
 		if (TheSettingManager->SettingsMain.Shaders.Grass)
-			UpdateGrass(ShaderConst, GrassCollisionSources, GrassCollisionWeights, GrassCollisionSourceCount);
+			UpdateGrass(ShaderConst);
 	}
 
 	UpdateTreeCover();

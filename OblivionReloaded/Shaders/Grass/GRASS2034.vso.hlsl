@@ -67,11 +67,11 @@ struct VS_INPUT {
 struct VS_OUTPUT {
     float4 color_0 : COLOR0;
     float4 position : POSITION;
-    float2 texcoord_0 : TEXCOORD0;
+    float4 texcoord_0 : TEXCOORD0;	// zw = batch-relative XY for the groundcover press
     float4 texcoord_1 : TEXCOORD1;
     float4 texcoord_2 : TEXCOORD2;
     float3 texcoord_3 : TEXCOORD3;
-    float4 texcoord_4 : TEXCOORD4;
+    float4 texcoord_4 : TEXCOORD4;	// w = model-space height for the groundcover press
     float4 texcoord_5 : TEXCOORD5;
     float4 texcoord_6 : TEXCOORD6;
     float4 texcoord_8 : TEXCOORD8;
@@ -140,9 +140,10 @@ VS_OUTPUT main(VS_INPUT IN) {
     r4.x = dot(DiffuseDir.xyz, r0.xyz);
     r1.xy = (((GrassWindSway(fracr((q0.x / 128) + WindData.w)) * WindData.z) * sqr(IN.color_0.a)) * WindData.xy) + r1.xy;
 
-    r1.xyz += GrassCollisionDisplacement(InstanceData[0 + IN.texcoord_1.x].xy, sqr(IN.color_0.a));
+    r1.xyz += GrassCollisionDisplacement(InstanceData[0 + IN.texcoord_1.x].xy, sqr(IN.color_0.a), r3.z);
 
     r1.xyz = r1.xyz + InstanceData[0 + IN.texcoord_1.x];
+    OUT.texcoord_0.zw = r1.xy;
     OUT.texcoord_1.w = 0.5;
     OUT.texcoord_1.xyz = compress((LightPosition.xyz - r1.xyz) / LightPosition.w);    if (distance(LightPosition.xyz, TESR_PointLightPosition[0].xyz) < 3.5f)   {        OUT.texcoord_2.w = 0.5;        OUT.texcoord_2.xyz = compress((TESR_PointLightPosition[1].xyz - r1.xyz) / TESR_PointLightPosition[1].w);        OUT.texcoord_3.xyz = TESR_PointLightColor[1];    }    else {        OUT.texcoord_2.w = 0.5;            OUT.texcoord_2.xyz = compress((TESR_PointLightPosition[0].xyz - r1.xyz) / TESR_PointLightPosition[0].w);        OUT.texcoord_3.xyz = TESR_PointLightColor[0];    }	// [-1,+1] to [0,1]
     r0 = mul(ModelViewProj, r1);
@@ -151,7 +152,8 @@ VS_OUTPUT main(VS_INPUT IN) {
     OUT.color_0.a = 1 - saturate((FogParam.x - length(r0.xyz)) / FogParam.y);
     OUT.position.xyzw = r0.xyzw;
     r0.xy = saturate((length(r0.xyzw) - AlphaParam.xz) / AlphaParam.yw);
-    OUT.texcoord_4.xyzw = AmbientColor.rgba;
+    OUT.texcoord_4.xyz = AmbientColor.rgb;
+    OUT.texcoord_4.w = IN.position.z;
     OUT.texcoord_5.w = r0.x * (1 - r0.y);
     OUT.texcoord_5.xyz = ((r2.xyz * saturate(r4.x)) * DiffuseColor.rgb) * AddlParams.x;
 

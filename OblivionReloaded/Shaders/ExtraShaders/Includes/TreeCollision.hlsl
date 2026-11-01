@@ -3,19 +3,20 @@
 // Bends shrubs away from up to three actors in the tree's model space. TreeCollision.cpp uploads
 // c240-c243 per tree. They are deliberately not TESR_ constants: for a batch's first tree the
 // per-tree hook runs before SetCT, which would overwrite a TESR_ value with a global one.
-// Unused source slots carry weight 0, and count 0 skips the whole block.
+// Unused source slots carry weight 0, and count 0 skips the whole block. Each source has its own
+// radius, scaled by the size of the actor behind it.
 
-float4 TreeCollisionParams : register(c240);	// x radius, y push, z flatten, w source count
+float4 TreeCollisionParams : register(c240);	// x source 0 radius, y push, z flatten, w source count
 float4 TreeCollisionXY0 : register(c241);		// source 0 xy, source 1 xy
-float4 TreeCollisionXY1 : register(c242);		// source 2 xy, z = 1 / bend height
-float4 TreeCollisionWeights : register(c243);	// xyz = source weights
+float4 TreeCollisionXY1 : register(c242);		// source 2 xy, z = 1 / bend height, w source 1 radius
+float4 TreeCollisionWeights : register(c243);	// xyz = source weights, w source 2 radius
 
 // ModelPos : model-space vertex, or leaf cluster centre before billboarding
 // Returns the model-space displacement to add to ModelPos.
 float3 TreeCollisionDisplacement(float3 ModelPos) {
     float3 disp = 0;
     [branch] if (TreeCollisionParams.w > 0) {
-        float invRadius = 1.0 / max(TreeCollisionParams.x, 0.001);
+        float3 invRadii = 1.0 / max(float3(TreeCollisionParams.x, TreeCollisionXY1.w, TreeCollisionWeights.w), 0.001);
         float bend = saturate(ModelPos.z * TreeCollisionXY1.z);
         float2 sources[3] = { TreeCollisionXY0.xy, TreeCollisionXY0.zw, TreeCollisionXY1.xy };
 
@@ -23,7 +24,7 @@ float3 TreeCollisionDisplacement(float3 ModelPos) {
         for (int i = 0; i < 3; i++) {
             float2 diff = ModelPos.xy - sources[i];
             float dist = length(diff);
-            float t = saturate(dist * invRadius);
+            float t = saturate(dist * invRadii[i]);
             float influence = smoothstep(1.0, 0.0, t) * TreeCollisionWeights[i];
             float2 pushDir = (dist > 0.001) ? (diff / dist) : float2(1, 0);
             disp.xy += pushDir * (influence * smoothstep(0.0, 0.3, t) * TreeCollisionParams.y);

@@ -594,6 +594,18 @@ void SettingManager::LoadSettings() {
 	GetPrivateProfileStringA("Default", "CollisionSpringiness", "0.5", value, SettingStringBuffer, Filename);
 	SettingsGrass.CollisionSpringiness = atof(value);
 	SettingsGrass.CollisionTrailSlots = GetPrivateProfileIntA("Default", "CollisionTrailSlots", 2, Filename);
+	SettingsGrass.CollisionScaleByActorSize = GetPrivateProfileIntA("Default", "CollisionScaleByActorSize", 1, Filename);
+	GetPrivateProfileStringA("Default", "CollisionReferenceRadius", "75.0", value, SettingStringBuffer, Filename);
+	SettingsGrass.CollisionReferenceRadius = atof(value);
+	GetPrivateProfileStringA("Default", "GroundcoverMaxHeight", "30.0", value, SettingStringBuffer, Filename);
+	SettingsGrass.GroundcoverMaxHeight = atof(value);
+	SettingsGrass.GroundcoverPress = GetPrivateProfileIntA("Default", "GroundcoverPress", 1, Filename);
+	GetPrivateProfileStringA("Default", "GroundcoverPressRadius", "20.0", value, SettingStringBuffer, Filename);
+	SettingsGrass.GroundcoverPressRadius = atof(value);
+	GetPrivateProfileStringA("Default", "GroundcoverPressStrength", "0.1", value, SettingStringBuffer, Filename);
+	SettingsGrass.GroundcoverPressStrength = atof(value);
+	GetPrivateProfileStringA("Default", "GroundcoverPressDarkening", "0.1", value, SettingStringBuffer, Filename);
+	SettingsGrass.GroundcoverPressDarkening = atof(value);
 	SettingsGrass.TreeCollision = GetPrivateProfileIntA("Default", "TreeCollision", 0, Filename);
 	GetPrivateProfileStringA("Default", "TreeCollisionMaxBound", "700.0", value, SettingStringBuffer, Filename);
 	SettingsGrass.TreeCollisionMaxBound = atof(value);
@@ -1608,6 +1620,13 @@ void SettingManager::SaveSettings(const char* Item, const char* Definition, cons
 			WritePrivateProfileStringA("Default", "CollisionRecoveryTime", ToString(SettingsGrass.CollisionRecoveryTime).c_str(), Filename);
 			WritePrivateProfileStringA("Default", "CollisionSpringiness", ToString(SettingsGrass.CollisionSpringiness).c_str(), Filename);
 			WritePrivateProfileStringA("Default", "CollisionTrailSlots", ToString(SettingsGrass.CollisionTrailSlots).c_str(), Filename);
+			WritePrivateProfileStringA("Default", "CollisionScaleByActorSize", ToString(SettingsGrass.CollisionScaleByActorSize).c_str(), Filename);
+			WritePrivateProfileStringA("Default", "CollisionReferenceRadius", ToString(SettingsGrass.CollisionReferenceRadius).c_str(), Filename);
+			WritePrivateProfileStringA("Default", "GroundcoverMaxHeight", ToString(SettingsGrass.GroundcoverMaxHeight).c_str(), Filename);
+			WritePrivateProfileStringA("Default", "GroundcoverPress", ToString(SettingsGrass.GroundcoverPress).c_str(), Filename);
+			WritePrivateProfileStringA("Default", "GroundcoverPressRadius", ToString(SettingsGrass.GroundcoverPressRadius).c_str(), Filename);
+			WritePrivateProfileStringA("Default", "GroundcoverPressStrength", ToString(SettingsGrass.GroundcoverPressStrength).c_str(), Filename);
+			WritePrivateProfileStringA("Default", "GroundcoverPressDarkening", ToString(SettingsGrass.GroundcoverPressDarkening).c_str(), Filename);
 			WritePrivateProfileStringA("Default", "TreeCollision", ToString(SettingsGrass.TreeCollision).c_str(), Filename);
 			WritePrivateProfileStringA("Default", "TreeCollisionMaxBound", ToString(SettingsGrass.TreeCollisionMaxBound).c_str(), Filename);
 			WritePrivateProfileStringA("Default", "TreeCollisionRadius", ToString(SettingsGrass.TreeCollisionRadius).c_str(), Filename);
@@ -2305,6 +2324,13 @@ SettingsList SettingManager::GetMenuSettings(const char* Item, const char* Defin
 			Settings["CollisionRecoveryTime"] = SettingsGrass.CollisionRecoveryTime;
 			Settings["CollisionSpringiness"] = SettingsGrass.CollisionSpringiness;
 			Settings["CollisionTrailSlots"] = SettingsGrass.CollisionTrailSlots;
+			Settings["CollisionScaleByActorSize"] = SettingsGrass.CollisionScaleByActorSize;
+			Settings["CollisionReferenceRadius"] = SettingsGrass.CollisionReferenceRadius;
+			Settings["GroundcoverMaxHeight"] = SettingsGrass.GroundcoverMaxHeight;
+			Settings["GroundcoverPress"] = SettingsGrass.GroundcoverPress;
+			Settings["GroundcoverPressRadius"] = SettingsGrass.GroundcoverPressRadius;
+			Settings["GroundcoverPressStrength"] = SettingsGrass.GroundcoverPressStrength;
+			Settings["GroundcoverPressDarkening"] = SettingsGrass.GroundcoverPressDarkening;
 			Settings["TreeCollision"] = SettingsGrass.TreeCollision;
 			Settings["TreeCollisionMaxBound"] = SettingsGrass.TreeCollisionMaxBound;
 			Settings["TreeCollisionRadius"] = SettingsGrass.TreeCollisionRadius;
@@ -3065,6 +3091,20 @@ void SettingManager::SetMenuSetting(const char* Item, const char* Definition, co
 				SettingsGrass.CollisionSpringiness = Value;
 			else if (!strcmp(Setting, "CollisionTrailSlots"))
 				SettingsGrass.CollisionTrailSlots = Value;
+			else if (!strcmp(Setting, "CollisionScaleByActorSize"))
+				SettingsGrass.CollisionScaleByActorSize = Value;
+			else if (!strcmp(Setting, "CollisionReferenceRadius"))
+				SettingsGrass.CollisionReferenceRadius = Value;
+			else if (!strcmp(Setting, "GroundcoverMaxHeight"))
+				SettingsGrass.GroundcoverMaxHeight = Value;
+			else if (!strcmp(Setting, "GroundcoverPress"))
+				SettingsGrass.GroundcoverPress = Value;
+			else if (!strcmp(Setting, "GroundcoverPressRadius"))
+				SettingsGrass.GroundcoverPressRadius = Value;
+			else if (!strcmp(Setting, "GroundcoverPressStrength"))
+				SettingsGrass.GroundcoverPressStrength = Value;
+			else if (!strcmp(Setting, "GroundcoverPressDarkening"))
+				SettingsGrass.GroundcoverPressDarkening = Value;
 			else if (!strcmp(Setting, "TreeCollision"))
 				SettingsGrass.TreeCollision = Value;
 			else if (!strcmp(Setting, "TreeCollisionMaxBound"))

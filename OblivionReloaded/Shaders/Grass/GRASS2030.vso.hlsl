@@ -64,8 +64,8 @@ struct VS_INPUT {
 struct VS_OUTPUT {
     float4 color_0 : COLOR0;
     float4 position : POSITION;
-    float2 texcoord_0 : TEXCOORD0;
-    float3 texcoord_4 : TEXCOORD4;
+    float4 texcoord_0 : TEXCOORD0;	// zw = batch-relative XY for the groundcover press
+    float4 texcoord_4 : TEXCOORD4;	// w = model-space height for the groundcover press
 	float4 texcoord_5 : TEXCOORD5;
     float4 texcoord_6 : TEXCOORD6;
     float4 texcoord_7 : TEXCOORD7;
@@ -122,19 +122,22 @@ VS_OUTPUT main(VS_INPUT IN) {
     r2.y = -r2.w;
 	scale.xyz = ScaleMask.xyz * TESR_GrassScale.xyz;
     r1.xyz = (((0.01 * InstanceData[0 + IN.texcoord_1.x].w) * scale.xyz) + TESR_GrassScale.w) * IN.position.xyz;
+    float bladeHeight = r1.z;
     r1.xyz = (r1.z * r0.xyz) + ((dot(r2.xyz, r1.xyz) * cross(r4.xyz, r0.xyz)) + (r4.xyz * dot(r2.wxz, r1.xyz)));
     r2.xyz = ((r1.w * IN.color_0.rgb) * shades(DiffuseDir.xyz, r0.xyz)) * DiffuseColor.rgb;
     r1.w = IN.position.w;
     r1.xy = (((GrassWindSway(fracr((q0.x / 128) + WindData.w)) * WindData.z) * sqr(IN.color_0.a)) * WindData.xy) + r1.xy;
 
-    r1.xyz += GrassCollisionDisplacement(InstanceData[0 + IN.texcoord_1.x].xy, sqr(IN.color_0.a));
+    r1.xyz += GrassCollisionDisplacement(InstanceData[0 + IN.texcoord_1.x].xy, sqr(IN.color_0.a), bladeHeight);
 
     r1.xyz = r1.xyz + InstanceData[0 + IN.texcoord_1.x].xyz;
+    OUT.texcoord_0.zw = r1.xy;
     r0 = mul(ModelViewProj, r1);
 	r1.xy = saturate((length(r0.xyzw) - AlphaParam.xz) / AlphaParam.yw);
 	OUT.color_0.a = 1 - saturate((FogParam.x - length(r0.xyz)) / FogParam.y);
 	OUT.position = r0;
     OUT.texcoord_4.xyz = AmbientColor.rgb;
+    OUT.texcoord_4.w = IN.position.z;
     OUT.texcoord_5.w = r1.x * (1 - r1.y);
     OUT.texcoord_5.xyz = r2.xyz * AddlParams.x;
     OUT.texcoord_6 = mul(r0, TESR_ShadowCameraToLightTransformNear);
