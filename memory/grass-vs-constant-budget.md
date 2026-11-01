@@ -15,8 +15,11 @@ variant). So **there is no register free in all three**, and InstanceData can't 
 shrunk (the engine batches to 228).
 
 Current packing: up to 3 collision sources (player + 2 trail slots); their XY positions fill
-c254.xyzw + c255.xy, and the two recovery weights sit in c255.zw (source 0 = player at an
-implicit weight of 1.0).
+c254.xyzw + c255.xy. Source 0 = player at an implicit weight of 1.0, with the player's
+(actor-size-scaled) radius in c253.x. c255.zw describe sources 1-2 with a tag encoding: a value
+below `kGrassCollisionActorTag` (2.0) is a footprint's recovery weight (radius = c253.x); a value
+at or above it is tag + that actor's own radius at weight 1. The CPU keeps the true weights in
+`GrassCollisionWeights` (TreeCollision reads them) and the packed values in `GrassCollisionSlotData`.
 
 c253-c255 are all re-uploaded per draw in `SetGrassCollisionConstants` (RenderHook.cpp), and the
 values are mirrored into `ShaderConst.Grass` so a later SetCT re-uploads the same thing; groundcover
