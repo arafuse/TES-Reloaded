@@ -1226,6 +1226,13 @@ UInt32 RenderHook::TrackSetupShaderPrograms(NiGeometry* Geometry, NiSkinInstance
 #endif
 
 #if defined(OBLIVION)
+		// Every covered draw uploads its own register, so a fade value never carries over to the next draw.
+		if (PixelShader->ShaderProg && PixelShader->ShaderProg->HasFadeParams) {
+			D3DXVECTOR4& Fade = TheShaderManager->ShaderConst.LODFade.Params;
+			Fade.x = TheLODFadeManager ? TheLODFadeManager->GetFadeRemaining(Geometry) : 0.0f;
+			Fade.y = TheLODFadeManager ? TheLODFadeManager->DitherSeed : 0.0f;
+			TheRenderManager->device->SetPixelShaderConstantF(PixelShader->ShaderProg->FadeParamsRegister, (const float*)&Fade, 1);
+		}
 		if (TheLODFadeManager && TheLODFadeManager->CensusArmed)
 			TheLODFadeManager->NoteCensusDraw(Geometry, PixelShader->ShaderName, VertexShader->ShaderName, PixelShader->ShaderProg != NULL);
 #endif

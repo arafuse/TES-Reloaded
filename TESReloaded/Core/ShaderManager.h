@@ -203,6 +203,10 @@ struct ShaderConstants {
 		D3DXVECTOR4		Geometry;	///< Per draw (TESR_GEOM_Wetness): x = drawn actor's wetness, y = 1 to keep the legacy base-pass highlight
 		D3DXVECTOR4		Data;		///< TESR_WetActorData: x = Darkening, y = Sheen, z = Glossiness; all 0 while WetActors is off
 	};
+	/// Per draw (TESR_GEOM_FadeParams): x = remaining LOD fade (0 = opaque), y = per-frame dither seed.
+	struct LODFadeStruct {
+		D3DXVECTOR4		Params;
+	};
 	struct SharpeningStruct {
 		D3DXVECTOR4		Data;
 	};
@@ -327,6 +331,7 @@ struct ShaderConstants {
 	MotionBlurStruct		MotionBlur;
 	WetWorldStruct			WetWorld;
 	WetActorStruct			WetActor;
+	LODFadeStruct			LODFade;
 	SharpeningStruct		Sharpening;
 	TAAStruct				TAA;
 	VolumetricFogStruct		VolumetricFog;
@@ -365,6 +370,11 @@ public:
 
 	ShaderValue*			TextureShaderValues;
 	UInt32					TextureShaderValuesCount;
+
+	/// True when the shader declares TESR_GEOM_FadeParams, i.e. carries the LOD fade dither clip.
+	bool					HasFadeParams;
+	/// Register TESR_GEOM_FadeParams compiled to; the draw hook uploads only this one.
+	UInt32					FadeParamsRegister;
 };
 
 class ShaderRecord : public ShaderProgram {

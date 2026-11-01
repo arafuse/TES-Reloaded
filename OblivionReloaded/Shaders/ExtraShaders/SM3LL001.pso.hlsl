@@ -49,6 +49,7 @@ samplerCUBE TESR_ShadowCubeMapBuffer11 : register(s15) = sampler_state { ADDRESS
 //   NormalMap       texture_1       1
 //
 
+#include "Includes/LODFade.hlsl"
 
 // Structures:
 
@@ -61,6 +62,7 @@ struct VS_OUTPUT {
     float3 texcoord_6 : TEXCOORD6_centroid;			
     float4 texcoord_7 : TEXCOORD7_centroid;			
     float4 texcoord_8 : TEXCOORD8;
+    float2 vpos : VPOS;
 };
 
 struct PS_OUTPUT {
@@ -71,6 +73,7 @@ struct PS_OUTPUT {
 
 PS_OUTPUT main(VS_OUTPUT IN) {
     PS_OUTPUT OUT;
+    LODFadeClip(IN.vpos);
 
 #define	expand(v)		(((v) - 0.5) / 0.5)
 #define	compress(v)		(((v) * 0.5) + 0.5)

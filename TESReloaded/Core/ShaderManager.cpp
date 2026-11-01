@@ -243,8 +243,12 @@ ShaderProgram::ShaderProgram() {
 
 	FloatShaderValues = NULL;
 	TextureShaderValues = NULL;
+	PerGeomFloatShaderValues = NULL;
 	FloatShaderValuesCount = 0;
 	TextureShaderValuesCount = 0;
+	PerGeomFloatShaderValuesCount = 0;
+	HasFadeParams = false;
+	FadeParamsRegister = 0;
 
 }
 
@@ -252,6 +256,7 @@ ShaderProgram::~ShaderProgram() {
 
 	if (FloatShaderValues) free(FloatShaderValues);
 	if (TextureShaderValues) free(TextureShaderValues);
+	if (PerGeomFloatShaderValues) free(PerGeomFloatShaderValues);
 
 }
 
@@ -505,6 +510,8 @@ bool ShaderProgram::SetPerGeomConstantTableValue(LPCSTR Name, UInt32 Index) {
 		PerGeomFloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.Geometry.Toggles;
 	else if (!strcmp(Name, "TESR_GEOM_Wetness"))
 		PerGeomFloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.WetActor.Geometry;
+	else if (!strcmp(Name, "TESR_GEOM_FadeParams"))
+		PerGeomFloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.LODFade.Params;
 	else {
 		return false;
 	}
@@ -680,6 +687,10 @@ void ShaderRecord::CreateCT() {
 						if (SetPerGeomConstantTableValue(ConstantDesc.Name, PerGeomFloatIndex)) {
 							PerGeomFloatShaderValues[PerGeomFloatIndex].RegisterIndex = ConstantDesc.RegisterIndex;
 							PerGeomFloatShaderValues[PerGeomFloatIndex].RegisterCount = ConstantDesc.RegisterCount;
+							if (!strcmp(ConstantDesc.Name, "TESR_GEOM_FadeParams")) {
+								HasFadeParams = true;
+								FadeParamsRegister = ConstantDesc.RegisterIndex;
+							}
 							PerGeomFloatIndex++;
 						}
 						else {
@@ -1150,6 +1161,7 @@ ShaderManager::ShaderManager() {
 
 	Logger::Log("Starting the shaders manager...");
 	TheShaderManager = this;
+	ShaderConst.LODFade.Params = D3DXVECTOR4(0.0f, 0.0f, 0.0f, 0.0f);
 
 	float UAdj, VAdj;
 	void* VertexPointer;

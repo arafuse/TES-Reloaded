@@ -15,6 +15,7 @@ struct VS_OUTPUT {
     float2 DepthData : TEXCOORD8;
     float3 Color : COLOR0;
     float4 Fog : COLOR1;
+    float2 vpos : VPOS;
 };
 
 struct PS_OUTPUT {
@@ -23,12 +24,14 @@ struct PS_OUTPUT {
 };
 
 #include "Includes/PAR.hlsl"
+#include "../ExtraShaders/Includes/LODFade.hlsl"
 
 #define	expand(v)		(((v) - 0.5) / 0.5)
 #define	shades(n, l)	saturate(dot(n, l))
 
 PS_OUTPUT main(VS_OUTPUT IN) {
     PS_OUTPUT OUT;
+    LODFadeClip(IN.vpos);
 
     float height;
     float2 uv = ParallaxUV(BaseMap, IN.BaseUV, IN.CameraDir, height);
