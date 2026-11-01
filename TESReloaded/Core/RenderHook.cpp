@@ -1225,6 +1225,11 @@ UInt32 RenderHook::TrackSetupShaderPrograms(NiGeometry* Geometry, NiSkinInstance
 		}
 #endif
 
+#if defined(OBLIVION)
+		if (TheLODFadeManager && TheLODFadeManager->CensusArmed)
+			TheLODFadeManager->NoteCensusDraw(Geometry, PixelShader->ShaderName, VertexShader->ShaderName, PixelShader->ShaderProg != NULL);
+#endif
+
 		if (PixelShader->isRefraction) {
 			RenderState->SetRenderState(D3DRS_ZWRITEENABLE, FALSE, 0);
 		}
