@@ -24,8 +24,10 @@ draws get c253.w = 0 (no collision sources).
 
 Per-draw data for the grass PIXEL shaders goes through PS constants instead (plenty free): the
 groundcover press uses PS c32-c34 (`TESR_GroundcoverPress*`). The VS hands the PS its
-batch-relative XY in the spare `TEXCOORD0.zw` (TEXCOORD0 was float2), which avoids a new
-interpolator — GRASS2034 already uses 11 of the 12 vs_3_0 outputs.
+batch-relative XY in the spare `TEXCOORD0.zw` (TEXCOORD0 was float2) and the vertex's model-space
+height in `TEXCOORD4.w` (the PS only read ambient .rgb; 2034's ambient alpha was dropped), which
+avoids a new interpolator — GRASS2034 already uses 11 of the 12 vs_3_0 outputs. PS c32.w is the
+drawn model's height, the press's clip line for the squashed texture.
 
 **Why:** any new per-frame grass VS data has to displace something already packed here.
 
