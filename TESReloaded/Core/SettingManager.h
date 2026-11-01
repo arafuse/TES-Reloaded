@@ -279,6 +279,13 @@ struct SettingsMainStruct {
 		float	StepValue;
 	};
 
+	/// Dithers distant LOD in when it first appears at the far edge of the distant grid.
+	struct LODFadeStruct {
+		bool	Enabled;
+		float	FadeTime;	// seconds; <= 0 disables the feature
+		UInt32	MaxFades;
+	};
+
 	struct DevelopStruct {
 		bool	CompileShaders;
 		bool	CompileEffects;
@@ -292,6 +299,7 @@ struct SettingsMainStruct {
 		UInt8	NearShellDebug;
 		UInt8	LogSunShadowStealth;	// logs the player sun shadow probe about once a second
 		UInt8	LogWetActors;			// logs player and nearest-NPC wetness about once a second
+		UInt8	LogLODFade;				// logs distant LOD arrivals and a one-shot census of the shaders drawing them
 	};
 
 	MainStruct					Main;
@@ -309,6 +317,7 @@ struct SettingsMainStruct {
 	GravityStruct				Gravity;
 	DodgeStruct					Dodge;
 	FlyCamStruct				FlyCam;
+	LODFadeStruct				LODFade;
 	DevelopStruct				Develop;
 };
 

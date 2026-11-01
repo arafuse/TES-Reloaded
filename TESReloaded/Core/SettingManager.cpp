@@ -430,6 +430,11 @@ SettingManager::SettingManager() {
 	GetPrivateProfileStringA("FlyCam", "StepValue", "1.0", value, SettingStringBuffer, Filename);
 	SettingsMain.FlyCam.StepValue = atof(value);
 
+	SettingsMain.LODFade.Enabled = GetPrivateProfileIntA("LODFade", "Enabled", 1, Filename);
+	GetPrivateProfileStringA("LODFade", "FadeTime", "1.0", value, SettingStringBuffer, Filename);
+	SettingsMain.LODFade.FadeTime = atof(value);
+	SettingsMain.LODFade.MaxFades = GetPrivateProfileIntA("LODFade", "MaxFades", 256, Filename);
+
 	SettingsMain.Develop.CompileShaders = GetPrivateProfileIntA("Develop", "CompileShaders", 0, Filename);
 	SettingsMain.Develop.CompileEffects = GetPrivateProfileIntA("Develop", "CompileEffects", 0, Filename);
 	SettingsMain.Develop.TraceShaders = GetPrivateProfileIntA("Develop", "TraceShaders", 0, Filename);
@@ -442,6 +447,7 @@ SettingManager::SettingManager() {
 	SettingsMain.Develop.NearShellDebug = GetPrivateProfileIntA("Develop", "NearShellDebug", 0, Filename);
 	SettingsMain.Develop.LogSunShadowStealth = GetPrivateProfileIntA("Develop", "LogSunShadowStealth", 0, Filename);
 	SettingsMain.Develop.LogWetActors = GetPrivateProfileIntA("Develop", "LogWetActors", 0, Filename);
+	SettingsMain.Develop.LogLODFade = GetPrivateProfileIntA("Develop", "LogLODFade", 0, Filename);
 
 	GameLoading = false;
 

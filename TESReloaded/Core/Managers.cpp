@@ -9,6 +9,7 @@ KeyboardManager*	TheKeyboardManager = NULL;
 ShadowManager*		TheShadowManager = NULL;
 EquipmentManager*	TheEquipmentManager = NULL;
 ScriptManager*		TheScriptManager = NULL;
+LODFadeManager*		TheLODFadeManager = NULL;
 
 void InitializeManagers() {
 
@@ -20,5 +21,6 @@ void InitializeManagers() {
 	new ShadowManager();
 	new EquipmentManager();
 	new ScriptManager();
+	if (TheSettingManager->SettingsMain.LODFade.Enabled && TheSettingManager->SettingsMain.LODFade.FadeTime > 0.0f) new LODFadeManager();
 
 }

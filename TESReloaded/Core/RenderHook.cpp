@@ -472,6 +472,7 @@ void RenderHook::TrackRender(BSRenderedTexture* RenderedTexture) {
 	TheShaderManager->UpdateShaderStates();
 	TheRenderManager->SetSceneGraph();
 	TheShaderManager->UpdateConstants();
+	if (TheLODFadeManager) TheLODFadeManager->Update();
 	if (TheRenderManager->BackBuffer) TheRenderManager->defaultRTGroup->RenderTargets[0]->data->Surface = TheRenderManager->defaultRTGroup->RenderTargets[1]->data->Surface;
 	if (TheSettingManager->SettingsMain.Develop.TraceShaders && *RenderWindowNode == NULL && TheKeyboardManager->OnKeyPressed(TheSettingManager->SettingsMain.Develop.TraceShaders)) {
 		*RenderWindowNode = (NiNode*)MemoryAlloc(sizeof(NiNode));

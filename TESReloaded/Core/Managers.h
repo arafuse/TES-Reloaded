@@ -13,6 +13,7 @@
 #include "ShadowManager.h"
 #include "FrameProfiler.h"
 #include "SampleProfiler.h"
+#include "LODFadeManager.h"
 
 extern SettingManager*		TheSettingManager;
 extern CommandManager*		TheCommandManager;
@@ -25,5 +26,6 @@ extern KeyboardManager*		TheKeyboardManager;
 extern ShadowManager*		TheShadowManager;
 extern EquipmentManager*	TheEquipmentManager;
 extern ScriptManager*		TheScriptManager;
+extern LODFadeManager*		TheLODFadeManager;
 
 void InitializeManagers();
