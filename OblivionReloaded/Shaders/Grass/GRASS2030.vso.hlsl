@@ -65,7 +65,7 @@ struct VS_OUTPUT {
     float4 color_0 : COLOR0;
     float4 position : POSITION;
     float4 texcoord_0 : TEXCOORD0;	// zw = batch-relative XY for the groundcover press
-    float3 texcoord_4 : TEXCOORD4;
+    float4 texcoord_4 : TEXCOORD4;	// w = model-space height for the groundcover press
 	float4 texcoord_5 : TEXCOORD5;
     float4 texcoord_6 : TEXCOORD6;
     float4 texcoord_7 : TEXCOORD7;
@@ -137,6 +137,7 @@ VS_OUTPUT main(VS_INPUT IN) {
 	OUT.color_0.a = 1 - saturate((FogParam.x - length(r0.xyz)) / FogParam.y);
 	OUT.position = r0;
     OUT.texcoord_4.xyz = AmbientColor.rgb;
+    OUT.texcoord_4.w = IN.position.z;
     OUT.texcoord_5.w = r1.x * (1 - r1.y);
     OUT.texcoord_5.xyz = r2.xyz * AddlParams.x;
     OUT.texcoord_6 = mul(r0, TESR_ShadowCameraToLightTransformNear);

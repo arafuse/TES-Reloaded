@@ -598,7 +598,7 @@ void SettingManager::LoadSettings() {
 	SettingsGrass.GroundcoverMaxHeight = atof(value);
 	GetPrivateProfileStringA("Default", "GroundcoverPressRadius", "24.0", value, SettingStringBuffer, Filename);
 	SettingsGrass.GroundcoverPressRadius = atof(value);
-	GetPrivateProfileStringA("Default", "GroundcoverPressStrength", "0.8", value, SettingStringBuffer, Filename);
+	GetPrivateProfileStringA("Default", "GroundcoverPressStrength", "0.5", value, SettingStringBuffer, Filename);
 	SettingsGrass.GroundcoverPressStrength = atof(value);
 	GetPrivateProfileStringA("Default", "GroundcoverPressDarkening", "0.3", value, SettingStringBuffer, Filename);
 	SettingsGrass.GroundcoverPressDarkening = atof(value);

@@ -104,7 +104,7 @@ struct ShaderConstants {
 		D3DXVECTOR4		CollisionParams;
 		D3DXVECTOR4		CollisionXY[2];
 		/// Groundcover press (grass PS c32-c34): [0] = radius, per-draw strength (0 = not groundcover),
-		/// darkening, source count; [1] = sources 0-1 XY; [2].xy = source 2 XY. Positions are relative
+		/// darkening, drawn model's height; [1] = sources 0-1 XY; [2].xy = source 2 XY. Positions are relative
 		/// to the drawn batch; unused sources are parked far away.
 		D3DXVECTOR4		GroundcoverPress[3];
 	};

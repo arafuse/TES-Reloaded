@@ -71,7 +71,7 @@ struct VS_OUTPUT {
     float4 texcoord_1 : TEXCOORD1;
     float4 texcoord_2 : TEXCOORD2;
     float3 texcoord_3 : TEXCOORD3;
-    float4 texcoord_4 : TEXCOORD4;
+    float4 texcoord_4 : TEXCOORD4;	// w = model-space height for the groundcover press
     float4 texcoord_5 : TEXCOORD5;
     float4 texcoord_6 : TEXCOORD6;
     float4 texcoord_8 : TEXCOORD8;
@@ -152,7 +152,8 @@ VS_OUTPUT main(VS_INPUT IN) {
     OUT.color_0.a = 1 - saturate((FogParam.x - length(r0.xyz)) / FogParam.y);
     OUT.position.xyzw = r0.xyzw;
     r0.xy = saturate((length(r0.xyzw) - AlphaParam.xz) / AlphaParam.yw);
-    OUT.texcoord_4.xyzw = AmbientColor.rgba;
+    OUT.texcoord_4.xyz = AmbientColor.rgb;
+    OUT.texcoord_4.w = IN.position.z;
     OUT.texcoord_5.w = r0.x * (1 - r0.y);
     OUT.texcoord_5.xyz = ((r2.xyz * saturate(r4.x)) * DiffuseColor.rgb) * AddlParams.x;
 

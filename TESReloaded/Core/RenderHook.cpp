@@ -936,7 +936,8 @@ static void SetGrassCollisionConstants(NiGeometry* Geometry, const NiTransform* 
 	ShaderConstants::GrassStruct& Grass = TheShaderManager->ShaderConst.Grass;
 	float cx = WorldTransform->pos.x;
 	float cy = WorldTransform->pos.y;
-	bool Groundcover = GetGrassModelHeight(Geometry) <= TheSettingManager->SettingsGrass.GroundcoverMaxHeight;
+	float ModelHeight = GetGrassModelHeight(Geometry);
+	bool Groundcover = ModelHeight <= TheSettingManager->SettingsGrass.GroundcoverMaxHeight;
 
 	Grass.CollisionParams.w = Groundcover ? 0.0f : (float)TheShaderManager->GrassCollisionSourceCount;
 	Grass.CollisionXY[0] = D3DXVECTOR4(
@@ -952,8 +953,10 @@ static void SetGrassCollisionConstants(NiGeometry* Geometry, const NiTransform* 
 	TheRenderManager->device->SetVertexShaderConstantF(253, (const float*)&Grass.CollisionParams, 3);
 
 	const ShaderManager::GrassActorPos* Press = TheShaderManager->GroundcoverPressSources;
-	Grass.GroundcoverPress[0].y = Groundcover ? TheSettingManager->SettingsGrass.GroundcoverPressStrength : 0.0f;
-	Grass.GroundcoverPress[0].w = (float)TheShaderManager->GroundcoverPressSourceCount;
+	// At 1 the press centre would squash to zero height.
+	float PressStrength = min(TheSettingManager->SettingsGrass.GroundcoverPressStrength, 0.9f);
+	Grass.GroundcoverPress[0].y = Groundcover ? PressStrength : 0.0f;
+	Grass.GroundcoverPress[0].w = ModelHeight;
 	Grass.GroundcoverPress[1] = D3DXVECTOR4(Press[0].x - cx, Press[0].y - cy, Press[1].x - cx, Press[1].y - cy);
 	Grass.GroundcoverPress[2] = D3DXVECTOR4(Press[2].x - cx, Press[2].y - cy, 0.0f, 0.0f);
 	TheRenderManager->device->SetPixelShaderConstantF(32, (const float*)Grass.GroundcoverPress, 3);

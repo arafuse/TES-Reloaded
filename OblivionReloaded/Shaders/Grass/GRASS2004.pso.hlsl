@@ -34,7 +34,7 @@ float4 TESR_GroundcoverPressXY1 : register(c34);
 
 struct VS_OUTPUT {
     float4 DiffuseUV : TEXCOORD0;	// zw = batch-relative XY
-    float3 texcoord_4 : TEXCOORD4_centroid;
+    float4 texcoord_4 : TEXCOORD4_centroid;	// w = model-space height
     float4 texcoord_5 : TEXCOORD5_centroid;
     float4 texcoord_6 : TEXCOORD6;
     float4 texcoord_7 : TEXCOORD7;
@@ -55,7 +55,18 @@ PS_OUTPUT main(VS_OUTPUT IN) {
     float4 ColorDiffuse;
     float shadow = 1.0f;
     float dimCoeff = 1.0f;
-    ColorDiffuse = tex2D(DiffuseMap, IN.DiffuseUV.xy);
+    float4 uvDx = ddx(IN.DiffuseUV);
+    float4 uvDy = ddy(IN.DiffuseUV);
+    float heightDx = ddx(IN.texcoord_4.w);
+    float heightDy = ddy(IN.texcoord_4.w);
+    float2 diffuseUV = IN.DiffuseUV.xy;
+    float pressDarken = 0.0;
+    float pressAbove = 0.0;
+    [branch]
+    if (TESR_GroundcoverPressParams.y > 0.0)
+        diffuseUV += GroundcoverPressOffset(float3(IN.DiffuseUV.zw, IN.texcoord_4.w), float3(uvDx.zw, heightDx), float3(uvDy.zw, heightDy), uvDx.xy, uvDy.xy, pressDarken, pressAbove);
+
+    ColorDiffuse = tex2Dgrad(DiffuseMap, diffuseUV, uvDx.xy, uvDy.xy);
     Color.rgb = (shadow * IN.texcoord_5.xyz) + IN.texcoord_4.xyz;
     
     if (shadow == 0.0f)
@@ -66,13 +77,9 @@ PS_OUTPUT main(VS_OUTPUT IN) {
     
     Color.rgb *= dimCoeff;
 
-    float pressDarken = 0.0;
-    float pressCleared = 0.0;
-    [branch]
-    if (TESR_GroundcoverPressParams.y > 0.0) GroundcoverPress(IN.DiffuseUV.zw, pressDarken, pressCleared);
     Color.rgb *= 1.0 - pressDarken;
 
-    OUT.color_0.a = (AlphaTestRef.x >= ColorDiffuse.a || pressCleared > 0.0 ? 0 : IN.texcoord_5.w);
+    OUT.color_0.a = (AlphaTestRef.x >= ColorDiffuse.a || pressAbove > 0.0 ? 0 : IN.texcoord_5.w);
     OUT.color_0.rgb = (ColorDiffuse.rgb * Color.rgb) + ((IN.color_0.rgb - (ColorDiffuse.rgb * Color.rgb)) * IN.color_0.a);    
 
     return OUT;
