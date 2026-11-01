@@ -54,14 +54,15 @@ void SetTreeCollisionConstants(NiGeometry* Geometry, const NiTransform* WorldTra
 	if (Tree && Tree->m_kWorldBound.Radius > 0.0f && Tree->m_kWorldBound.Radius <= Settings->TreeCollisionMaxBound) {
 		float Bound = Tree->m_kWorldBound.Radius;
 		float InvScale = 1.0f / WorldTransform->scale;
-		float SourceWeights[3] = { 1.0f, TheShaderManager->GrassCollisionWeights[0], TheShaderManager->GrassCollisionWeights[1] };
 		float* Slots[3] = { &Constants[1].x, &Constants[1].z, &Constants[2].x };
 		float* Radii[3] = { &Constants[0].x, &Constants[2].w, &Constants[3].w };
 		float* Weights = &Constants[3].x;
 		int Count = 0;
-		int SourceCount = min(TheShaderManager->GrassCollisionSourceCount, 3);
-		for (int i = 0; i < SourceCount; i++) {
-			const ShaderManager::GrassActorPos& Source = TheShaderManager->GrassCollisionSources[i];
+		// The list is in priority order, so a tree reached by more than three sources keeps the first.
+		int SourceCount = TheShaderManager->GrassCollisionSourceCount;
+		for (int i = 0; i < SourceCount && Count < 3; i++) {
+			const ShaderManager::GrassSource& Source = TheShaderManager->GrassCollisionSources[i];
+			if (Source.weight == 0.0f) continue;
 			float Radius = Settings->TreeCollisionRadius * Source.radiusScale;
 			float Reach = Bound + Radius;
 			NiPoint3 Offset;
@@ -73,7 +74,7 @@ void SetTreeCollisionConstants(NiGeometry* Geometry, const NiTransform* WorldTra
 			Slots[Count][0] = Local.x * InvScale;
 			Slots[Count][1] = Local.y * InvScale;
 			*Radii[Count] = Radius * InvScale;
-			Weights[Count] = SourceWeights[i];
+			Weights[Count] = Source.weight;
 			Count++;
 		}
 		if (Count) {

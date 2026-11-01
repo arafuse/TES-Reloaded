@@ -1,11 +1,12 @@
 // Grass collision, shared by every GRASS vertex shader override.
 //
-// Up to three sources bend the blades around them. Source 0 is the player at full strength, with
-// the player's radius in c253.x. Sources 1 and 2 are described by c255.zw: a fading footprint sends
-// its spring recovery weight and shares the player's radius, while a nearby actor sends
-// GrassCollisionActorTag plus its own radius at full strength. The recovery weight dips negative
-// near the end so the blade whips just past upright before settling. The includer declares the
-// TESR_GrassCollision* constants (c253-c255).
+// Up to three sources bend the blades around them, picked per batch by the CPU from the ones that
+// reach it. Source 0 is at full strength with its radius in c253.x: the player whenever the player
+// or a footprint reaches the batch, otherwise an actor. Sources 1 and 2 are described by c255.zw: a
+// fading footprint sends its spring recovery weight and shares source 0's radius, while an actor
+// sends GrassCollisionActorTag plus its own radius at full strength. The recovery weight dips
+// negative near the end so the blade whips just past upright before settling. The includer
+// declares the TESR_GrassCollision* constants (c253-c255).
 //
 // The bend is limited by the vertex's height above the root, as a blade can only lean and sink
 // as far as it is tall. Short groundcover is pressed in place instead of sliding as one patch.

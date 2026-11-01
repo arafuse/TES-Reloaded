@@ -1173,11 +1173,6 @@ ShaderManager::ShaderManager() {
 	PreWaterDepthBufferFilled = false;
 	InMainScenePass = false;
 	GrassCollisionSourceCount = 0;
-	GrassCollisionWeights[0] = GrassCollisionWeights[1] = 0.0f;
-	GrassCollisionSlotData[0] = GrassCollisionSlotData[1] = 0.0f;
-	for (int i = 0; i < 3; i++) GrassCollisionSources[i] = { 0.0f, 0.0f, 1.0f };
-	GroundcoverPressSourceCount = 0;
-	for (int i = 0; i < 3; i++) GroundcoverPressSources[i] = { 1.0e7f, 1.0e7f, 1.0f };
 	EffectVertex = NULL;
 	ShellMaskTexture = NULL;
 	ShellFlattenDepthSurface = NULL;
@@ -1920,9 +1915,9 @@ static void ApplyGrassDensitySettings(int density) {
 	}
 }
 
-// The grass vertex shaders have room for three collision sources, one of which is always the
-// player, so at most two nearby actors can be tracked.
-const int kGrassMaxNPCs = 2;
+// Nearby actors tracked as grass collision sources. Each batch still takes at most three sources,
+// but picks them from this list by which ones reach it.
+const int kGrassMaxNPCs = 16;
 
 static void TryInsertActor(ActorDist nearest[], int& count, const ActorDist& actor) {
 	if (count < kGrassMaxNPCs) {
@@ -1941,10 +1936,6 @@ static void TryInsertActor(ActorDist nearest[], int& count, const ActorDist& act
 // flatten a whole field.
 const float kGrassActorScaleMin = 0.25f;
 const float kGrassActorScaleMax = 4.0f;
-
-// Grass VS c255.zw values at or above this mark an actor source carrying its own radius. Footprint
-// recovery weights stay within about [-0.3, 1].
-const float kGrassCollisionActorTag = 2.0f;
 
 // An actor's root-node bound radius as first seen, per unit of reference scale. The live bound swells
 // and shrinks with the pose, so it is sampled once per 3D and re-sampled only when the root changes.
@@ -2071,6 +2062,7 @@ struct GrassStamp {
 };
 
 const int   kGrassStampCount    = 2;
+static_assert(1 + kGrassMaxNPCs + kGrassStampCount <= ShaderManager::GrassMaxSources, "grass collision source list too small");
 const float kGrassStampSpacing  = 0.75f;	// fraction of the collision radius between stamps
 const float kGrassMaxDeltaTime  = 0.1f;		// clamp for a hitched or paused frame
 const float kGrassTeleportDist  = 1024.0f;	// a jump this large is a load door or fast travel
@@ -2157,7 +2149,7 @@ static void UpdateGrassStamps(float px, float py, const void* space, float radiu
 
 } // namespace
 
-void ShaderManager::UpdateGrass(ShaderConstants& ShaderConst, GrassActorPos GrassCollisionSources[3], float GrassCollisionWeights[2], int& GrassCollisionSourceCount) {
+void ShaderManager::UpdateGrass(ShaderConstants& ShaderConst) {
 	ShaderConst.Grass.Scale.x = TheSettingManager->SettingsGrass.ScaleX;
 	ShaderConst.Grass.Scale.y = TheSettingManager->SettingsGrass.ScaleY;
 	ShaderConst.Grass.Scale.z = TheSettingManager->SettingsGrass.ScaleZ;
@@ -2172,37 +2164,25 @@ void ShaderManager::UpdateGrass(ShaderConstants& ShaderConst, GrassActorPos Gras
 		*SettingGrassWindMagnitudeMin = *LocalGrassWindMagnitudeMin = *SettingGrassWindMagnitudeMax * 0.5f;
 	}
 
+	// The per-batch source picks and their packing happen per draw, in RenderHook's
+	// SetGrassCollisionConstants; these are the defaults until the first grass draw.
 	float radius = TheSettingManager->SettingsGrass.CollisionRadius;
 	float recovery = TheSettingManager->SettingsGrass.CollisionRecoveryTime;
 	ShaderConst.Grass.CollisionParams.x = radius;
 	ShaderConst.Grass.CollisionParams.y = TheSettingManager->SettingsGrass.CollisionStrength;
 	ShaderConst.Grass.CollisionParams.z = TheSettingManager->SettingsGrass.CollisionFlattenStrength;
+	ShaderConst.Grass.CollisionParams.w = 0.0f;
 	memset(ShaderConst.Grass.CollisionXY, 0, sizeof(ShaderConst.Grass.CollisionXY));
-
-	GrassCollisionSourceCount = 0;
-	GrassCollisionWeights[0] = GrassCollisionWeights[1] = 0.0f;
-	TheShaderManager->GrassCollisionSlotData[0] = TheShaderManager->GrassCollisionSlotData[1] = 0.0f;
-	for (int i = 0; i < 3; i++)
-		GrassCollisionSources[i] = { 0.0f, 0.0f, 1.0f };
-
 	ShaderConst.Grass.GroundcoverPress[0].z = TheSettingManager->SettingsGrass.GroundcoverPressDarkening;
-	// Unused press sources sit far outside any batch, so the pixel shader needs no source count.
-	TheShaderManager->GroundcoverPressSourceCount = 0;
-	for (int i = 0; i < 3; i++)
-		TheShaderManager->GroundcoverPressSources[i] = { 1.0e7f, 1.0e7f, 1.0f };
 
-	if (!Player) {
-		ShaderConst.Grass.CollisionParams.w = 0.0f;
-		return;
-	}
+	GrassSource* sources = TheShaderManager->GrassCollisionSources;
+	int& sourceCount = TheShaderManager->GrassCollisionSourceCount;
+	sourceCount = 0;
+	if (!Player) return;
 
-	// Source 0 is always the player at full strength, crushing grass underfoot. The player's
-	// footprints share its radius, which the shader reads from c253.x.
 	float playerScale = GrassActorRadiusScale(Player);
 	float playerRadius = radius * playerScale;
-	ShaderConst.Grass.CollisionParams.x = playerRadius;
-	GrassCollisionSources[0] = { Player->pos.x, Player->pos.y, playerScale };
-	GrassCollisionSourceCount = 1;
+	sources[sourceCount++] = { Player->pos.x, Player->pos.y, playerScale, 1.0f, GrassSource_Player };
 
 	const void* space = Player->GetWorldSpace() ? (const void*)Player->GetWorldSpace() : (const void*)Player->parentCell;
 	UpdateGrassStamps(Player->pos.x, Player->pos.y, space, playerRadius, recovery);
@@ -2229,22 +2209,12 @@ void ShaderManager::UpdateGrass(ShaderConstants& ShaderConst, GrassActorPos Gras
 			CollectActorsFromObjectList(&Player->parentCell->objectList.First, Player, nearest, npcCount, maxTrackDistSq, cull, radius);
 		}
 	}
-	if (npcCount == kGrassMaxNPCs && nearest[1].distSq < nearest[0].distSq) {
-		ActorDist swap = nearest[0]; nearest[0] = nearest[1]; nearest[1] = swap;
-	}
 
-	// Groundcover is pressed only by live actors; footprint stamps are spaced for tall grass
-	// and would leave a dotted trail of foot-sized discs.
-	GrassActorPos* pressSources = TheShaderManager->GroundcoverPressSources;
-	int& pressCount = TheShaderManager->GroundcoverPressSourceCount;
-	if (TheSettingManager->SettingsGrass.GroundcoverPress) {
-		pressSources[0] = { Player->pos.x, Player->pos.y, playerScale };
-		pressCount = 1;
-	}
-	for (int i = 0; pressCount > 0 && i < npcCount && pressCount < 3; i++) {
-		pressSources[pressCount] = { nearest[i].x, nearest[i].y, nearest[i].radiusScale };
-		pressCount++;
-	}
+	// Nearest first, so a batch reached by more actors than it has slots keeps the ones nearest
+	// the camera.
+	std::sort(nearest, nearest + npcCount, [](const ActorDist& a, const ActorDist& b) { return a.distSq < b.distSq; });
+	for (int i = 0; i < npcCount; i++)
+		sources[sourceCount++] = { nearest[i].x, nearest[i].y, nearest[i].radiusScale, 1.0f, GrassSource_Actor };
 
 	// Newest stamps first so the freshest footprint wins; TrailSlots applies after
 	// sorting, or a limit of 1 could keep the older stamp.
@@ -2263,33 +2233,18 @@ void ShaderManager::UpdateGrass(ShaderConstants& ShaderConst, GrassActorPos Gras
 	if (trailSlots > kGrassStampCount) trailSlots = kGrassStampCount;
 	if (stampCount > trailSlots) stampCount = trailSlots;
 
-	// Visible actors take the remaining sources first, nearest first; the
-	// player's footprints, newest first, take whatever is left.
-	int stampIdx = 0, npcIdx = 0;
-	while (GrassCollisionSourceCount < 3 && (stampIdx < stampCount || npcIdx < npcCount)) {
-		bool useStamp = npcIdx >= npcCount;
-		int slot = GrassCollisionSourceCount;
-		if (useStamp) {
-			const GrassStamp& stamp = GrassStamps[stampOrder[stampIdx++]];
-			GrassCollisionSources[slot] = { stamp.x, stamp.y, playerScale };
-			// A stamp is planted underfoot where source 0 already crushes the grass, so
-			// fade it in as the player moves away rather than doubling the deformation.
-			float sdx = Player->pos.x - stamp.x;
-			float sdy = Player->pos.y - stamp.y;
-			float sep = (spacing > 0.0f) ? (sqrtf(sdx * sdx + sdy * sdy) / spacing) : 1.0f;
-			if (sep > 1.0f) sep = 1.0f;
-			GrassCollisionWeights[slot - 1] = sep * GrassSpringWeight(stamp.age, recovery, TheSettingManager->SettingsGrass.CollisionSpringiness);
-			TheShaderManager->GrassCollisionSlotData[slot - 1] = GrassCollisionWeights[slot - 1];
-		} else {
-			const ActorDist& actor = nearest[npcIdx++];
-			GrassCollisionSources[slot] = { actor.x, actor.y, actor.radiusScale };
-			GrassCollisionWeights[slot - 1] = 1.0f;
-			TheShaderManager->GrassCollisionSlotData[slot - 1] = kGrassCollisionActorTag + radius * actor.radiusScale;
-		}
-		GrassCollisionSourceCount++;
+	// Footprints rank after every live actor, matching the old fixed slots.
+	for (int i = 0; i < stampCount; i++) {
+		const GrassStamp& stamp = GrassStamps[stampOrder[i]];
+		// A stamp is planted underfoot where the player already crushes the grass, so
+		// fade it in as the player moves away rather than doubling the deformation.
+		float sdx = Player->pos.x - stamp.x;
+		float sdy = Player->pos.y - stamp.y;
+		float sep = (spacing > 0.0f) ? (sqrtf(sdx * sdx + sdy * sdy) / spacing) : 1.0f;
+		if (sep > 1.0f) sep = 1.0f;
+		float weight = sep * GrassSpringWeight(stamp.age, recovery, TheSettingManager->SettingsGrass.CollisionSpringiness);
+		sources[sourceCount++] = { stamp.x, stamp.y, playerScale, weight, GrassSource_Footprint };
 	}
-
-	ShaderConst.Grass.CollisionParams.w = (float)GrassCollisionSourceCount;
 }
 
 /// Packs the parallax height scale and its centering bias so the shader offset is a single mad,
@@ -2773,7 +2728,7 @@ void ShaderManager::UpdateConstants() {
 		if (TheSettingManager->SettingsMain.Effects.Precipitations)
 			UpdatePrecipitation(ShaderConst, currentWeather, previousWeather, weatherPercent);
 		if (TheSettingManager->SettingsMain.Shaders.Grass)
-			UpdateGrass(ShaderConst, GrassCollisionSources, GrassCollisionWeights, GrassCollisionSourceCount);
+			UpdateGrass(ShaderConst);
 	}
 
 	UpdateTreeCover();
