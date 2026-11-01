@@ -432,6 +432,7 @@ struct SettingsGrassStruct {
 	float CollisionSpringiness;
 	int CollisionTrailSlots;
 	float GroundcoverMaxHeight;			///< Grass models at or below this model-space height are groundcover: pressed, never bent
+	bool GroundcoverPress;				///< Press groundcover under nearby actors; off still keeps groundcover out of collision bending
 	float GroundcoverPressRadius;		///< World units around an actor that press groundcover
 	float GroundcoverPressStrength;		///< How far pressed groundcover squashes down and shrinks toward the foot; 0 disables the press, capped at 0.9
 	float GroundcoverPressDarkening;	///< Fraction of the light removed at the centre of the press

@@ -594,13 +594,14 @@ void SettingManager::LoadSettings() {
 	GetPrivateProfileStringA("Default", "CollisionSpringiness", "0.5", value, SettingStringBuffer, Filename);
 	SettingsGrass.CollisionSpringiness = atof(value);
 	SettingsGrass.CollisionTrailSlots = GetPrivateProfileIntA("Default", "CollisionTrailSlots", 2, Filename);
-	GetPrivateProfileStringA("Default", "GroundcoverMaxHeight", "20.0", value, SettingStringBuffer, Filename);
+	GetPrivateProfileStringA("Default", "GroundcoverMaxHeight", "30.0", value, SettingStringBuffer, Filename);
 	SettingsGrass.GroundcoverMaxHeight = atof(value);
-	GetPrivateProfileStringA("Default", "GroundcoverPressRadius", "24.0", value, SettingStringBuffer, Filename);
+	SettingsGrass.GroundcoverPress = GetPrivateProfileIntA("Default", "GroundcoverPress", 1, Filename);
+	GetPrivateProfileStringA("Default", "GroundcoverPressRadius", "20.0", value, SettingStringBuffer, Filename);
 	SettingsGrass.GroundcoverPressRadius = atof(value);
-	GetPrivateProfileStringA("Default", "GroundcoverPressStrength", "0.5", value, SettingStringBuffer, Filename);
+	GetPrivateProfileStringA("Default", "GroundcoverPressStrength", "0.1", value, SettingStringBuffer, Filename);
 	SettingsGrass.GroundcoverPressStrength = atof(value);
-	GetPrivateProfileStringA("Default", "GroundcoverPressDarkening", "0.3", value, SettingStringBuffer, Filename);
+	GetPrivateProfileStringA("Default", "GroundcoverPressDarkening", "0.1", value, SettingStringBuffer, Filename);
 	SettingsGrass.GroundcoverPressDarkening = atof(value);
 	SettingsGrass.TreeCollision = GetPrivateProfileIntA("Default", "TreeCollision", 0, Filename);
 	GetPrivateProfileStringA("Default", "TreeCollisionMaxBound", "700.0", value, SettingStringBuffer, Filename);
@@ -1617,6 +1618,7 @@ void SettingManager::SaveSettings(const char* Item, const char* Definition, cons
 			WritePrivateProfileStringA("Default", "CollisionSpringiness", ToString(SettingsGrass.CollisionSpringiness).c_str(), Filename);
 			WritePrivateProfileStringA("Default", "CollisionTrailSlots", ToString(SettingsGrass.CollisionTrailSlots).c_str(), Filename);
 			WritePrivateProfileStringA("Default", "GroundcoverMaxHeight", ToString(SettingsGrass.GroundcoverMaxHeight).c_str(), Filename);
+			WritePrivateProfileStringA("Default", "GroundcoverPress", ToString(SettingsGrass.GroundcoverPress).c_str(), Filename);
 			WritePrivateProfileStringA("Default", "GroundcoverPressRadius", ToString(SettingsGrass.GroundcoverPressRadius).c_str(), Filename);
 			WritePrivateProfileStringA("Default", "GroundcoverPressStrength", ToString(SettingsGrass.GroundcoverPressStrength).c_str(), Filename);
 			WritePrivateProfileStringA("Default", "GroundcoverPressDarkening", ToString(SettingsGrass.GroundcoverPressDarkening).c_str(), Filename);
@@ -2318,6 +2320,7 @@ SettingsList SettingManager::GetMenuSettings(const char* Item, const char* Defin
 			Settings["CollisionSpringiness"] = SettingsGrass.CollisionSpringiness;
 			Settings["CollisionTrailSlots"] = SettingsGrass.CollisionTrailSlots;
 			Settings["GroundcoverMaxHeight"] = SettingsGrass.GroundcoverMaxHeight;
+			Settings["GroundcoverPress"] = SettingsGrass.GroundcoverPress;
 			Settings["GroundcoverPressRadius"] = SettingsGrass.GroundcoverPressRadius;
 			Settings["GroundcoverPressStrength"] = SettingsGrass.GroundcoverPressStrength;
 			Settings["GroundcoverPressDarkening"] = SettingsGrass.GroundcoverPressDarkening;
@@ -3083,6 +3086,8 @@ void SettingManager::SetMenuSetting(const char* Item, const char* Definition, co
 				SettingsGrass.CollisionTrailSlots = Value;
 			else if (!strcmp(Setting, "GroundcoverMaxHeight"))
 				SettingsGrass.GroundcoverMaxHeight = Value;
+			else if (!strcmp(Setting, "GroundcoverPress"))
+				SettingsGrass.GroundcoverPress = Value;
 			else if (!strcmp(Setting, "GroundcoverPressRadius"))
 				SettingsGrass.GroundcoverPressRadius = Value;
 			else if (!strcmp(Setting, "GroundcoverPressStrength"))

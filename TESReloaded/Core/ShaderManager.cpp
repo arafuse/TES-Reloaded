@@ -2182,10 +2182,12 @@ void ShaderManager::UpdateGrass(ShaderConstants& ShaderConst, GrassActorPos Gras
 	// and would leave a dotted trail of foot-sized discs.
 	GrassActorPos* pressSources = TheShaderManager->GroundcoverPressSources;
 	int& pressCount = TheShaderManager->GroundcoverPressSourceCount;
-	pressSources[0].x = Player->pos.x;
-	pressSources[0].y = Player->pos.y;
-	pressCount = 1;
-	for (int i = 0; i < npcCount && pressCount < 3; i++) {
+	if (TheSettingManager->SettingsGrass.GroundcoverPress) {
+		pressSources[0].x = Player->pos.x;
+		pressSources[0].y = Player->pos.y;
+		pressCount = 1;
+	}
+	for (int i = 0; pressCount > 0 && i < npcCount && pressCount < 3; i++) {
 		pressSources[pressCount].x = nearest[i].x;
 		pressSources[pressCount].y = nearest[i].y;
 		pressCount++;
