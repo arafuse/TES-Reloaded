@@ -1,6 +1,8 @@
 #include "TreeCover.h"
 #include "TreeCoverMath.h"
 #include "Seqlock.h"
+#include "GrassCover.h"
+#include "GrassCoverMath.h"
 
 static const void*	VFTBSTreeNode			= (void*)0x00A65854;
 static const float	kTreeCoverTorsoHeight	= 50.0f;
@@ -112,12 +114,12 @@ void UpdateTreeCover() {
 
 static void __stdcall AdjustDetectionLight(Actor* Target, SInt32* Args) {
 
-	float Cover = PlayerTreeCover;
-	SettingsGrassStruct* Settings = &TheSettingManager->SettingsGrass;
-	if (!(Cover > 0.0f) || !Settings->TreeCover || Target != Player || !(UInt8)Args[kDetectionArgSneaking]) return;
-	float Scale = 1.0f - Cover * Settings->TreeCoverLightReduction;
-	if (Scale < 0.0f) Scale = 0.0f;
-	if (Scale > 1.0f) Scale = 1.0f;
+	const SettingsGrassStruct& Settings = TheSettingManager->SettingsGrass;
+	if (Target != Player || !(UInt8)Args[kDetectionArgSneaking]) return;
+	float Tree = Settings.TreeCover ? PlayerTreeCover : 0.0f;
+	float Grass = Settings.GrassCover ? GetPlayerGrassCover() : 0.0f;
+	if (!(Tree > 0.0f) && !(Grass > 0.0f)) return;
+	float Scale = FoliageLightScale(Tree > 0.0f ? Tree : 0.0f, Settings.TreeCoverLightReduction, Grass > 0.0f ? Grass : 0.0f, Settings.GrassCoverLightReduction);
 	Args[kDetectionArgLight] = (SInt32)(Args[kDetectionArgLight] * Scale);
 
 }
@@ -126,19 +128,25 @@ static void __stdcall AdjustDetectionLight(Actor* Target, SInt32* Args) {
 static bool __fastcall DetectionLineOfSightHook(Actor* Observer, void* Edx, UInt32 Arg1, TESObjectREFR* Target, UInt32 Arg3, UInt32* Reason, UInt32 Arg5) {
 
 	bool Visible = (UInt8)ThisCall(kActorHasLineOfSight, Observer, Arg1, Target, Arg3, Reason, Arg5);
-	if (!Visible || Target != (TESObjectREFR*)Player || !TheSettingManager->SettingsGrass.TreeCoverBlockLOS) return Visible;
+	if (!Visible || Target != (TESObjectREFR*)Player) return Visible;
 
-	TreeCoverSnapshot Shrubs;
-	if (!Snapshot.Read(Shrubs) || !Shrubs.Count) return Visible;
+	const SettingsGrassStruct& Settings = TheSettingManager->SettingsGrass;
+	float TreeThreshold = Settings.TreeCoverBlockLOS && Settings.TreeCoverLOSDepth > 0.0f ? Settings.TreeCoverLOSDepth : 0.0f;
+	float GrassThreshold = Settings.GrassCoverBlockLOS && Settings.GrassCoverLOSDepth > 0.0f ? Settings.GrassCoverLOSDepth : 0.0f;
+	if (TreeThreshold <= 0.0f && GrassThreshold <= 0.0f) return Visible;
 
 	float EyeX = Observer->pos.x;
 	float EyeY = Observer->pos.y;
 	float EyeZ = Observer->pos.z + kTreeCoverEyeHeight * Observer->scale;
-	float Depth = 0.0f;
-	for (int i = 0; i < Shrubs.Count; i++)
-		Depth += TreeCoverRayDepth(Shrubs.Shrubs[i], EyeX, EyeY, EyeZ, Shrubs.TorsoX, Shrubs.TorsoY, Shrubs.TorsoZ);
-	float Threshold = TheSettingManager->SettingsGrass.TreeCoverLOSDepth;
-	return !(Threshold > 0.0f && Depth >= Threshold);
+
+	float TreeDepth = 0.0f;
+	TreeCoverSnapshot Shrubs;
+	if (TreeThreshold > 0.0f && Snapshot.Read(Shrubs)) {
+		for (int i = 0; i < Shrubs.Count; i++)
+			TreeDepth += TreeCoverRayDepth(Shrubs.Shrubs[i], EyeX, EyeY, EyeZ, Shrubs.TorsoX, Shrubs.TorsoY, Shrubs.TorsoZ);
+	}
+	float GrassDepth = GrassThreshold > 0.0f ? GetGrassSightDepth(EyeX, EyeY, EyeZ) : 0.0f;
+	return !FoliageBlocksSight(TreeDepth, TreeThreshold, GrassDepth, GrassThreshold);
 
 }
 
