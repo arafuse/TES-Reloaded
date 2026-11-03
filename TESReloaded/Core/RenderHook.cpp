@@ -885,45 +885,57 @@ static void RestoreShellWaterDepthSamplers() {
 
 }
 
-/// Cached model height of one grass batch's geometry data. Vertices and BoundRadius detect a freed
+/// Cached model size of one grass batch's geometry data. Vertices and BoundRadius detect a freed
 /// pointer reused by a different model.
-struct GrassModelHeight {
-	UInt16	Vertices;
-	float	BoundRadius;
-	float	Height;
+struct GrassModelCacheEntry {
+	UInt16				Vertices;
+	float				BoundRadius;
+	GrassModelMetrics	Metrics;
 };
-static std::map<NiGeometryData*, GrassModelHeight> GrassModelHeights;
+static std::map<NiGeometryData*, GrassModelCacheEntry> GrassModelCache;
 static std::map<int, bool> GrassModelHeightsLogged;
+
+GrassModelMetrics GetGrassModelMetrics(NiGeometry* Geometry) {
+
+	NiGeometryData* Data = Geometry->geomData;
+	if (!Data) return { FLT_MAX, 0.0f };
+
+	auto Cached = GrassModelCache.find(Data);
+	if (Cached != GrassModelCache.end() && Cached->second.Vertices == Data->Vertices && Cached->second.BoundRadius == Data->Bound.Radius)
+		return Cached->second.Metrics;
+
+	GrassModelMetrics Metrics = { Data->Bound.Center.z + Data->Bound.Radius, Data->Bound.Radius };
+	bool FromVertices = Data->Vertex && Data->Vertices;
+	if (FromVertices) {
+		float HalfWidthSq = 0.0f;
+		Metrics.Height = -FLT_MAX;
+		for (UInt32 i = 0; i < Data->Vertices; i++) {
+			const NiPoint3& Vertex = Data->Vertex[i];
+			Metrics.Height = max(Metrics.Height, Vertex.z);
+			HalfWidthSq = max(HalfWidthSq, Vertex.x * Vertex.x + Vertex.y * Vertex.y);
+		}
+		Metrics.HalfWidth = sqrtf(HalfWidthSq);
+	}
+
+	if (GrassModelCache.size() >= 4096) GrassModelCache.clear();
+	GrassModelCache[Data] = { Data->Vertices, Data->Bound.Radius, Metrics };
+
+	int HeightKey = (int)(Metrics.Height * 10.0f);
+	if (GrassModelHeightsLogged.size() < 64 && GrassModelHeightsLogged.find(HeightKey) == GrassModelHeightsLogged.end()) {
+		GrassModelHeightsLogged[HeightKey] = true;
+		Logger::Log("[Groundcover] %s verts=%u bound=(z %.1f r %.1f) height=%.1f halfWidth=%.1f from %s -> %s",
+			Geometry->m_pcName ? Geometry->m_pcName : "-", Data->Vertices, Data->Bound.Center.z, Data->Bound.Radius,
+			Metrics.Height, Metrics.HalfWidth, FromVertices ? "vertices" : "bound", Metrics.Height <= TheSettingManager->SettingsGrass.GroundcoverMaxHeight ? "groundcover" : "grass");
+	}
+	return Metrics;
+
+}
 
 // Model-space height of a grass batch's model: the highest vertex when the CPU copy is kept,
 // otherwise the top of the bounding sphere (an overestimate for wide, flat models).
 static float GetGrassModelHeight(NiGeometry* Geometry) {
 
-	NiGeometryData* Data = Geometry->geomData;
-	if (!Data) return FLT_MAX;
-
-	auto Cached = GrassModelHeights.find(Data);
-	if (Cached != GrassModelHeights.end() && Cached->second.Vertices == Data->Vertices && Cached->second.BoundRadius == Data->Bound.Radius)
-		return Cached->second.Height;
-
-	float Height = Data->Bound.Center.z + Data->Bound.Radius;
-	bool FromVertices = Data->Vertex && Data->Vertices;
-	if (FromVertices) {
-		Height = -FLT_MAX;
-		for (UInt32 i = 0; i < Data->Vertices; i++) Height = max(Height, Data->Vertex[i].z);
-	}
-
-	if (GrassModelHeights.size() >= 4096) GrassModelHeights.clear();
-	GrassModelHeights[Data] = { Data->Vertices, Data->Bound.Radius, Height };
-
-	int HeightKey = (int)(Height * 10.0f);
-	if (GrassModelHeightsLogged.size() < 64 && GrassModelHeightsLogged.find(HeightKey) == GrassModelHeightsLogged.end()) {
-		GrassModelHeightsLogged[HeightKey] = true;
-		Logger::Log("[Groundcover] %s verts=%u bound=(z %.1f r %.1f) height=%.1f from %s -> %s",
-			Geometry->m_pcName ? Geometry->m_pcName : "-", Data->Vertices, Data->Bound.Center.z, Data->Bound.Radius,
-			Height, FromVertices ? "vertices" : "bound", Height <= TheSettingManager->SettingsGrass.GroundcoverMaxHeight ? "groundcover" : "grass");
-	}
-	return Height;
+	return GetGrassModelMetrics(Geometry).Height;
 
 }
 
