@@ -1,5 +1,6 @@
 #include "TreeCover.h"
 #include "TreeCoverMath.h"
+#include "Seqlock.h"
 
 static const void*	VFTBSTreeNode			= (void*)0x00A65854;
 static const float	kTreeCoverTorsoHeight	= 50.0f;
@@ -13,7 +14,6 @@ static const UInt32	kDetectionLosCall		= 0x005F6647; // the detection call to th
 static const UInt32	kActorHasLineOfSight	= 0x005F2820;
 static const float	kTreeCoverEyeHeight		= 110.0f;
 static const int	kTreeCoverMaxShrubs		= 8;
-static const int	kSnapshotReadTries		= 4;
 
 /// The shrubs containing the sneaking player's torso this frame, for the line-of-sight hook.
 struct TreeCoverSnapshot {
@@ -22,36 +22,9 @@ struct TreeCoverSnapshot {
 	TreeCoverInput	Shrubs[kTreeCoverMaxShrubs];
 };
 
-static volatile LONG		SnapshotSequence = 0;
-static TreeCoverSnapshot	Snapshot = {};
+static Seqlock<TreeCoverSnapshot>	Snapshot;
 
 static volatile float PlayerTreeCover = 0.0f;
-
-// Seqlock: odd while writing. Detection may run on the threaded-AI thread.
-static void PublishSnapshot(const TreeCoverSnapshot& Next) {
-
-	InterlockedIncrement(&SnapshotSequence);
-	Snapshot = Next;
-	InterlockedIncrement(&SnapshotSequence);
-
-}
-
-static bool ReadSnapshot(TreeCoverSnapshot& Out) {
-
-	for (int Try = 0; Try < kSnapshotReadTries; Try++) {
-		LONG Before = SnapshotSequence;
-		_ReadWriteBarrier();
-		if (Before & 1) {
-			YieldProcessor();
-			continue;
-		}
-		Out = Snapshot;
-		_ReadWriteBarrier();
-		if (SnapshotSequence == Before) return true;
-	}
-	return false;
-
-}
 
 static NiNode* FindRefTreeNode(NiNode* Root) {
 
@@ -133,7 +106,7 @@ void UpdateTreeCover() {
 
 	TreeCoverSnapshot Shrubs = {};
 	PlayerTreeCover = ScanTreeCover(Shrubs);
-	PublishSnapshot(Shrubs);
+	Snapshot.Publish(Shrubs);
 
 }
 
@@ -156,7 +129,7 @@ static bool __fastcall DetectionLineOfSightHook(Actor* Observer, void* Edx, UInt
 	if (!Visible || Target != (TESObjectREFR*)Player || !TheSettingManager->SettingsGrass.TreeCoverBlockLOS) return Visible;
 
 	TreeCoverSnapshot Shrubs;
-	if (!ReadSnapshot(Shrubs) || !Shrubs.Count) return Visible;
+	if (!Snapshot.Read(Shrubs) || !Shrubs.Count) return Visible;
 
 	float EyeX = Observer->pos.x;
 	float EyeY = Observer->pos.y;

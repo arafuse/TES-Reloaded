@@ -74,6 +74,9 @@
     <ClInclude Include="..\TESReloaded\Core\TreeCoverMath.h">
       <Filter>Core</Filter>
     </ClInclude>
+    <ClInclude Include="..\TESReloaded\Core\Seqlock.h">
+      <Filter>Core</Filter>
+    </ClInclude>
     <ClInclude Include="..\TESReloaded\Core\SunShadowStealth.h">
       <Filter>Core</Filter>
     </ClInclude>
