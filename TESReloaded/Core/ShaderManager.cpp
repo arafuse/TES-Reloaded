@@ -8,6 +8,7 @@
 #include <iostream>
 #include <filesystem>
 #include "TreeCover.h"
+#include "GrassCover.h"
 #include "SunShadowStealth.h"
 #include "Wind.h"
 #include "RainProbe.h"
@@ -2732,6 +2733,7 @@ void ShaderManager::UpdateConstants() {
 	}
 
 	UpdateTreeCover();
+	UpdateGrassCover();
 	UpdateSunShadowStealth();
 	UpdateRainProbe();
 	const SettingsPrecipitationsStruct::WetActorsStruct& WetSettings = TheSettingManager->SettingsPrecipitations.WetActors;
