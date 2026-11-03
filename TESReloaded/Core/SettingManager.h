@@ -447,6 +447,14 @@ struct SettingsGrassStruct {
 	float TreeCoverLightReduction;		///< Fraction of the light level removed at full cover
 	bool TreeCoverBlockLOS;				///< Shrubs the sneaking player is inside block observers' line of sight
 	float TreeCoverLOSDepth;			///< Effective foliage depth, world units, along a sight line that blocks it
+	bool GrassCover;					///< Scale the sneaking player's detection light level by tall-grass cover
+	float GrassCoverLightReduction;		///< Fraction of the light level removed at full grass cover
+	float GrassCoverMinHeight;			///< Clump top above the player's feet, world units, where cover begins
+	float GrassCoverFullHeight;			///< Clump top above the player's feet where a clump counts fully
+	float GrassCoverRadius;				///< World units around the player scanned for grass clumps
+	float GrassCoverOpacity;			///< How much one full-height clump blocks, 0-1; overlapping clumps compound
+	bool GrassCoverBlockLOS;			///< Tall grass around the sneaking player blocks observers' line of sight
+	float GrassCoverLOSDepth;			///< Effective grass depth, world units, along a sight line that blocks it
 };
 
 /// Parallax settings from POM\POM.ini.

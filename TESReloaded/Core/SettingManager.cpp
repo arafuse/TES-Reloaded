@@ -621,6 +621,20 @@ void SettingManager::LoadSettings() {
 	SettingsGrass.TreeCoverBlockLOS = GetPrivateProfileIntA("Default", "TreeCoverBlockLOS", 0, Filename);
 	GetPrivateProfileStringA("Default", "TreeCoverLOSDepth", "64.0", value, SettingStringBuffer, Filename);
 	SettingsGrass.TreeCoverLOSDepth = atof(value);
+	SettingsGrass.GrassCover = GetPrivateProfileIntA("Default", "GrassCover", 0, Filename);
+	GetPrivateProfileStringA("Default", "GrassCoverLightReduction", "0.6", value, SettingStringBuffer, Filename);
+	SettingsGrass.GrassCoverLightReduction = atof(value);
+	GetPrivateProfileStringA("Default", "GrassCoverMinHeight", "90.0", value, SettingStringBuffer, Filename);
+	SettingsGrass.GrassCoverMinHeight = atof(value);
+	GetPrivateProfileStringA("Default", "GrassCoverFullHeight", "120.0", value, SettingStringBuffer, Filename);
+	SettingsGrass.GrassCoverFullHeight = atof(value);
+	GetPrivateProfileStringA("Default", "GrassCoverRadius", "200.0", value, SettingStringBuffer, Filename);
+	SettingsGrass.GrassCoverRadius = atof(value);
+	GetPrivateProfileStringA("Default", "GrassCoverOpacity", "0.5", value, SettingStringBuffer, Filename);
+	SettingsGrass.GrassCoverOpacity = atof(value);
+	SettingsGrass.GrassCoverBlockLOS = GetPrivateProfileIntA("Default", "GrassCoverBlockLOS", 0, Filename);
+	GetPrivateProfileStringA("Default", "GrassCoverLOSDepth", "150.0", value, SettingStringBuffer, Filename);
+	SettingsGrass.GrassCoverLOSDepth = atof(value);
 
 	strcpy(Filename, CurrentPath);
 	strcat(Filename, SettingsPath);
@@ -1636,6 +1650,14 @@ void SettingManager::SaveSettings(const char* Item, const char* Definition, cons
 			WritePrivateProfileStringA("Default", "TreeCoverLightReduction", ToString(SettingsGrass.TreeCoverLightReduction).c_str(), Filename);
 			WritePrivateProfileStringA("Default", "TreeCoverBlockLOS", ToString(SettingsGrass.TreeCoverBlockLOS).c_str(), Filename);
 			WritePrivateProfileStringA("Default", "TreeCoverLOSDepth", ToString(SettingsGrass.TreeCoverLOSDepth).c_str(), Filename);
+			WritePrivateProfileStringA("Default", "GrassCover", ToString(SettingsGrass.GrassCover).c_str(), Filename);
+			WritePrivateProfileStringA("Default", "GrassCoverLightReduction", ToString(SettingsGrass.GrassCoverLightReduction).c_str(), Filename);
+			WritePrivateProfileStringA("Default", "GrassCoverMinHeight", ToString(SettingsGrass.GrassCoverMinHeight).c_str(), Filename);
+			WritePrivateProfileStringA("Default", "GrassCoverFullHeight", ToString(SettingsGrass.GrassCoverFullHeight).c_str(), Filename);
+			WritePrivateProfileStringA("Default", "GrassCoverRadius", ToString(SettingsGrass.GrassCoverRadius).c_str(), Filename);
+			WritePrivateProfileStringA("Default", "GrassCoverOpacity", ToString(SettingsGrass.GrassCoverOpacity).c_str(), Filename);
+			WritePrivateProfileStringA("Default", "GrassCoverBlockLOS", ToString(SettingsGrass.GrassCoverBlockLOS).c_str(), Filename);
+			WritePrivateProfileStringA("Default", "GrassCoverLOSDepth", ToString(SettingsGrass.GrassCoverLOSDepth).c_str(), Filename);
 		}
 		else if (!strcmp(Definition, "MotionBlur")) {
 			WritePrivateProfileStringA("Effects", "MotionBlur", ToString(SettingsMain.Effects.MotionBlur).c_str(), SettingsMain.Main.MainFile);
@@ -2340,6 +2362,14 @@ SettingsList SettingManager::GetMenuSettings(const char* Item, const char* Defin
 			Settings["TreeCoverLightReduction"] = SettingsGrass.TreeCoverLightReduction;
 			Settings["TreeCoverBlockLOS"] = SettingsGrass.TreeCoverBlockLOS;
 			Settings["TreeCoverLOSDepth"] = SettingsGrass.TreeCoverLOSDepth;
+			Settings["GrassCover"] = SettingsGrass.GrassCover;
+			Settings["GrassCoverLightReduction"] = SettingsGrass.GrassCoverLightReduction;
+			Settings["GrassCoverMinHeight"] = SettingsGrass.GrassCoverMinHeight;
+			Settings["GrassCoverFullHeight"] = SettingsGrass.GrassCoverFullHeight;
+			Settings["GrassCoverRadius"] = SettingsGrass.GrassCoverRadius;
+			Settings["GrassCoverOpacity"] = SettingsGrass.GrassCoverOpacity;
+			Settings["GrassCoverBlockLOS"] = SettingsGrass.GrassCoverBlockLOS;
+			Settings["GrassCoverLOSDepth"] = SettingsGrass.GrassCoverLOSDepth;
 		}
 		else if (!strcmp(Definition, "MotionBlur")) {
 			SettingsMotionBlurStruct* sms = GetSettingsMotionBlur(Section);
@@ -3123,6 +3153,22 @@ void SettingManager::SetMenuSetting(const char* Item, const char* Definition, co
 				SettingsGrass.TreeCoverBlockLOS = Value;
 			else if (!strcmp(Setting, "TreeCoverLOSDepth"))
 				SettingsGrass.TreeCoverLOSDepth = Value;
+			else if (!strcmp(Setting, "GrassCover"))
+				SettingsGrass.GrassCover = Value;
+			else if (!strcmp(Setting, "GrassCoverLightReduction"))
+				SettingsGrass.GrassCoverLightReduction = Value;
+			else if (!strcmp(Setting, "GrassCoverMinHeight"))
+				SettingsGrass.GrassCoverMinHeight = Value;
+			else if (!strcmp(Setting, "GrassCoverFullHeight"))
+				SettingsGrass.GrassCoverFullHeight = Value;
+			else if (!strcmp(Setting, "GrassCoverRadius"))
+				SettingsGrass.GrassCoverRadius = Value;
+			else if (!strcmp(Setting, "GrassCoverOpacity"))
+				SettingsGrass.GrassCoverOpacity = Value;
+			else if (!strcmp(Setting, "GrassCoverBlockLOS"))
+				SettingsGrass.GrassCoverBlockLOS = Value;
+			else if (!strcmp(Setting, "GrassCoverLOSDepth"))
+				SettingsGrass.GrassCoverLOSDepth = Value;
 		}
 		else if (!strcmp(Definition, "MotionBlur")) {
 			SettingsMotionBlurStruct* sms = GetSettingsMotionBlur(Section);
