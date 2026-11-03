@@ -63,3 +63,5 @@ so a plain "top above torso" test counts nearly all grass as cover.
 **How to apply:** a grass cover scan reads batches on the main thread after DrawGrass and publishes a
 snapshot for the detection hooks, as TreeCover.cpp does ([[sneak-detection-formula]]). It must share
 TreeCover's two call-site patches (each patch site takes only one hook).
+
+**Shipped as GrassCover.cpp (2026-11-03):** the cover scan built on this costs 0.02–0.07 ms per frame while sneaking (≤ 96 clumps kept); play-tested cover is 0.8–1.0 in the 128-unit grass and 0.15–0.33 in the 73–83-unit grass.

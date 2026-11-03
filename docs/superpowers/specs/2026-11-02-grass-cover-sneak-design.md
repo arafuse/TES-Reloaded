@@ -1,7 +1,7 @@
 # Grass cover for sneaking — design
 
 Date: 2026-11-02
-Status: draft, awaiting review
+Status: implemented (play-tested 2026-11-03)
 Builds on: tree cover (`TESReloaded/Core/TreeCover.cpp`), memory `sneak-detection-formula`,
 `grass-manager-generation`, `grass-batch-footprints`
 
@@ -166,3 +166,13 @@ the LOS depths:
   `GrassCoverFullHeight`, after step 1 of testing.
 - Whether the half-width should also scale by `F`. That depends on the unknown `ScaleMask`; start
   without it, and compare against what is on screen.
+
+## Play-test result (2026-11-03)
+
+One unscripted sneak through the probed fields, shipped defaults:
+
+- Tall grass: cover 0.82–1.00 (15–90 clumps); field edges 0.54–0.71; the shorter grass 0.15–0.33.
+- Light scale 0.40–0.67 in grass alone, 0.12–0.24 with a shrub on top.
+- LOS: blocked when the grass depth along the sight line passed 150 (165–1966 logged), kept below it.
+- Scan 0.023–0.071 ms; the peak (85–90 clumps) is a little over the 0.05 ms target, accepted.
+- No crashes. The switch-off and shader-off checks were not run separately; tuning left the defaults as they are.
