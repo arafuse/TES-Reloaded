@@ -20,6 +20,7 @@ float4 TESR_ShadowBiasDeferred; // adaptive: xy = near/far normal offset (world)
 // the ramp disable itself -- the safe failure mode.
 float4 TESR_ShadowBiasAdaptive; // x = terminator width, y = max slope clamp, z = adaptive enable, w = sun active (0/1)
 float4 TESR_ShadowBiasSkin; // x = actor (skin map) depth bias (normalized), adaptive path only
+float4 TESR_ShadowSkinBounds; // skin map UV rect holding every caster (xy min, zw max)
 // x = static-map crossfade progress: 0 = fully on the previous bake, 1 = fully on the current one.
 // 1 is the steady state and the value this shader branches on to skip the previous map set entirely.
 float4 TESR_ShadowFadeData;

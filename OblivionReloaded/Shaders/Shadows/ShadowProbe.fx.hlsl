@@ -11,6 +11,7 @@ float4x4 TESR_ShadowCameraToLightTransformFarPrev;
 float4 TESR_ShadowData;
 float4 TESR_ShadowBiasDeferred; // zw = near/far depth bias (normalized)
 float4 TESR_ShadowBiasSkin; // x = actor (skin map) depth bias (normalized)
+float4 TESR_ShadowSkinBounds; // skin map UV rect holding every caster (xy min, zw max)
 float4 TESR_ShadowFadeData;
 
 // World-space probe points, uploaded by SunShadowStealth.cpp with SetVectorArray. No TESR_ prefix,

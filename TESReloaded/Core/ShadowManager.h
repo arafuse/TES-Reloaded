@@ -107,6 +107,7 @@ public:
 	void					ComputeStaticFingerprints(SettingsShadowStruct::ExteriorsStruct* S, UInt64* Out);
 	void					RedrawMovedStaticRegions(SettingsShadowStruct::ExteriorsStruct* S);
 	void					RenderActorOverlay(SettingsShadowStruct::ExteriorsStruct* S, D3DXVECTOR4* SunDir);
+	void					PublishSkinBounds(SettingsShadowStruct::ExteriorsStruct* S);
 	void					RenderShadowMapCellTerrain(TESObjectCELL* Cell, ShadowMapTypeEnum ShadowMapType, D3DXVECTOR4* ShadowData);
 	void					BuildExteriorGeoItems(SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors, ShadowMapTypeEnum ShadowMapType);
 	void					CollectExteriorGeo(NiAVObject* Object, bool HasWater, ShadowMapTypeEnum ShadowMapType, bool IsActorRef, bool IsTreeRef);

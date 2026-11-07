@@ -326,6 +326,8 @@ bool ShaderProgram::SetConstantTableValue1(LPCSTR Name, UInt32 Index) {
 		FloatShaderValues[Index].Value = (D3DXVECTOR4*)&TheShaderManager->ShaderConst.ShadowMap.ShadowCameraToLight[2];
 	else if (!strcmp(Name, "TESR_ShadowCameraToLightTransformSkin"))
 		FloatShaderValues[Index].Value = (D3DXVECTOR4*)&TheShaderManager->ShaderConst.ShadowMap.ShadowCameraToLight[3];
+	else if (!strcmp(Name, "TESR_ShadowSkinBounds"))
+		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.ShadowMap.ShadowSkinBounds;
 	else if (!strcmp(Name, "TESR_ShadowCameraToLightTransformNearPrev"))
 		FloatShaderValues[Index].Value = (D3DXVECTOR4*)&TheShaderManager->ShaderConst.ShadowMap.ShadowCameraToLightPrev[0];
 	else if (!strcmp(Name, "TESR_ShadowCameraToLightTransformFarPrev"))

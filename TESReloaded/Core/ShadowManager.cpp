@@ -406,6 +406,8 @@ ShadowManager::ShadowManager() {
 	// Seeded like Shadow.Data.y: 1.0 is the neutral "no crossfade" value the
 	// apply must see before the first sun frame.
 	TheShaderManager->ShaderConst.ShadowMap.ShadowFadeData = D3DXVECTOR4(1.0f, 0.0f, 0.0f, 0.0f);
+	// The whole map, so the apply never skips the actor kernel before the first overlay publishes.
+	TheShaderManager->ShaderConst.ShadowMap.ShadowSkinBounds = D3DXVECTOR4(0.0f, 0.0f, 1.0f, 1.0f);
 
 	for (int i = 0; i < 2; i++) {
 		Regions[i].Valid = false; D3DXMatrixIdentity(&Regions[i].BakedViewProj); Regions[i].AnchorPos = D3DXVECTOR3(0.0f, 0.0f, 0.0f); Regions[i].BakedSunDir = D3DXVECTOR4(0.0f, 0.0f, 0.0f, 0.0f);
@@ -996,7 +998,41 @@ void ShadowManager::RenderActorOverlay(SettingsShadowStruct::ExteriorsStruct* S,
 	CollectSkinnedOnly = true;
 	BuildExteriorGeoItems(S, MapSkin);
 	CollectSkinnedOnly = false;
+	PublishSkinBounds(S);
 	RenderShadowMap(MapSkin, S, &At, OverlaySunDir, &TheShaderManager->ShaderConst.Shadow.Data, /*SkipTerrain=*/true);
+}
+
+// Publishes ShadowSkinBounds: the union of the overlay casters' footprints in the skin map's UV space,
+// widened by the apply's PCF reach. The map is cleared to the far depth and holds nothing else, so
+// a receiver outside this rectangle reads only cleared texels and is exactly lit by the overlay.
+// Skinned bounds can trail the animated pose, hence the generous per-caster padding.
+void ShadowManager::PublishSkinBounds(SettingsShadowStruct::ExteriorsStruct* S) {
+	static const float kCasterPadding = 64.0f;  // world units added to each caster's bound radius
+	static const float kKernelReachTexels = 3.0f; // the apply's 5x5 kernel reads 2 texels out, +1 for the bilinear tap
+
+	const D3DXMATRIX& M = TheShaderManager->ShaderConst.ShadowMap.ShadowViewProj;
+	// Orthographic, so a sphere's clip extent is its radius times each output row's length.
+	float ScaleX = sqrtf(M._11 * M._11 + M._21 * M._21 + M._31 * M._31);
+	float ScaleY = sqrtf(M._12 * M._12 + M._22 * M._22 + M._32 * M._32);
+	float MinU = FLT_MAX, MinV = FLT_MAX, MaxU = -FLT_MAX, MaxV = -FLT_MAX;
+	for (int i = 0; i < ShadowGeoCount; i++) {
+		const ShadowGeoItem& Item = ShadowGeoPool[i];
+		const D3DXVECTOR3& C = Item.Center;
+		float ClipX = C.x * M._11 + C.y * M._21 + C.z * M._31 + M._41;
+		float ClipY = C.x * M._12 + C.y * M._22 + C.z * M._32 + M._42;
+		float R = Item.Radius + kCasterPadding;
+		MinU = min(MinU, (ClipX - R * ScaleX) * 0.5f + 0.5f);
+		MaxU = max(MaxU, (ClipX + R * ScaleX) * 0.5f + 0.5f);
+		MinV = min(MinV, (ClipY + R * ScaleY) * -0.5f + 0.5f);
+		MaxV = max(MaxV, (ClipY - R * ScaleY) * -0.5f + 0.5f);
+	}
+	D3DXVECTOR4& Bounds = TheShaderManager->ShaderConst.ShadowMap.ShadowSkinBounds;
+	if (!ShadowGeoCount) {
+		Bounds = D3DXVECTOR4(2.0f, 2.0f, -1.0f, -1.0f);
+		return;
+	}
+	float Reach = kKernelReachTexels / (float)S->ShadowMapSize[MapNear];
+	Bounds = D3DXVECTOR4(MinU - Reach, MinV - Reach, MaxU + Reach, MaxV + Reach);
 }
 
 // Latches which regions draw their trees per frame. A region whose mode changed is invalidated, because

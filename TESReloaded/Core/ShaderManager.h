@@ -80,6 +80,10 @@ struct ShaderConstants {
 		// x = actor (skin map) depth bias, normalized like ShadowBiasDeferred.z. Kept apart from the near
 		// bias because actors need a larger one: a tight bias self-shadows bodies along triangle edges.
 		D3DXVECTOR4		ShadowBiasSkin;
+		// Skin (actor overlay) map UV rectangle outside which its PCF kernel reads only the cleared
+		// value: xy = min, zw = max, already widened by the kernel reach. Empty (min > max) when no
+		// caster was drawn. Published by ShadowManager::RenderActorOverlay.
+		D3DXVECTOR4		ShadowSkinBounds;
 		// Camera->light sample matrices for the PREVIOUS static bake, built exactly like
 		// ShadowCameraToLight[MapNear]/[MapFar] but from the region's Prev* fields. [0] = Near,
 		// [1] = Far. Only published, and only read by the apply shader, while ShadowFadeData.x < 1.

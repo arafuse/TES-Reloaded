@@ -1,6 +1,6 @@
 // Sun shadow cascade lookup shared by ShadowsExteriors.fx.hlsl and ShadowProbe.fx.hlsl.
 // Declares nothing: the including effect must declare TESR_ShadowData, TESR_ShadowLightDir,
-// TESR_ShadowMapBufferSkin and a `darkness` float before including it. Samplers must stay in the
+// TESR_ShadowSkinBounds, TESR_ShadowMapBufferSkin and a `darkness` float before including it. Samplers must stay in the
 // including file, because TextureManager::LoadTexture parses only the top-level source.
 //
 // The shadow map samplers must be POINT-filtered: LitFraction does its own filtering of the compare
@@ -72,10 +72,16 @@ float CascadeCoverage(float4 ShadowPos) {
 // The skin map is allocated at the near resolution, so the near texel size (TESR_ShadowData.z) is its
 // PCF step too. Its bias is the actor one (deferredSkinConstBias): with the tight near bias, rounded
 // bodies only a few texels across self-shadow along their triangle edges near the shadow line.
+// Outside TESR_ShadowSkinBounds the kernel would read only the cleared far depth, so it is skipped.
 float GetLightAmountSkin(float4 ShadowPosSkin, float bias) {
-	if (!ToShadowUV(ShadowPosSkin)) return 1.0f;
-	float lit = LitFraction(TESR_ShadowMapBufferSkin, ShadowPosSkin.xy, TESR_ShadowData.z, ShadowPosSkin.z, bias, 2);
-	return lerp(darkness, 1.0f, lit);
+	float shadow = 1.0f;
+	bool inMap = ToShadowUV(ShadowPosSkin);
+	[branch]
+	if (inMap && all(ShadowPosSkin.xy >= TESR_ShadowSkinBounds.xy) && all(ShadowPosSkin.xy <= TESR_ShadowSkinBounds.zw)) {
+		float lit = LitFraction(TESR_ShadowMapBufferSkin, ShadowPosSkin.xy, TESR_ShadowData.z, ShadowPosSkin.z, bias, 2);
+		shadow = lerp(darkness, 1.0f, lit);
+	}
+	return shadow;
 }
 
 // The cascade term for ONE map set: a 4x4 kernel of the near map, falling back to the far cascade
@@ -90,7 +96,10 @@ float GetLightAmount(sampler2D mapNear, sampler2D mapFar, float4 ShadowPos, floa
 	float lit = LitFraction(mapNear, ShadowPos.xy, TESR_ShadowData.z, ShadowPos.z, biasNear, 2);
 	float Shadow = lerp(darkness, clamp(TESR_ShadowLightDir.w, darkness, 1.0f), lit);
 
-	Shadow = min(Shadow, GetLightAmountSkin(ShadowPosSkin, biasSkin));
+	// The actor term never goes below darkness, so a fully shadowed receiver cannot change.
+	[branch]
+	if (Shadow > darkness)
+		Shadow = min(Shadow, GetLightAmountSkin(ShadowPosSkin, biasSkin));
 
 	return saturate(Shadow);
 }
