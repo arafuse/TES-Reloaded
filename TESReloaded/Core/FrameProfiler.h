@@ -45,6 +45,15 @@ namespace FrameProfiler {
 		Buck_HookMidScene,        // pre-water depth resolve + RenderShadowsMidScene (sun shadow apply)
 		Buck_HookShellWater,      // near-shell water prep (capture + pre-water depth flatten)
 
+		// --- detail, nested inside Buck_HookMidScene ---
+		Buck_MidResolve,          // ResolvePreWaterDepthBuffer
+		Buck_MidSetup,            // state capture, camera refresh, render state, seed blit
+		Buck_MidSun,              // sun shadow apply (SetCT + Render)
+		Buck_MidProbe,            // RenderSunShadowProbe, including its readback
+		Buck_MidProbeRead,        // the probe's event-query poll + LockRect readback (nested in Buck_MidProbe)
+		Buck_MidPoint,            // point-light shadow apply (SetCT + Render)
+		Buck_MidRestore,          // CachedStateBlock->Apply
+
 		Buck_COUNT
 	};
 	const int TopLevelBegin = Buck_UpdateShaderStates;

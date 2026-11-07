@@ -235,7 +235,10 @@ static void LogProbe() {
 void RenderSunShadowProbe(IDirect3DDevice9* Device) {
 
 	if (!ProbeArmed || !ProbeEffect || TheShaderManager->ShaderConst.ShadowMap.ShadowBiasAdaptive.w < 0.5f) return;
-	ReadFinishedProbes(Device);
+	{
+		FrameProfiler::Scope ReadScope(FrameProfiler::Buck_MidProbeRead);
+		ReadFinishedProbes(Device);
+	}
 	LogProbe();
 	ProbeSlot& Slot = Ring[NextSlot];
 	if (Slot.Pending) return;

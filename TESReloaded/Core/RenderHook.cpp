@@ -17,7 +17,8 @@ namespace FrameProfiler {
 			"FrameTotal",
 			"UpdateShaderStates", "SetSceneGraph", "UpdateConstants", "ShadowMaps",
 			"Effects:PreHdr", "Effects:PostHdr", "BeginScene", "ShaderHook",
-			"Hook:Engine", "Hook:SetCT", "Hook:Resolve", "Hook:MidScene", "Hook:ShellWater"
+			"Hook:Engine", "Hook:SetCT", "Hook:Resolve", "Hook:MidScene", "Hook:ShellWater",
+			"Mid:Resolve", "Mid:Setup", "Mid:Sun", "Mid:Probe", "Mid:ProbeRead", "Mid:Point", "Mid:Restore"
 		};
 		const char* const CounterNames[Cnt_COUNT] = {
 			"Draws", "SetCT", "SetPerGeomCT", "DepthResolves", "RenderedBlits", "Scenes"
@@ -117,6 +118,7 @@ namespace FrameProfiler {
 
 			Logger::Log("[FrameProfile]   -- ShaderHook detail (NESTED; not part of the sum above) --");
 			for (int i = TopLevelEnd; i < Buck_COUNT; i++) {
+				if (i == Buck_MidResolve) Logger::Log("[FrameProfile]   -- Hook:MidScene detail (NESTED; Mid:ProbeRead is inside Mid:Probe) --");
 				double ms = gAccumMs[i] * inv;
 				Logger::Log("[FrameProfile]   %-18s %8.4f ms  (max %8.4f) %6.2f %%  %9.1f calls/frame",
 					BucketNames[i], ms, gMaxMs[i], ms * pctInv, gCalls[i] * inv);
@@ -1254,7 +1256,10 @@ UInt32 RenderHook::TrackSetupShaderPrograms(NiGeometry* Geometry, NiSkinInstance
 		// water reflection render, which binds the same shaders later.
 		if (TheShaderManager->InMainScenePass && !TheShaderManager->PreWaterDepthBufferFilled && PixelShader->isNearWater) {
 			FrameProfiler::Scope MidSceneScope(FrameProfiler::Buck_HookMidScene);
-			TheRenderManager->ResolvePreWaterDepthBuffer();
+			{
+				FrameProfiler::Scope ResolveScope(FrameProfiler::Buck_MidResolve);
+				TheRenderManager->ResolvePreWaterDepthBuffer();
+			}
 			TheShaderManager->RenderShadowsMidScene();
 			TheShaderManager->PreWaterDepthBufferFilled = true;
 		}

@@ -3645,6 +3645,7 @@ void ShaderManager::RenderShadowsMidScene() {
 	IDirect3DDevice9* Device = TheRenderManager->device;
 	IDirect3DSurface9* SceneRT = NULL;
 
+	FrameProfiler::Scope SetupScope(FrameProfiler::Buck_MidSetup);
 	if (!RenderedSurface || !EffectVertex) return;
 	if (FAILED(Device->GetRenderTarget(0, &SceneRT)) || !SceneRT) return;
 	if (!CaptureDeviceState()) { SceneRT->Release(); return; }
@@ -3662,16 +3663,23 @@ void ShaderManager::RenderShadowsMidScene() {
 	Device->SetFVF(EFFECTQUADFORMAT);
 	// Seed TESR_RenderedBuffer with the scene; each Render() re-blits for the next.
 	Device->StretchRect(SceneRT, NULL, RenderedSurface, NULL, D3DTEXF_NONE);
+	SetupScope.Close();
 	if (DoSun) {
-		ShadowsExteriorsEffect->SetCT();
-		ShadowsExteriorsEffect->Render(Device, SceneRT, RenderedSurface, false);
+		{
+			FrameProfiler::Scope SunScope(FrameProfiler::Buck_MidSun);
+			ShadowsExteriorsEffect->SetCT();
+			ShadowsExteriorsEffect->Render(Device, SceneRT, RenderedSurface, false);
+		}
+		FrameProfiler::Scope ProbeScope(FrameProfiler::Buck_MidProbe);
 		RenderSunShadowProbe(Device);
 	}
 	if (DoPoint) {
+		FrameProfiler::Scope PointScope(FrameProfiler::Buck_MidPoint);
 		ShadowsPointEffect->SetCT();
 		ShadowsPointEffect->Render(Device, SceneRT, RenderedSurface, false);
 	}
 
+	FrameProfiler::Scope RestoreScope(FrameProfiler::Buck_MidRestore);
 	CachedStateBlock->Apply();
 	SceneRT->Release();
 
