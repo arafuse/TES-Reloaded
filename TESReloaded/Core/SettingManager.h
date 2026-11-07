@@ -355,6 +355,7 @@ struct SettingsShadowStruct {
 		float				deferredFarNormBias;
 		float				deferredConstBias;
 		float				deferredFarConstBias;
+		float				deferredSkinConstBias;	// actor (skin map) depth bias; falls back to deferredConstBias
 		bool				AdaptiveBias;			// 0 = legacy bias math (see Shadows.ini)
 		float				BiasTerminatorWidth;	// smoothstep upper bound on N.L
 		float				BiasMaxSlope;			// clamp on the slope-scaled bias multiplier

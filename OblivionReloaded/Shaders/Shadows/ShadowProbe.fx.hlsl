@@ -10,6 +10,7 @@ float4x4 TESR_ShadowCameraToLightTransformNearPrev;
 float4x4 TESR_ShadowCameraToLightTransformFarPrev;
 float4 TESR_ShadowData;
 float4 TESR_ShadowBiasDeferred; // zw = near/far depth bias (normalized)
+float4 TESR_ShadowBiasSkin; // x = actor (skin map) depth bias (normalized)
 float4 TESR_ShadowFadeData;
 
 // World-space probe points, uploaded by SunShadowStealth.cpp with SetVectorArray. No TESR_ prefix,
@@ -61,14 +62,15 @@ float4 Probe(float2 vpos : VPOS) : COLOR0 {
 	float4 ShadowSkin = mul(pos, TESR_ShadowCameraToLightTransformSkin);
 	float biasNear = TESR_ShadowBiasDeferred.z;
 	float biasFar = TESR_ShadowBiasDeferred.w;
+	float biasSkin = TESR_ShadowBiasSkin.x;
 
 	float visibility = StaticTerm(TESR_ShadowMapBufferNear, TESR_ShadowMapBufferFar,
 	                              TESR_ShadowCameraToLightTransformNear, TESR_ShadowCameraToLightTransformFar,
-	                              pos, pos, ShadowSkin, biasNear, biasFar, 1.0f);
+	                              pos, pos, ShadowSkin, biasNear, biasFar, biasSkin, 1.0f);
 	if (TESR_ShadowFadeData.x < 1.0f) {
 		float prevVisibility = StaticTerm(TESR_ShadowMapBufferNearPrev, TESR_ShadowMapBufferFarPrev,
 		                                  TESR_ShadowCameraToLightTransformNearPrev, TESR_ShadowCameraToLightTransformFarPrev,
-		                                  pos, pos, ShadowSkin, biasNear, biasFar, 1.0f);
+		                                  pos, pos, ShadowSkin, biasNear, biasFar, biasSkin, 1.0f);
 		visibility = lerp(prevVisibility, visibility, TESR_ShadowFadeData.x);
 	}
 	return float4(saturate(visibility), 0.0f, 0.0f, 1.0f);

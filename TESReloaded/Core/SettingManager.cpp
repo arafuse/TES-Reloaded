@@ -1337,6 +1337,9 @@ void SettingManager::LoadSettings() {
 	SettingsShadows.Exteriors.deferredConstBias = atof(value);
 	GetPrivateProfileStringA("Exteriors", "deferredFarConstBias", "0.001", value, SettingStringBuffer, Filename);
 	SettingsShadows.Exteriors.deferredFarConstBias = atof(value);
+	// Missing key = same as deferredConstBias, so a Shadows.ini predating it keeps its actor shadows.
+	GetPrivateProfileStringA("Exteriors", "deferredSkinConstBias", "", value, SettingStringBuffer, Filename);
+	SettingsShadows.Exteriors.deferredSkinConstBias = value[0] ? atof(value) : SettingsShadows.Exteriors.deferredConstBias;
 	// Defaults off so a Shadows.ini predating AdaptiveBias keeps the legacy bias
 	// math; the shipped INI enables it.
 	SettingsShadows.Exteriors.AdaptiveBias = GetPrivateProfileIntA("Exteriors", "AdaptiveBias", 0, Filename);
@@ -1700,6 +1703,7 @@ void SettingManager::SaveSettings(const char* Item, const char* Definition, cons
 			WritePrivateProfileStringA("Exteriors", "deferredFarNormBias", ToString(SettingsShadows.Exteriors.deferredFarNormBias).c_str(), Filename);
 			WritePrivateProfileStringA("Exteriors", "deferredConstBias", ToString(SettingsShadows.Exteriors.deferredConstBias).c_str(), Filename);
 			WritePrivateProfileStringA("Exteriors", "deferredFarConstBias", ToString(SettingsShadows.Exteriors.deferredFarConstBias).c_str(), Filename);
+			WritePrivateProfileStringA("Exteriors", "deferredSkinConstBias", ToString(SettingsShadows.Exteriors.deferredSkinConstBias).c_str(), Filename);
 			WritePrivateProfileStringA("Exteriors", "AdaptiveBias", ToString(SettingsShadows.Exteriors.AdaptiveBias).c_str(), Filename);
 			WritePrivateProfileStringA("Exteriors", "BiasTerminatorWidth", ToString(SettingsShadows.Exteriors.BiasTerminatorWidth).c_str(), Filename);
 			WritePrivateProfileStringA("Exteriors", "BiasMaxSlope", ToString(SettingsShadows.Exteriors.BiasMaxSlope).c_str(), Filename);
@@ -2395,6 +2399,7 @@ SettingsList SettingManager::GetMenuSettings(const char* Item, const char* Defin
 				Settings["deferredFarNormBias"] = SettingsShadows.Exteriors.deferredFarNormBias;
 				Settings["deferredConstBias"] = SettingsShadows.Exteriors.deferredConstBias;
 				Settings["deferredFarConstBias"] = SettingsShadows.Exteriors.deferredFarConstBias;
+				Settings["deferredSkinConstBias"] = SettingsShadows.Exteriors.deferredSkinConstBias;
 				Settings["AdaptiveBias"] = SettingsShadows.Exteriors.AdaptiveBias;
 				Settings["BiasTerminatorWidth"] = SettingsShadows.Exteriors.BiasTerminatorWidth;
 				Settings["BiasMaxSlope"] = SettingsShadows.Exteriors.BiasMaxSlope;
@@ -3216,6 +3221,9 @@ void SettingManager::SetMenuSetting(const char* Item, const char* Definition, co
 				}
 				else if (!strcmp(Setting, "deferredFarConstBias")) {
 					SettingsShadows.Exteriors.deferredFarConstBias = Value;
+				}
+				else if (!strcmp(Setting, "deferredSkinConstBias")) {
+					SettingsShadows.Exteriors.deferredSkinConstBias = Value;
 				}
 				else if (!strcmp(Setting, "AdaptiveBias")) {
 					SettingsShadows.Exteriors.AdaptiveBias = Value;

@@ -77,6 +77,9 @@ struct ShaderConstants {
 		// every exterior frame by ShadowManager::RenderExteriorShadows (NOT by PublishShadowBiasConstants,
 		// which only runs on sun frames); the apply shader disables its terminator ramp when it is 0.
 		D3DXVECTOR4		ShadowBiasAdaptive;
+		// x = actor (skin map) depth bias, normalized like ShadowBiasDeferred.z. Kept apart from the near
+		// bias because actors need a larger one: a tight bias self-shadows bodies along triangle edges.
+		D3DXVECTOR4		ShadowBiasSkin;
 		// Camera->light sample matrices for the PREVIOUS static bake, built exactly like
 		// ShadowCameraToLight[MapNear]/[MapFar] but from the region's Prev* fields. [0] = Near,
 		// [1] = Far. Only published, and only read by the apply shader, while ShadowFadeData.x < 1.

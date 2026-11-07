@@ -19,6 +19,7 @@ float4 TESR_ShadowBiasDeferred; // adaptive: xy = near/far normal offset (world)
 // below uses it to switch itself off when the maps are frozen. If nothing ever publishes it, 0 makes
 // the ramp disable itself -- the safe failure mode.
 float4 TESR_ShadowBiasAdaptive; // x = terminator width, y = max slope clamp, z = adaptive enable, w = sun active (0/1)
+float4 TESR_ShadowBiasSkin; // x = actor (skin map) depth bias (normalized), adaptive path only
 // x = static-map crossfade progress: 0 = fully on the previous bake, 1 = fully on the current one.
 // 1 is the steady state and the value this shader branches on to skip the previous map set entirely.
 float4 TESR_ShadowFadeData;
@@ -159,6 +160,7 @@ float4 Shadow(VSOUT IN) : COLOR0{
 		float4 posFar;
 		float biasNear;
 		float biasFar;
+		float biasSkin;
 		float facing;
 
 		if (TESR_ShadowBiasAdaptive.z > 0.5f) {
@@ -182,6 +184,7 @@ float4 Shadow(VSOUT IN) : COLOR0{
 			float slope = min(sqrt(saturate(1.0f - ndlSafe * ndlSafe)) / ndlSafe, TESR_ShadowBiasAdaptive.y);
 			biasNear = TESR_ShadowBiasDeferred.z * (1.0f + slope);
 			biasFar = TESR_ShadowBiasDeferred.w * (1.0f + slope);
+			biasSkin = TESR_ShadowBiasSkin.x * (1.0f + slope);
 
 			// World-space normal offset, growing with tilt, applied before the transforms.
 			// TESR_ShadowBiasDeferred.xy arrive pre-scaled to world units per cascade.
@@ -200,6 +203,7 @@ float4 Shadow(VSOUT IN) : COLOR0{
 			float cosTheta = clamp(dot(n, l), 0, 1);
 			biasNear = TESR_ShadowBiasDeferred.z * tan(acos(cosTheta));
 			biasFar = TESR_ShadowBiasDeferred.w;
+			biasSkin = biasNear;
 
 			float4 pos = mul(world_pos, TESR_WorldViewProjectionTransform);
 			posNear = pos;
@@ -213,14 +217,14 @@ float4 Shadow(VSOUT IN) : COLOR0{
 
 		float Shadow = StaticTerm(TESR_ShadowMapBufferNear, TESR_ShadowMapBufferFar,
 		                          TESR_ShadowCameraToLightTransformNear, TESR_ShadowCameraToLightTransformFar,
-		                          posNear, posFar, ShadowSkin, biasNear, biasFar, facing);
+		                          posNear, posFar, ShadowSkin, biasNear, biasFar, biasSkin, facing);
 
 		// Crossfade from the previous static bake while a rebake fades in over
 		// [Exteriors] FadeTime; in steady state .x is 1 and the branch is skipped.
 		if (TESR_ShadowFadeData.x < 1.0f) {
 			float prevShadow = StaticTerm(TESR_ShadowMapBufferNearPrev, TESR_ShadowMapBufferFarPrev,
 			                              TESR_ShadowCameraToLightTransformNearPrev, TESR_ShadowCameraToLightTransformFarPrev,
-			                              posNear, posFar, ShadowSkin, biasNear, biasFar, facing);
+			                              posNear, posFar, ShadowSkin, biasNear, biasFar, biasSkin, facing);
 			Shadow = lerp(prevShadow, Shadow, TESR_ShadowFadeData.x);
 		}
 

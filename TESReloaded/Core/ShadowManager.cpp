@@ -192,12 +192,16 @@ void ShadowManager::PublishShadowBiasConstants(SettingsShadowStruct::ExteriorsSt
 
 	float ScaleNear = 1.0f;
 	float ScaleFar = 1.0f;
+	float ScaleSkin = 1.0f;
 	float WorldToOrthoDepth = 1.0f;
 	if (Ext.AdaptiveBias) {
 		if (Selected->ShadowMapSize[MapNear])
 			ScaleNear = (2.0f * Selected->ShadowMapRadius[MapNear]) / (float)Selected->ShadowMapSize[MapNear];
 		if (Selected->ShadowMapSize[MapFar])
 			ScaleFar = (2.0f * Selected->ShadowMapRadius[MapFar]) / (float)Selected->ShadowMapSize[MapFar];
+		// The skin map is allocated at the near size (CreateShadowMapSurfaces), over its own radius.
+		if (Selected->ShadowMapSize[MapNear])
+			ScaleSkin = (2.0f * Selected->ShadowMapRadius[MapSkin]) / (float)Selected->ShadowMapSize[MapNear];
 		// Selected, not canonical: the bake built its projection from it.
 		if (Selected->ShadowMapFarPlane > 0.0f)
 			WorldToOrthoDepth = 1.0f / (2.0f * Selected->ShadowMapFarPlane);
@@ -207,6 +211,7 @@ void ShadowManager::PublishShadowBiasConstants(SettingsShadowStruct::ExteriorsSt
 	Sm.ShadowBiasDeferred.y = Ext.deferredFarNormBias * ScaleFar;
 	Sm.ShadowBiasDeferred.z = Ext.deferredConstBias * ScaleNear * WorldToOrthoDepth;
 	Sm.ShadowBiasDeferred.w = Ext.deferredFarConstBias * ScaleFar * WorldToOrthoDepth;
+	Sm.ShadowBiasSkin.x = Ext.deferredSkinConstBias * ScaleSkin * WorldToOrthoDepth;
 
 	Sm.ShadowBiasAdaptive.x = Ext.BiasTerminatorWidth;
 	Sm.ShadowBiasAdaptive.y = Ext.BiasMaxSlope;

@@ -70,7 +70,8 @@ float CascadeCoverage(float4 ShadowPos) {
 // then return the shadow term (1 = lit) so it can be min-combined with the static term. Receivers outside
 // the skin coverage return lit (no actor overlay there). Called only on the near-in-bounds path.
 // The skin map is allocated at the near resolution, so the near texel size (TESR_ShadowData.z) is its
-// PCF step too.
+// PCF step too. Its bias is the actor one (deferredSkinConstBias): with the tight near bias, rounded
+// bodies only a few texels across self-shadow along their triangle edges near the shadow line.
 float GetLightAmountSkin(float4 ShadowPosSkin, float bias) {
 	if (!ToShadowUV(ShadowPosSkin)) return 1.0f;
 	float lit = LitFraction(TESR_ShadowMapBufferSkin, ShadowPosSkin.xy, TESR_ShadowData.z, ShadowPosSkin.z, bias, 2);
@@ -83,13 +84,13 @@ float GetLightAmountSkin(float4 ShadowPosSkin, float bias) {
 // SAME current-frame ShadowSkin/GetLightAmountSkin term, so it applies to both and is always
 // min-combined below (on the NEAR-IN-BOUNDS PATH ONLY, since the out-of-bounds branch returns
 // before it).
-float GetLightAmount(sampler2D mapNear, sampler2D mapFar, float4 ShadowPos, float4 ShadowPosFar, float4 ShadowPosSkin, float biasNear, float biasFar) {
+float GetLightAmount(sampler2D mapNear, sampler2D mapFar, float4 ShadowPos, float4 ShadowPosFar, float4 ShadowPosSkin, float biasNear, float biasFar, float biasSkin) {
 	if (!ToShadowUV(ShadowPos)) return GetLightAmountFar(mapFar, ShadowPosFar, biasFar);
 
 	float lit = LitFraction(mapNear, ShadowPos.xy, TESR_ShadowData.z, ShadowPos.z, biasNear, 2);
 	float Shadow = lerp(darkness, clamp(TESR_ShadowLightDir.w, darkness, 1.0f), lit);
 
-	Shadow = min(Shadow, GetLightAmountSkin(ShadowPosSkin, biasNear));
+	Shadow = min(Shadow, GetLightAmountSkin(ShadowPosSkin, biasSkin));
 
 	return saturate(Shadow);
 }
@@ -100,10 +101,10 @@ float GetLightAmount(sampler2D mapNear, sampler2D mapFar, float4 ShadowPos, floa
 // per map set without duplicating the cascade logic.
 float StaticTerm(sampler2D mapNear, sampler2D mapFar, float4x4 toNear, float4x4 toFar,
                  float4 posNear, float4 posFar, float4 ShadowPosSkin,
-                 float biasNear, float biasFar, float facing) {
+                 float biasNear, float biasFar, float biasSkin, float facing) {
 	float4 ShadowNear = mul(posNear, toNear);
 	float4 ShadowFar  = mul(posFar,  toFar);
-	float mapShadow = GetLightAmount(mapNear, mapFar, ShadowNear, ShadowFar, ShadowPosSkin, biasNear, biasFar);
+	float mapShadow = GetLightAmount(mapNear, mapFar, ShadowNear, ShadowFar, ShadowPosSkin, biasNear, biasFar, biasSkin);
 	float s = lerp(darkness, mapShadow, facing);
 	float coverage = max(CascadeCoverage(ShadowNear), CascadeCoverage(ShadowFar));
 	return lerp(1.0f, s, coverage);
