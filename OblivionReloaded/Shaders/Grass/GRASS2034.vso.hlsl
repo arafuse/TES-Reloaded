@@ -21,7 +21,6 @@ float4 ShadowProjData : register(c8);
 float4 ShadowProjTransform : register(c13);
 float4 WindData : register(c4);
 float4 TESR_GrassScale : register(c248);
-row_major float4x4 TESR_ShadowCameraToLightTransformNear : register(c249);
 float4 TESR_PointLightPosition[2]: register(c16);
 float4 TESR_PointLightColor[2]: register(c18);
 float4 TESR_GrassCollisionParams : register(c253);
@@ -73,8 +72,6 @@ struct VS_OUTPUT {
     float3 texcoord_3 : TEXCOORD3;
     float4 texcoord_4 : TEXCOORD4;	// w = model-space height for the groundcover press
     float4 texcoord_5 : TEXCOORD5;
-    float4 texcoord_6 : TEXCOORD6;
-    float4 texcoord_8 : TEXCOORD8;
 };
 
 // Code:
@@ -147,8 +144,6 @@ VS_OUTPUT main(VS_INPUT IN) {
     OUT.texcoord_1.w = 0.5;
     OUT.texcoord_1.xyz = compress((LightPosition.xyz - r1.xyz) / LightPosition.w);    if (distance(LightPosition.xyz, TESR_PointLightPosition[0].xyz) < 3.5f)   {        OUT.texcoord_2.w = 0.5;        OUT.texcoord_2.xyz = compress((TESR_PointLightPosition[1].xyz - r1.xyz) / TESR_PointLightPosition[1].w);        OUT.texcoord_3.xyz = TESR_PointLightColor[1];    }    else {        OUT.texcoord_2.w = 0.5;            OUT.texcoord_2.xyz = compress((TESR_PointLightPosition[0].xyz - r1.xyz) / TESR_PointLightPosition[0].w);        OUT.texcoord_3.xyz = TESR_PointLightColor[0];    }	// [-1,+1] to [0,1]
     r0 = mul(ModelViewProj, r1);
-    OUT.texcoord_6 = mul(r0, TESR_ShadowCameraToLightTransformNear);
-    OUT.texcoord_8 = r0;
     OUT.color_0.a = 1 - saturate((FogParam.x - length(r0.xyz)) / FogParam.y);
     OUT.position.xyzw = r0.xyzw;
     r0.xy = saturate((length(r0.xyzw) - AlphaParam.xz) / AlphaParam.yw);

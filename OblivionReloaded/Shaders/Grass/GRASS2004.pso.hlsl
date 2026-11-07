@@ -10,8 +10,6 @@ float4 AlphaTestRef : register(c3);
 sampler2D DiffuseMap : register(s0);
 sampler2D ShadowMap : register(s1);
 sampler2D ShadowMaskMap : register(s2);
-sampler2D TESR_ShadowMapBufferNear : register(s4) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
-sampler2D TESR_ShadowMapBufferFar : register(s5) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
 row_major float4x4 TESR_InvViewProjectionTransform : register(c20);
 float4 TESR_GroundcoverPressParams : register(c32);
 float4 TESR_GroundcoverPressXY0 : register(c33);
@@ -36,9 +34,6 @@ struct VS_OUTPUT {
     float4 DiffuseUV : TEXCOORD0;	// zw = batch-relative XY
     float4 texcoord_4 : TEXCOORD4_centroid;	// w = model-space height
     float4 texcoord_5 : TEXCOORD5_centroid;
-    float4 texcoord_6 : TEXCOORD6;
-    float4 texcoord_7 : TEXCOORD7;
-    float4 texcoord_8 : TEXCOORD8;
     float4 color_0 : COLOR0;
 };
 

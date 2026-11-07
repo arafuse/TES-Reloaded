@@ -12,10 +12,7 @@ sampler2D DiffuseMap : register(s0);
 float4 PointLightColor : register(c2);
 sampler2D ShadowMap : register(s2);
 sampler2D ShadowMaskMap : register(s3);
-sampler2D TESR_ShadowMapBufferNear : register(s4) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
-sampler2D TESR_ShadowMapBufferFar : register(s5) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
 row_major float4x4 TESR_InvViewProjectionTransform : register(c20);
-row_major float4x4 TESR_ShadowCameraToLightTransformFar : register(c24);
 float4 TESR_GroundcoverPressParams : register(c32);
 float4 TESR_GroundcoverPressXY0 : register(c33);
 float4 TESR_GroundcoverPressXY1 : register(c34);
@@ -43,8 +40,6 @@ struct VS_OUTPUT {
     float4 texcoord_1 : TEXCOORD1;
     float4 texcoord_2 : TEXCOORD2;
     float3 texcoord_3 : TEXCOORD3;
-    float4 texcoord_6 : TEXCOORD6;
-    float4 texcoord_8 : TEXCOORD8;
     float4 color_0 : COLOR0;
 };
 
