@@ -241,6 +241,9 @@ void ShadowManager::LoadShadowShaders(IDirect3DDevice9* Device) {
 	// and rendering falls back to the per-object path.
 	ShadowMapInstancedVertex = new ShaderRecord();
 	if (ShadowMapInstancedVertex->LoadShader("ShadowMapInstanced.vso")) Device->CreateVertexShader((const DWORD*)ShadowMapInstancedVertex->Function, &ShadowMapInstancedVertexShader);
+	// Optional too: without it the dynamic-tree composites draw one tree at a time.
+	ShadowMapTreeInstancedVertex = new ShaderRecord();
+	if (ShadowMapTreeInstancedVertex->LoadShader("ShadowMapTreeInstanced.vso")) Device->CreateVertexShader((const DWORD*)ShadowMapTreeInstancedVertex->Function, &ShadowMapTreeInstancedVertexShader);
 }
 
 // Whether the device can MIN-blend into an R32F render target, which CompositeDynamicTrees needs.
@@ -389,6 +392,8 @@ ShadowManager::ShadowManager() {
 	EnableStaticMaps = false;
 	EnableStaticMapsFrameCount = 0;
 	ShadowMapInstancedVertexShader = NULL;
+	ShadowMapTreeInstancedVertexShader = NULL;
+	TreeInstanceGroupCount = 0;
 	InstanceVB = NULL;
 	InstanceVBCapacity = 0;
 	InstanceGroupCount = 0;
@@ -1464,6 +1469,91 @@ void ShadowManager::FlushInstanceGroups(D3DXVECTOR4* ShadowData) {
 	}
 }
 
+// Queues a dynamic-tree composite item into its mesh's batch. False means it must draw on its own:
+// not SpeedTree leaf or branch geometry, bent by tree collision this frame (a per-tree constant the
+// batch cannot carry), or no vertex declaration to extend with the instance stream.
+bool ShadowManager::AddTreeInstance(int ItemIndex) {
+	ShadowGeoItem& Item = ShadowGeoPool[ItemIndex];
+	NiGeometry* Geo = Item.Geo;
+	if (!Item.GeoData || !Geo->m_parent) return false;
+	if (Geo->m_pcName && !memcmp(Geo->m_pcName, "Torch", 5)) return false;
+
+	std::array<const void*, 3> Key = { Item.GeoData, NULL, NULL };
+	bool Leaf = Geo->m_parent->m_pcName && !memcmp(Geo->m_parent->m_pcName, "Leaves", 6);
+	if (Leaf) {
+		SpeedTreeLeafShaderProperty* STProp = (SpeedTreeLeafShaderProperty*)Geo->GetProperty(NiProperty::PropertyType::kType_Lighting);
+		BSTreeNode* Node = (BSTreeNode*)Geo->m_parent->m_parent;
+		if (!STProp || !STProp->leafData || !Node || !Node->TreeModel || !Node->TreeModel->LeavesTexture) return false;
+		Key[1] = STProp->leafData;
+		Key[2] = Node->TreeModel->LeavesTexture->rendererData;
+	} else {
+		BSShaderProperty* LProp = (BSShaderProperty*)Geo->GetProperty(NiProperty::PropertyType::kType_Lighting);
+		if (!LProp || *(void**)LProp != VFTSpeedTreeBranchShaderProperty) return false;
+	}
+#if defined(OBLIVION)
+	if (TreeCollisionReaches(Geo, &Geo->m_worldTransform)) return false;
+#endif
+
+	auto it = TreeInstanceGroupIndex.find(Key);
+	int idx;
+	if (it == TreeInstanceGroupIndex.end()) {
+		IDirect3DVertexDeclaration9* Decl = GetInstancedDeclaration(Item.GeoData);
+		if (!Decl) return false;
+		idx = TreeInstanceGroupCount++;
+		if ((size_t)idx == TreeInstancePool.size()) TreeInstancePool.emplace_back();
+		TreeInstanceGroup& Group = TreeInstancePool[idx];
+		Group.First = Geo;
+		Group.GeoData = Item.GeoData;
+		Group.Leaf = Leaf;
+		Group.Decl = Decl;
+		Group.ItemIdx.clear();
+		TreeInstanceGroupIndex.emplace(Key, idx);
+	} else {
+		idx = it->second;
+	}
+	TreeInstancePool[idx].ItemIdx.emplace_back(ItemIndex);
+	return true;
+}
+
+// Draws the queued tree batches. A mesh seen only once gains nothing from instancing, so those draw
+// first through the regular path while its shader is still bound; the rest share the instanced
+// shader, each group taking its leaf or branch constants from its first tree.
+void ShadowManager::FlushTreeInstanceGroups(D3DXVECTOR4* ShadowData) {
+	NiDX9RenderState* RenderState = TheRenderManager->renderState;
+	const size_t MinGroup = 2;
+
+	UINT MaxGroup = 0;
+	for (int i = 0; i < TreeInstanceGroupCount; i++)
+		if (TreeInstancePool[i].ItemIdx.size() >= MinGroup) MaxGroup = max(MaxGroup, (UINT)TreeInstancePool[i].ItemIdx.size());
+	bool CanInstance = MaxGroup > 0 && EnsureInstanceVB(MaxGroup);
+
+	CurrentVertex = ShadowMapVertex;
+	CurrentPixel = ShadowMapPixel;
+	for (int i = 0; i < TreeInstanceGroupCount; i++) {
+		TreeInstanceGroup& Group = TreeInstancePool[i];
+		if (CanInstance && Group.ItemIdx.size() >= MinGroup) continue;
+		for (int idx : Group.ItemIdx) Render(ShadowGeoPool[idx].Geo, ShadowData, &ShadowGeoPool[idx].World);
+	}
+	if (!CanInstance) return;
+
+	RenderState->SetVertexShader(ShadowMapTreeInstancedVertexShader, false);
+	RenderState->SetPixelShader(ShadowMapPixelShader, false);
+	for (int i = 0; i < TreeInstanceGroupCount; i++) {
+		TreeInstanceGroup& Group = TreeInstancePool[i];
+		if (Group.ItemIdx.size() < MinGroup) continue;
+		ShadowData->y = 0.0f;
+		if (Group.Leaf) SetupSpeedTreeLeafShader(Group.First, ShadowData);
+		else SetupSpeedTreeBranchShader(Group.First, ShadowData);
+		ShadowMapTreeInstancedVertex->SetCT();
+		ShadowMapPixel->SetCT();
+		TheRenderManager->PackGeometryBuffer(Group.GeoData, Group.First->geomData, NULL, Group.First->shader->ShaderDeclaration);
+		DrawInstancedGroup(Group.GeoData, Group.ItemIdx, Group.Decl);
+		FrameProfiler::Count(FrameProfiler::Cnt_TreeInstancedDraws);
+		FrameProfiler::Count(FrameProfiler::Cnt_TreeInstancedPieces, (unsigned int)Group.ItemIdx.size());
+	}
+	RenderState->SetVertexShader(ShadowMapVertexShader, false);
+}
+
 void ShadowManager::RenderShadowMap(ShadowMapTypeEnum ShadowMapType, SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors, D3DXVECTOR3* At, D3DXVECTOR4* ShadowLightDir, D3DXVECTOR4* ShadowData, bool SkipTerrain, IDirect3DSurface9* Target, bool MinBlend) {
 	IDirect3DDevice9* Device = TheRenderManager->device;
 	NiDX9RenderState* RenderState = TheRenderManager->renderState;
@@ -1500,10 +1590,15 @@ void ShadowManager::RenderShadowMap(ShadowMapTypeEnum ShadowMapType, SettingsSha
 	}
 	bool UseInstancing = ShadowsExteriors->UseInstancing && ShadowMapInstancedVertexShader;
 	if (UseInstancing) { InstanceGroupIndex.clear(); InstanceGroupCount = 0; }
+	// Dynamic-tree composites batch repeated tree meshes through their own instanced shader.
+	bool TreeInstancing = MinBlend && TreeWindPass && ShadowsExteriors->UseInstancing && ShadowMapTreeInstancedVertexShader &&
+		TheSettingManager->SettingsShadows.Exteriors.InstanceDynamicTrees;
+	if (TreeInstancing) { TreeInstanceGroupIndex.clear(); TreeInstanceGroupCount = 0; }
 
 	// Batch instanceable opaque statics; draw everything else immediately.
 	for (int i = 0; i < ShadowGeoCount; i++) {
 		ShadowGeoItem& Item = ShadowGeoPool[i];
+		if (TreeInstancing && AddTreeInstance(i)) continue;
 		if (UseInstancing && Item.BaseInstanceable && !(AlphaEnabled && Item.HasAlphaMask)) {
 			AddInstance(Item.GeoData, i);
 			ProfileCount(Cnt_DirItemsInstanced);
@@ -1514,6 +1609,7 @@ void ShadowManager::RenderShadowMap(ShadowMapTypeEnum ShadowMapType, SettingsSha
 		}
 	}
 	if (UseInstancing) FlushInstanceGroups(ShadowData);
+	if (TreeInstancing) FlushTreeInstanceGroups(ShadowData);
 	Device->EndScene();
 	if (MinBlend) {
 		RenderState->SetRenderState(D3DRS_BLENDOP, D3DBLENDOP_ADD, RenderStateArgs);

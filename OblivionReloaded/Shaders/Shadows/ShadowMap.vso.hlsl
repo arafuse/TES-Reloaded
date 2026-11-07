@@ -11,6 +11,7 @@ float4 WindMatrices[16] : register(c67);
 float4 LeafBase[48] : register(c83);
 
 #include "../ExtraShaders/Includes/TreeCollision.hlsl"
+#include "ShadowMapTree.hlsl"
 
 struct VS_INPUT {
     float4 position : POSITION;
@@ -28,34 +29,17 @@ struct VS_OUTPUT {
 VS_OUTPUT main(VS_INPUT IN) {
     VS_OUTPUT OUT;
 	
-#define	PI			3.14159274
-#define	angler(v)		(((v) * (2 * PI)) - PI)
 #define	weight(v)		dot(v, 1)
-#define	sqr(v)			((v) * (v))
 
 	const float4 const_0 = {1.0f, 765.01001f, 0.0f, 0.0f};
-	const float4 const_4 = {(1.0 / (PI * 2)), 0.25, 0.5, 0};
-	
+
 	float4 offset;
     float4 q0;
-	float4 q1;
-	float4 q2;
-	float4 q3;
     float4 q4;
     float4 q5;
     float4 q6;
     float4 q7;
     float4 q8;
-	float4 q9;
-	float4 q10;
-	float4 q11;
-	float4 q28;
-	float4 q59;
-	float4 r1;
-	float4 r2;
-	float4 r3;
-	float4 r4;
-	float4 r5;
 	float4 r0 = IN.position;
 	
 	if (TESR_ShadowData.x == 1.0f) { // Skinned (Actors)
@@ -71,47 +55,11 @@ VS_OUTPUT main(VS_INPUT IN) {
 	}
 	else if (TESR_ShadowData.x == 2.0f) { // Leaves (Speedtrees)
 		r0.xyz += TreeCollisionDisplacement(r0.xyz);
-		q1.x = sqr(angler(frac((((IN.blendindexes.z / 48)) * 0.499999553) + 0.25)));
-		q6.x = angler(frac((((IN.blendindexes.z / 48)) * 0.499999553) + 0.25));
-		q7.x = sqr(q6.x);
-		offset.x = IN.blendindexes.y;
-		r1.zw = BillboardRight.zw;
-		q10.z = 0;
-		r3.z = 0;
-		q8.x = (q7.x * ((q7.x * ((q7.x * -2.52398507e-007) + 2.47609005e-005)) - (1.0 / 72))) + (1.0 / 24);
-		q2.x = (q1.x * ((q1.x * ((q1.x * -2.52398507e-007) + 2.47609005e-005)) - (1.0 / 72))) + (1.0 / 24);
-		q9.xy = (((((q7.x * ((q7.x * q8.x) - 0.5)) + 1) * RustleParams.z) * RustleParams.x) / (PI * 2)) + const_4.yz;
-		r1.xy = angler(frac(q9.xy)) * angler(frac(q9.xy));
-		q3.xy = (((((q1.x * ((q1.x * q2.x) - 0.5)) + 1) * RockParams.z) * RockParams.x) / (PI * 2)) + const_4.yz;
-		q10.xy = angler(frac(q3.xy)) * angler(frac(q3.xy));
-		q11.xy = (((((-2.52398507e-007 * r1.xy) + 2.47609005e-005) * r1.xy) - (1.0 / 72)) * r1.xy) + (1.0 / 24);
-		r3.xy = (q11.xy * r1.xy) - 0.5;
-		r3.xw = (r1.yx * r3.yx) + 1;
-		r3.y = -r3.w;
-		r1.y = dot(r3.wxz, BillboardRight.xyz);
-		r1.x = dot(r3.xyz, BillboardRight.xyz);
-		q5.xy = (((((-2.52398507e-007 * q10.xy) + 2.47609005e-005) * q10.xy) - (1.0 / 72)) * q10.xy) + (1.0 / 24);
-		r2.xy = (q5.xy * q10.xy) - 0.5;
-		q10.xw = (q10.yx * r2.yx) + 1;
-		r2.xyzw = IN.blendindexes.w * LeafBase[IN.blendindexes.z];
-		q10.y = -q10.w;
-		r4.x = dot(q10.zwx, r2.xyz);
-		r5.x = dot(q10.zxy, r2.xyz);
-		q10.y = dot(r3.wxz, BillboardUp.xyz);
-		q10.x = dot(r3.xyz, BillboardUp.xyz);
-		q10.zw = BillboardUp.zw;
-		q59.xyzw = ((r4.x * q10.xyzw) + (r5.x * r1.xyzw)) + r0.xyzw;
-		q28.xyzw = mul(float4x4(WindMatrices[0 + offset.x].xyzw, WindMatrices[1 + offset.x].xyzw, WindMatrices[2 + offset.x].xyzw, WindMatrices[3 + offset.x].xyzw), q59.xyzw);
-		r0.xyzw = (IN.blendindexes.x * (q28.xyzw - q59.xyzw)) + q59.xyzw;
+		r0 = ShadowTreeLeafPosition(r0, IN.blendindexes);
 	}
 	else if (TESR_ShadowData.x == 3.0f) { // Branches/trunk (Speedtrees)
-		// Same bend the stock branch shaders apply (STB2005 and friends): blend the vertex toward
-		// its wind-matrix transform. Without it the trunk shadow stays at rest pose while the
-		// visible tree sways. Leaves above do this too, after their billboard expansion.
 		r0.xyz += TreeCollisionDisplacement(r0.xyz);
-		offset.x = IN.blendindexes.y;
-		q28.xyzw = mul(float4x4(WindMatrices[0 + offset.x].xyzw, WindMatrices[1 + offset.x].xyzw, WindMatrices[2 + offset.x].xyzw, WindMatrices[3 + offset.x].xyzw), r0.xyzw);
-		r0.xyzw = (IN.blendindexes.x * (q28.xyzw - r0.xyzw)) + r0.xyzw;
+		r0 = ShadowTreeBranchPosition(r0, IN.blendindexes);
 	}
     r0 = mul(r0, TESR_ShadowWorldTransform);
 	r0 = mul(r0, TESR_ShadowViewProjTransform);

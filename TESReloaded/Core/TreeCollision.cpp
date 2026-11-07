@@ -43,10 +43,11 @@ static NiNode* FindTreeNode(NiGeometry* Geometry) {
 
 }
 
-void SetTreeCollisionConstants(NiGeometry* Geometry, const NiTransform* WorldTransform, bool Active) {
+// Fills the c240-c243 block for one tree and returns how many sources reach it (0 = no bend).
+static int BuildTreeCollisionConstants(NiGeometry* Geometry, const NiTransform* WorldTransform, bool Active, D3DXVECTOR4* Constants) {
 
-	D3DXVECTOR4 Constants[4];
-	memset(Constants, 0, sizeof(Constants));
+	memset(Constants, 0, sizeof(D3DXVECTOR4) * 4);
+	int Count = 0;
 
 	SettingsGrassStruct* Settings = &TheSettingManager->SettingsGrass;
 	bool Eligible = Active && Settings->TreeCollision && Player && WorldTransform && WorldTransform->scale > 0.0f;
@@ -57,7 +58,6 @@ void SetTreeCollisionConstants(NiGeometry* Geometry, const NiTransform* WorldTra
 		float* Slots[3] = { &Constants[1].x, &Constants[1].z, &Constants[2].x };
 		float* Radii[3] = { &Constants[0].x, &Constants[2].w, &Constants[3].w };
 		float* Weights = &Constants[3].x;
-		int Count = 0;
 		// The list is in priority order, so a tree reached by more than three sources keeps the first.
 		int SourceCount = TheShaderManager->GrassCollisionSourceCount;
 		for (int i = 0; i < SourceCount && Count < 3; i++) {
@@ -84,7 +84,22 @@ void SetTreeCollisionConstants(NiGeometry* Geometry, const NiTransform* WorldTra
 			Constants[2].z = WorldTransform->scale / Bound;
 		}
 	}
+	return Count;
+
+}
+
+void SetTreeCollisionConstants(NiGeometry* Geometry, const NiTransform* WorldTransform, bool Active) {
+
+	D3DXVECTOR4 Constants[4];
+	BuildTreeCollisionConstants(Geometry, WorldTransform, Active, Constants);
 	TheRenderManager->device->SetVertexShaderConstantF(kTreeCollisionRegister, (const float*)Constants, 4);
+
+}
+
+bool TreeCollisionReaches(NiGeometry* Geometry, const NiTransform* WorldTransform) {
+
+	D3DXVECTOR4 Constants[4];
+	return BuildTreeCollisionConstants(Geometry, WorldTransform, true, Constants) > 0;
 
 }
 

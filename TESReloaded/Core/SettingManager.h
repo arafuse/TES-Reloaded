@@ -346,6 +346,7 @@ struct SettingsShadowStruct {
 		bool				DynamicTrees;			// [Exteriors] DynamicTrees: redraw trees every frame so they sway
 		bool				DynamicTreesFar;		// [Exteriors] DynamicTreesFar: DynamicTrees for the far map too
 		int					DynamicTreesFarInterval;	// [Exteriors] DynamicTreesFarInterval: redraw the far map's trees every Nth frame (1..8)
+		bool				InstanceDynamicTrees;	// [Exteriors] InstanceDynamicTrees: batch repeated tree meshes in the dynamic-tree composites
 		float				FadeTime;				// [Exteriors] FadeTime: static-map crossfade seconds (0 = off)
 		bool                UsePostProcessing;
 		bool				SunShadowStealth;		// [Exteriors] SunShadowStealth: sun shadow lowers the player's light level

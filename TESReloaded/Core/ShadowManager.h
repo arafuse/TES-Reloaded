@@ -1,4 +1,5 @@
 #pragma once
+#include <array>
 #include <list>
 #include <vector>
 #include <map>
@@ -165,6 +166,8 @@ public:
 	// Hardware instancing for repeated opaque statics in the exterior directional passes.
 	ShaderRecord*			ShadowMapInstancedVertex;
 	IDirect3DVertexShader9* ShadowMapInstancedVertexShader;
+	ShaderRecord*			ShadowMapTreeInstancedVertex;		// dynamic-tree composites; NULL handle = per-tree draws
+	IDirect3DVertexShader9* ShadowMapTreeInstancedVertexShader;
 	IDirect3DVertexBuffer9* InstanceVB;			// dynamic per-instance world-matrix stream
 	UINT					InstanceVBCapacity;	// capacity in instances
 	std::unordered_map<IDirect3DVertexDeclaration9*, IDirect3DVertexDeclaration9*> InstancedDeclCache;
@@ -178,6 +181,15 @@ public:
 	std::vector<InstanceGroup> InstancePool;
 	std::unordered_map<NiGeometryBufferData*, int> InstanceGroupIndex;
 	int						InstanceGroupCount;
+	// Dynamic-tree composite batches: one per tree mesh, plus its leaf table and texture for leaves,
+	// since those are what the leaf path uploads per draw. First is the item whose properties set up
+	// the group's constants.
+	struct TreeInstanceGroup { NiGeometry* First; NiGeometryBufferData* GeoData; bool Leaf; IDirect3DVertexDeclaration9* Decl; std::vector<int> ItemIdx; };
+	std::vector<TreeInstanceGroup> TreeInstancePool;
+	std::map<std::array<const void*, 3>, int> TreeInstanceGroupIndex;
+	int						TreeInstanceGroupCount;
+	bool					AddTreeInstance(int ItemIndex);
+	void					FlushTreeInstanceGroups(D3DXVECTOR4* ShadowData);
 	D3DVIEWPORT9			ShadowMapViewPort[4];
 	D3DXPLANE				ShadowMapFrustum[4][6];
 	NiVector4				BillboardRight;
