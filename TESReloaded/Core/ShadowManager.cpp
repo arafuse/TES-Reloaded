@@ -985,6 +985,7 @@ void ShadowManager::DrawStaticRegion(ShadowMapTypeEnum ShadowMapType, SettingsSh
 // with its own sample matrix (TESR_ShadowCameraToLightTransformSkin) min-combined with the near term in
 // the apply shader.
 void ShadowManager::RenderActorOverlay(SettingsShadowStruct::ExteriorsStruct* S, D3DXVECTOR4* SunDir) {
+	FrameProfiler::GpuScope OverlayGpu(FrameProfiler::Gpu_ActorOverlay);
 	// Projected exactly like the near region (same anchor and baked sun), only camera-relative. The apply
 	// consults this overlay only inside the near box; centred anywhere else, part of the near box would
 	// fall outside it and lose its shadows, which shows up as a lit strip along the cascade boundary.
@@ -998,6 +999,7 @@ void ShadowManager::RenderActorOverlay(SettingsShadowStruct::ExteriorsStruct* S,
 	CollectSkinnedOnly = true;
 	BuildExteriorGeoItems(S, MapSkin);
 	CollectSkinnedOnly = false;
+	FrameProfiler::Count(FrameProfiler::Cnt_ActorItems, ShadowGeoCount);
 	PublishSkinBounds(S);
 	RenderShadowMap(MapSkin, S, &At, OverlaySunDir, &TheShaderManager->ShaderConst.Shadow.Data, /*SkipTerrain=*/true);
 }
@@ -1057,6 +1059,7 @@ void ShadowManager::UpdateDynamicTreeRegions(SettingsShadowStruct::ExteriorsStru
 void ShadowManager::CompositeDynamicTrees(ShadowMapTypeEnum ShadowMapType, SettingsShadowStruct::ExteriorsStruct* S) {
 	ScopeTimer profile(Phase_TreeComposite);
 	int r = ShadowMapType - MapNear;
+	FrameProfiler::GpuScope TreesGpu(r == 0 ? FrameProfiler::Gpu_TreesNear : FrameProfiler::Gpu_TreesFar);
 	if (!ShadowMapSurface[ShadowMapType]) return;
 	if (FAILED(TheRenderManager->device->StretchRect(StaticMapSurface[r], NULL, ShadowMapSurface[ShadowMapType], NULL, D3DTEXF_NONE))) return;
 	ApplyRegionProjection(ShadowMapType, S, &Regions[r].BakedSunDir, Regions[r].AnchorPos);
@@ -1064,6 +1067,7 @@ void ShadowManager::CompositeDynamicTrees(ShadowMapTypeEnum ShadowMapType, Setti
 	CollectTreesOnly = true;
 	BuildExteriorGeoItems(S, ShadowMapType);
 	CollectTreesOnly = false;
+	FrameProfiler::Count(r == 0 ? FrameProfiler::Cnt_TreeItemsNear : FrameProfiler::Cnt_TreeItemsFar, ShadowGeoCount);
 	TreeWindPass = true;
 	RenderShadowMap(ShadowMapType, S, &LookAtPosition, &Regions[r].BakedSunDir, &TheShaderManager->ShaderConst.Shadow.Data, /*SkipTerrain=*/true, ShadowMapSurface[ShadowMapType], /*MinBlend=*/true);
 	TreeWindPass = false;

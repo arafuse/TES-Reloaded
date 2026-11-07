@@ -26,14 +26,19 @@ namespace FrameProfiler {
 		};
 		const char* const GpuBucketNames[Gpu_COUNT] = {
 			"GPU:ShadowMaps", "GPU:ShadowExt", "GPU:ShadowPoint", "GPU:MainPass",
-			"GPU:MidSun", "GPU:MidPoint", "GPU:Shell", "GPU:FirstPerson"
+			"GPU:MidSun", "GPU:MidPoint", "GPU:Shell", "GPU:FirstPerson",
+			"GPU:TreesNear", "GPU:TreesFar", "GPU:ActorOverlay"
 		};
 		const char* const GpuBucketNotes[Gpu_COUNT] = {
 			"", "  (in ShadowMaps)", "  (in ShadowMaps)", "",
-			"  (in MainPass unless no near water)", "  (in MainPass unless no near water)", "", ""
+			"  (in MainPass unless no near water)", "  (in MainPass unless no near water)", "", "",
+			"  (in ShadowExt)", "  (in ShadowExt)", "  (in ShadowExt)"
 		};
 		const char* const CounterNames[Cnt_COUNT] = {
-			"Draws", "SetCT", "SetPerGeomCT", "DepthResolves", "RenderedBlits", "Scenes"
+			"Draws", "SetCT", "SetPerGeomCT", "DepthResolves", "RenderedBlits", "Scenes",
+			"GrassBatches", "GrassInstances", "GrassTris",
+			"Grass <1k", "Grass 1-3k", "Grass 3-6k", "Grass 6-9k", "Grass >9k",
+			"TreeItemsNear", "TreeItemsFar", "ActorItems"
 		};
 		const int ReportFrames = 600;
 
@@ -85,6 +90,8 @@ namespace FrameProfiler {
 		unsigned int gGpuSamples     = 0;
 		unsigned int gGpuRejNotReady = 0;
 		unsigned int gGpuRejDisjoint = 0;
+		const void*  gGrassTailKey  = NULL;
+		const char*  gGrassTailName = NULL;
 		int          gRangeState[Gpu_COUNT] = {};        // this frame: 0 idle, 1 begun, 2 ended
 		double       gRangeMs[Gpu_COUNT] = {};
 		double       gRangeMaxMs[Gpu_COUNT] = {};
@@ -316,13 +323,22 @@ namespace FrameProfiler {
 		gRangeState[bucket] = 2;
 	}
 
+	void SetGrassTailKey(const void* Key, const char* Name) {
+		gGrassTailKey = Key;
+		gGrassTailName = Name;
+	}
+
 	void GpuShaderSegment(const void* Key, const char* PixelName, const char* VertexName, unsigned int Flags) {
 		if (!ShaderDetail || !Active || gActiveSlot < 0 || gRangeState[Gpu_MainPass] != 1) return;
 		GpuSlot& s = gSlot[gActiveSlot];
 		if (s.SegCount > 0) {
 			ShaderSeg& Last = s.Segs[s.SegCount - 1];
-			if (Last.Key == Key && Last.Flags == Flags) { Last.Draws++; return; }
+			if (Last.Key == Key && Last.Flags == Flags && !(Flags & Seg_GrassBatch)) { Last.Draws++; return; }
 			if (s.SegCount == MaxShaderSegs) { Last.Draws++; gSegOverflow++; return; }
+			if ((Last.Flags & Seg_GrassBatch) && !(Flags & Seg_Grass) && gGrassTailKey) {
+				Last.Key = gGrassTailKey;
+				Last.PixelName = gGrassTailName;
+			}
 		}
 		s.SegTs[s.SegCount]->Issue(D3DISSUE_END);
 		s.Segs[s.SegCount++] = { Key, PixelName, VertexName, Flags, (Flags & Seg_MidScene) ? 0u : 1u };
@@ -1300,6 +1316,44 @@ static void SetGrassCollisionConstants(NiGeometry* Geometry, void* GrassProperty
 
 }
 
+// FrameProfiler grass counters for one main-pass batch: [prop+0x9C] is the batch, +0x0E its used
+// count, +0x04 the per-type model info whose +0x34 is triangles per instance. The distance buckets
+// walk every instance, so they run only at ProfileFrame = 2.
+static void CountGrassBatch(void* GrassProperty) {
+
+	UInt8* Batch = GrassProperty ? *(UInt8**)((UInt8*)GrassProperty + 0x9C) : NULL;
+	if (!Batch) return;
+	UInt16 Used = *(UInt16*)(Batch + 0x0E);
+	UInt8* ModelInfo = *(UInt8**)(Batch + 0x04);
+	UInt16 TrisPerInstance = ModelInfo ? *(UInt16*)(ModelInfo + 0x34) : 0;
+	FrameProfiler::Count(FrameProfiler::Cnt_GrassBatches);
+	FrameProfiler::Count(FrameProfiler::Cnt_GrassInstances, Used);
+	FrameProfiler::Count(FrameProfiler::Cnt_GrassTris, (unsigned int)Used * TrisPerInstance);
+
+	const float* Instances = *(const float**)(Batch + 0x10);
+	if (!FrameProfiler::ShaderDetail || !Instances) return;
+	const D3DXVECTOR4& Camera = TheRenderManager->CameraPosition;
+	unsigned int Buckets[5] = {};
+	float NearestSq = FLT_MAX;
+	for (UInt16 i = 0; i < Used; i++) {
+		const float* Instance = Instances + i * 4;
+		float Dx = Instance[0] - Camera.x;
+		float Dy = Instance[1] - Camera.y;
+		float DistSq = Dx * Dx + Dy * Dy;
+		NearestSq = min(NearestSq, DistSq);
+		Buckets[DistSq < 1000.0f * 1000.0f ? 0 : DistSq < 3000.0f * 3000.0f ? 1 : DistSq < 6000.0f * 6000.0f ? 2 : DistSq < 9000.0f * 9000.0f ? 3 : 4]++;
+	}
+	for (int b = 0; b < 5; b++) FrameProfiler::Count(FrameProfiler::Cnt_GrassNear1k + b, Buckets[b]);
+
+	// One GPU segment per batch, grouped by its nearest blade: near batches are where overdraw lives.
+	static const char* const ClassNames[4] = { "grass b<1k", "grass b1-3k", "grass b3-6k", "grass b>6k" };
+	static const char TailKey = 0;
+	int Class = NearestSq < 1000.0f * 1000.0f ? 0 : NearestSq < 3000.0f * 3000.0f ? 1 : NearestSq < 6000.0f * 6000.0f ? 2 : 3;
+	FrameProfiler::SetGrassTailKey(&TailKey, "grass tail+gap");
+	FrameProfiler::GpuShaderSegment(&ClassNames[Class], ClassNames[Class], "-", FrameProfiler::Seg_Grass | FrameProfiler::Seg_GrassBatch);
+
+}
+
 /// TallGrassShader's per-geometry instance staging: thiscall (Geometry, TallGrassShaderProperty*),
 /// ret 8. The grass batch driver (0x7F7680) runs SetupShaderPrograms only for a batch's first
 /// geometry, but reaches this for every one, directly or through TallGrassShader slot 11.
@@ -1316,6 +1370,7 @@ void GrassInstanceHook::TrackSetupGrassInstances(NiGeometry* Geometry, void* Gra
 
 	(this->*SetupGrassInstances)(Geometry, GrassProperty);
 	if (Geometry && Geometry->geomData) SetGrassCollisionConstants(Geometry, GrassProperty);
+	if (FrameProfiler::Active && TheShaderManager->InMainScenePass) CountGrassBatch(GrassProperty);
 
 }
 

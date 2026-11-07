@@ -68,6 +68,14 @@ namespace FrameProfiler {
 		Cnt_DepthResolves,  // depth resolves triggered from SetCT
 		Cnt_RenderedBlits,  // full-surface StretchRect blits triggered from SetCT
 		Cnt_Scenes,         // ShaderManager::BeginScene invocations (main pass + off-screen renders)
+		Cnt_GrassBatches,   // main-pass grass batches (TallGrassShader instance staging calls)
+		Cnt_GrassInstances, // instances in those batches (batch used count)
+		Cnt_GrassTris,      // instances x the grass type's triangles per instance
+		// ProfileFrame = 2 only: main-pass grass instances by distance from the camera.
+		Cnt_GrassNear1k, Cnt_Grass1to3k, Cnt_Grass3to6k, Cnt_Grass6to9k, Cnt_GrassBeyond9k,
+		Cnt_TreeItemsNear,  // tree geometry redrawn into the near map by the dynamic-tree composite
+		Cnt_TreeItemsFar,   // the same for the far map
+		Cnt_ActorItems,     // casters drawn into the actor (skin) overlay map
 		Cnt_COUNT
 	};
 
@@ -83,6 +91,9 @@ namespace FrameProfiler {
 		Gpu_MidPoint,       // nested in Gpu_MainPass: point shadow apply quad
 		Gpu_Shell,          // the near-shell RenderObject
 		Gpu_FirstPerson,    // the first-person RenderObject
+		Gpu_TreesNear,      // nested in Gpu_ShadowExt: near-map dynamic-tree composite (copy + tree draws)
+		Gpu_TreesFar,       // nested in Gpu_ShadowExt: far-map dynamic-tree composite
+		Gpu_ActorOverlay,   // nested in Gpu_ShadowExt: actor (skin) overlay map
 		Gpu_COUNT
 	};
 
@@ -102,7 +113,13 @@ namespace FrameProfiler {
 	enum ShaderSegmentFlags {
 		Seg_Actor = 1, Seg_Tree = 2, Seg_Grass = 4, Seg_NearWater = 8, Seg_OurPS = 16, Seg_OurVS = 32,
 		Seg_MidScene = 64, // the mid-scene sun/point shadow apply, not a draw
+		// One grass batch: never merged with the previous segment, so each batch is timed on its own.
+		// The last one before a segment without Seg_Grass is relabelled to the SetGrassTailKey key.
+		Seg_GrassBatch = 128,
 	};
+	/// Key and name the last grass batch's segment is relabelled to: it also holds whatever the GPU
+	/// runs between that batch's draw and the next hooked draw.
+	void SetGrassTailKey(const void* Key, const char* Name);
 	extern bool ShaderDetail;                   // armed by FrameBegin when ProfileFrame >= 2
 
 	/// Called before each main-pass draw (and before the mid-scene apply, with Key = NULL and
