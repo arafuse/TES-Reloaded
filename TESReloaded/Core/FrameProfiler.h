@@ -71,6 +71,21 @@ namespace FrameProfiler {
 		Cnt_COUNT
 	};
 
+	// GPU timestamp ranges. Each is timed at most once per frame (a second Begin in
+	// the same frame is ignored) and is reported as an average over the frames that
+	// issued it. Nesting is noted per bucket; nested ranges are not disjoint.
+	enum GpuBucket {
+		Gpu_ShadowMaps,     // ShadowManager::RenderShadowMaps, our part only
+		Gpu_ShadowExt,      // nested in Gpu_ShadowMaps: exterior sun maps
+		Gpu_ShadowPoint,    // nested in Gpu_ShadowMaps: point-light cube maps
+		Gpu_MainPass,       // the main WorldSceneGraph RenderObject (the far pass when the shell is on)
+		Gpu_MidSun,         // nested in Gpu_MainPass: sun shadow apply quad
+		Gpu_MidPoint,       // nested in Gpu_MainPass: point shadow apply quad
+		Gpu_Shell,          // the near-shell RenderObject
+		Gpu_FirstPerson,    // the first-person RenderObject
+		Gpu_COUNT
+	};
+
 	// Armed by FrameBegin for the duration of one TrackRender. Exposed so the RAII
 	// scope and the counters inline their disabled path down to one predictable
 	// branch - they sit on per-draw code paths that run thousands of times a frame.
@@ -80,6 +95,20 @@ namespace FrameProfiler {
 	void FrameBegin();                          // top of TrackRender: re-reads the INI flag, arms timing
 	void FrameEnd();                            // end of TrackRender: accumulates, logs every report window
 	void Accumulate(int bucket, LONGLONG start); // out-of-line: only ever called while Active
+	void GpuBegin(int bucket);                  // issues the range's start timestamp; no-op when disarmed
+	void GpuEnd(int bucket);                    // issues the range's end timestamp; no-op unless GpuBegin issued
+
+	// Per-shader GPU breakdown of Gpu_MainPass (ProfileFrame = 2). Segment flags:
+	enum ShaderSegmentFlags {
+		Seg_Actor = 1, Seg_Tree = 2, Seg_Grass = 4, Seg_NearWater = 8, Seg_OurPS = 16, Seg_OurVS = 32,
+		Seg_MidScene = 64, // the mid-scene sun/point shadow apply, not a draw
+	};
+	extern bool ShaderDetail;                   // armed by FrameBegin when ProfileFrame >= 2
+
+	/// Called before each main-pass draw (and before the mid-scene apply, with Key = NULL and
+	/// Seg_MidScene). A key change closes the running segment with a timestamp and opens a new one;
+	/// the segments only run while Gpu_MainPass is open, and its GpuEnd closes the last one.
+	void GpuShaderSegment(const void* Key, const char* PixelName, const char* VertexName, unsigned int Flags);
 
 	inline LONGLONG QpcNow() { LARGE_INTEGER t; QueryPerformanceCounter(&t); return t.QuadPart; }
 	inline void Count(int counter, unsigned int n = 1) { if (Active) Counters[counter] += n; }
@@ -96,5 +125,12 @@ namespace FrameProfiler {
 		~Scope() { if (B >= 0) Accumulate(B, Start); }
 		// Close early, e.g. to end the frame envelope before the report that reads it runs.
 		void Close() { if (B >= 0) { Accumulate(B, Start); B = -1; } }
+	};
+
+	/// RAII GPU timestamp range; costs one branch when the profiler is disarmed.
+	struct GpuScope {
+		int B;
+		GpuScope(int bucket) : B(Active ? bucket : -1) { if (B >= 0) GpuBegin(B); }
+		~GpuScope() { if (B >= 0) GpuEnd(B); }
 	};
 }

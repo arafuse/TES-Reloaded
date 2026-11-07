@@ -3667,6 +3667,7 @@ void ShaderManager::RenderShadowsMidScene() {
 	if (DoSun) {
 		{
 			FrameProfiler::Scope SunScope(FrameProfiler::Buck_MidSun);
+			FrameProfiler::GpuScope SunGpu(FrameProfiler::Gpu_MidSun);
 			ShadowsExteriorsEffect->SetCT();
 			ShadowsExteriorsEffect->Render(Device, SceneRT, RenderedSurface, false);
 		}
@@ -3675,6 +3676,7 @@ void ShaderManager::RenderShadowsMidScene() {
 	}
 	if (DoPoint) {
 		FrameProfiler::Scope PointScope(FrameProfiler::Buck_MidPoint);
+		FrameProfiler::GpuScope PointGpu(FrameProfiler::Gpu_MidPoint);
 		ShadowsPointEffect->SetCT();
 		ShadowsPointEffect->Render(Device, SceneRT, RenderedSurface, false);
 	}

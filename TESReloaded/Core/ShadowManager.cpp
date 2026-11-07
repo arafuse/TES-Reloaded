@@ -2130,7 +2130,12 @@ void ShadowManager::RenderShadowMaps() {
 	TheRenderManager->SetupSceneCamera();
 	{
 		ScopeTimer profile(Phase_FrameTotal);
-		RenderExteriorShadows();
+		FrameProfiler::GpuScope ShadowMapsGpu(FrameProfiler::Gpu_ShadowMaps);
+		{
+			FrameProfiler::GpuScope ExtGpu(FrameProfiler::Gpu_ShadowExt);
+			RenderExteriorShadows();
+		}
+		FrameProfiler::GpuScope PointGpu(FrameProfiler::Gpu_ShadowPoint);
 		RenderPointShadows(); // interiors and exteriors
 	}
 	Device->SetDepthStencilSurface(DepthSurface);

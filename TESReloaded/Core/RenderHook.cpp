@@ -1,5 +1,8 @@
 #include <CommCtrl.h>
 #include <intrin.h>
+#include <algorithm>
+#include <unordered_map>
+#include <vector>
 #include "RenderHook.h"
 #include "WetActors.h"
 
@@ -10,6 +13,7 @@
 namespace FrameProfiler {
 
 	bool         Active = false;
+	bool         ShaderDetail = false;
 	unsigned int Counters[Cnt_COUNT] = {};
 
 	namespace {
@@ -19,6 +23,14 @@ namespace FrameProfiler {
 			"Effects:PreHdr", "Effects:PostHdr", "BeginScene", "ShaderHook",
 			"Hook:Engine", "Hook:SetCT", "Hook:Resolve", "Hook:MidScene", "Hook:ShellWater",
 			"Mid:Resolve", "Mid:Setup", "Mid:Sun", "Mid:Probe", "Mid:ProbeRead", "Mid:Point", "Mid:Restore"
+		};
+		const char* const GpuBucketNames[Gpu_COUNT] = {
+			"GPU:ShadowMaps", "GPU:ShadowExt", "GPU:ShadowPoint", "GPU:MainPass",
+			"GPU:MidSun", "GPU:MidPoint", "GPU:Shell", "GPU:FirstPerson"
+		};
+		const char* const GpuBucketNotes[Gpu_COUNT] = {
+			"", "  (in ShadowMaps)", "  (in ShadowMaps)", "",
+			"  (in MainPass unless no near water)", "  (in MainPass unless no near water)", "", ""
 		};
 		const char* const CounterNames[Cnt_COUNT] = {
 			"Draws", "SetCT", "SetPerGeomCT", "DepthResolves", "RenderedBlits", "Scenes"
@@ -40,11 +52,28 @@ namespace FrameProfiler {
 		// timing then simply stops yielding samples until the game is restarted -
 		// acceptable for a dev-only knob, and the report says so explicitly rather
 		// than printing a wrong number.
+		// One per-shader segment of the main pass: the draws from one pixel shader change to the next.
+		struct ShaderSeg {
+			const void*  Key;
+			const char*  PixelName;
+			const char*  VertexName;
+			unsigned int Flags;
+			unsigned int Draws;
+		};
+		const int MaxShaderSegs = 1024; // main-pass shader changes per frame; ~826 draws a frame in total
+
 		struct GpuSlot {
 			IDirect3DQuery9* Disjoint = NULL;
 			IDirect3DQuery9* Freq     = NULL;
 			IDirect3DQuery9* Begin    = NULL;
 			IDirect3DQuery9* End      = NULL;
+			IDirect3DQuery9* RangeBegin[Gpu_COUNT] = {};
+			IDirect3DQuery9* RangeEnd[Gpu_COUNT]   = {};
+			bool             RangeIssued[Gpu_COUNT] = {}; // both ends issued in the slot's frame
+			IDirect3DQuery9* SegTs[MaxShaderSegs + 1] = {}; // segment i spans SegTs[i]..SegTs[i + 1]
+			ShaderSeg        Segs[MaxShaderSegs] = {};
+			int              SegCount  = 0;
+			bool             SegClosed = false;               // the closing timestamp was issued
 			bool             Pending  = false;
 		};
 		GpuSlot      gSlot[2];
@@ -56,6 +85,82 @@ namespace FrameProfiler {
 		unsigned int gGpuSamples     = 0;
 		unsigned int gGpuRejNotReady = 0;
 		unsigned int gGpuRejDisjoint = 0;
+		int          gRangeState[Gpu_COUNT] = {};        // this frame: 0 idle, 1 begun, 2 ended
+		double       gRangeMs[Gpu_COUNT] = {};
+		double       gRangeMaxMs[Gpu_COUNT] = {};
+		unsigned int gRangeSamples[Gpu_COUNT] = {};
+
+		// Per-shader aggregates over the report window, keyed by pixel shader (NULL = mid-scene apply).
+		struct ShaderAgg {
+			const char*        PixelName  = "-";
+			const char*        VertexName = "-";
+			unsigned int       Flags = 0;
+			double             Ms    = 0.0;
+			unsigned long long Draws = 0;
+			unsigned long long Segs  = 0;
+		};
+		std::unordered_map<const void*, ShaderAgg> gShaderAggs;
+		unsigned int gSegFrames    = 0;
+		unsigned int gSegOverflow  = 0;
+		bool         gSegTried     = false;
+		bool         gSegAvailable = false;
+
+		void GpuEnsureSegQueries(IDirect3DDevice9* Device) {
+			if (gSegTried) return;
+			gSegTried = true;
+			bool ok = true;
+			for (int i = 0; i < 2 && ok; i++)
+				for (int q = 0; q <= MaxShaderSegs && ok; q++)
+					ok = Device->CreateQuery(D3DQUERYTYPE_TIMESTAMP, &gSlot[i].SegTs[q]) == D3D_OK;
+			gSegAvailable = ok;
+			if (!ok) Logger::Log("[FrameProfile] per-shader GPU timestamps unavailable (CreateQuery failed); ProfileFrame = 2 reports as 1.");
+		}
+
+		const int CategoryCount = 6;
+		const char* const CategoryNames[CategoryCount] = { "shadow apply", "near water", "grass", "tree", "actor", "other" };
+
+		int ShaderCategory(unsigned int Flags) {
+			if (Flags & Seg_MidScene)  return 0;
+			if (Flags & Seg_NearWater) return 1;
+			if (Flags & Seg_Grass)     return 2;
+			if (Flags & Seg_Tree)      return 3;
+			if (Flags & Seg_Actor)     return 4;
+			return 5;
+		}
+
+		void ReportShaders() {
+			if (!gSegFrames) return;
+			double inv = 1.0 / gSegFrames;
+			double mainMs = gRangeSamples[Gpu_MainPass] ? gRangeMs[Gpu_MainPass] / gRangeSamples[Gpu_MainPass] : 0.0;
+			double pctInv = mainMs > 0.0 ? 100.0 / mainMs : 0.0;
+
+			std::vector<const ShaderAgg*> sorted;
+			double sum = 0.0;
+			for (const auto& kv : gShaderAggs) { sorted.push_back(&kv.second); sum += kv.second.Ms; }
+			std::sort(sorted.begin(), sorted.end(), [](const ShaderAgg* a, const ShaderAgg* b) { return a->Ms > b->Ms; });
+
+			Logger::Log("[FrameProfile]   -- GPU:MainPass by pixel shader (%u frames; segments sum %.4f ms of MainPass %.4f; overflowed draws %u) --",
+				gSegFrames, sum * inv, mainMs, gSegOverflow);
+			Logger::Log("[FrameProfile]   %-14s %-14s %8s %6s %8s %7s  %-12s %s", "pixel", "vertex(first)", "ms", "%main", "draws", "changes", "category", "override");
+			double catMs[CategoryCount] = {};
+			double catDraws[CategoryCount] = {};
+			size_t shown = 0;
+			double restMs = 0.0;
+			for (const ShaderAgg* a : sorted) {
+				int cat = ShaderCategory(a->Flags);
+				catMs[cat] += a->Ms;
+				catDraws[cat] += (double)a->Draws;
+				if (shown >= 40) { restMs += a->Ms; continue; }
+				shown++;
+				const char* ovr = (a->Flags & Seg_MidScene) ? "" : (a->Flags & Seg_OurPS) ? ((a->Flags & Seg_OurVS) ? "PS+VS" : "PS") : ((a->Flags & Seg_OurVS) ? "VS" : "vanilla");
+				Logger::Log("[FrameProfile]   %-14s %-14s %8.4f %6.2f %8.1f %7.1f  %-12s %s", a->PixelName, a->VertexName,
+					a->Ms * inv, a->Ms * inv * pctInv, a->Draws * inv, a->Segs * inv, CategoryNames[cat], ovr);
+			}
+			if (restMs > 0.0) Logger::Log("[FrameProfile]   (%u more shaders) %8.4f ms", (unsigned int)(sorted.size() - shown), restMs * inv);
+			Logger::Log("[FrameProfile]   -- GPU:MainPass by category --");
+			for (int c = 0; c < CategoryCount; c++)
+				Logger::Log("[FrameProfile]   %-14s %8.4f ms %6.2f %%  %8.1f draws", CategoryNames[c], catMs[c] * inv, catMs[c] * inv * pctInv, catDraws[c] * inv);
+		}
 
 		void GpuEnsureQueries(IDirect3DDevice9* Device) {
 			if (gGpuTried) return;
@@ -67,6 +172,10 @@ namespace FrameProfiler {
 				ok = ok && Device->CreateQuery(D3DQUERYTYPE_TIMESTAMPFREQ,     &s.Freq)     == D3D_OK;
 				ok = ok && Device->CreateQuery(D3DQUERYTYPE_TIMESTAMP,         &s.Begin)    == D3D_OK;
 				ok = ok && Device->CreateQuery(D3DQUERYTYPE_TIMESTAMP,         &s.End)      == D3D_OK;
+				for (int b = 0; b < Gpu_COUNT && ok; b++) {
+					ok = ok && Device->CreateQuery(D3DQUERYTYPE_TIMESTAMP, &s.RangeBegin[b]) == D3D_OK;
+					ok = ok && Device->CreateQuery(D3DQUERYTYPE_TIMESTAMP, &s.RangeEnd[b])   == D3D_OK;
+				}
 			}
 			gGpuAvailable = ok;
 			Logger::Log(ok ? "[FrameProfile] GPU timestamp queries created OK."
@@ -83,12 +192,42 @@ namespace FrameProfiler {
 			if (s.Freq->GetData(&freq, sizeof(freq), 0) != S_OK) { gGpuRejNotReady++; return; }
 			if (s.Begin->GetData(&t0, sizeof(t0), 0)    != S_OK) { gGpuRejNotReady++; return; }
 			if (s.End->GetData(&t1, sizeof(t1), 0)      != S_OK) { gGpuRejNotReady++; return; }
+			UINT64 r0[Gpu_COUNT] = {}, r1[Gpu_COUNT] = {};
+			for (int b = 0; b < Gpu_COUNT; b++) {
+				if (!s.RangeIssued[b]) continue;
+				if (s.RangeBegin[b]->GetData(&r0[b], sizeof(UINT64), 0) != S_OK ||
+				    s.RangeEnd[b]->GetData(&r1[b], sizeof(UINT64), 0)   != S_OK) { gGpuRejNotReady++; return; }
+			}
+			static UINT64 segTs[MaxShaderSegs + 1];
+			int segCount = s.SegClosed ? s.SegCount : 0;
+			for (int q = 0; segCount > 0 && q <= segCount; q++)
+				if (s.SegTs[q]->GetData(&segTs[q], sizeof(UINT64), 0) != S_OK) { gGpuRejNotReady++; return; }
 			s.Pending = false;
 			if (disjoint || freq == 0 || t1 < t0) { gGpuRejDisjoint++; return; }
 			double ms = (double)(t1 - t0) * 1000.0 / (double)freq;
 			gGpuMs += ms;
 			if (ms > gGpuMaxMs) gGpuMaxMs = ms;
 			gGpuSamples++;
+			for (int b = 0; b < Gpu_COUNT; b++) {
+				if (!s.RangeIssued[b] || r1[b] < r0[b]) continue;
+				double rms = (double)(r1[b] - r0[b]) * 1000.0 / (double)freq;
+				gRangeMs[b] += rms;
+				if (rms > gRangeMaxMs[b]) gRangeMaxMs[b] = rms;
+				gRangeSamples[b]++;
+			}
+			if (segCount > 0) {
+				gSegFrames++;
+				for (int i = 0; i < segCount; i++) {
+					const ShaderSeg& g = s.Segs[i];
+					ShaderAgg& a = gShaderAggs[g.Key];
+					a.PixelName = g.PixelName ? g.PixelName : "-";
+					if (!a.Segs) a.VertexName = g.VertexName ? g.VertexName : "-";
+					a.Flags |= g.Flags;
+					if (segTs[i + 1] >= segTs[i]) a.Ms += (double)(segTs[i + 1] - segTs[i]) * 1000.0 / (double)freq;
+					a.Draws += g.Draws;
+					a.Segs++;
+				}
+			}
 		}
 
 		void Report() {
@@ -124,6 +263,18 @@ namespace FrameProfiler {
 					BucketNames[i], ms, gMaxMs[i], ms * pctInv, gCalls[i] * inv);
 			}
 
+			if (gGpuSamples) {
+				Logger::Log("[FrameProfile]   -- GPU ranges (ms on frames that ran them; nested ranges noted) --");
+				for (int b = 0; b < Gpu_COUNT; b++) {
+					if (gRangeSamples[b])
+						Logger::Log("[FrameProfile]   %-18s %8.4f ms  (max %8.4f)   %u samples%s", GpuBucketNames[b],
+							gRangeMs[b] / gRangeSamples[b], gRangeMaxMs[b], gRangeSamples[b], GpuBucketNotes[b]);
+					else
+						Logger::Log("[FrameProfile]   %-18s (not run)", GpuBucketNames[b]);
+				}
+				ReportShaders();
+			}
+
 			Logger::Log("[FrameProfile]   -- counters (per frame; ShaderHook carries ~0.15 us/draw of profiler overhead) --");
 			for (int i = 0; i < Cnt_COUNT; i++)
 				Logger::Log("[FrameProfile]   %-18s %9.1f  (max %u)", CounterNames[i], gAccumCounters[i] * inv, gMaxCounters[i]);
@@ -136,6 +287,9 @@ namespace FrameProfiler {
 			for (int i = 0; i < Cnt_COUNT; i++)  { gAccumCounters[i] = 0; gMaxCounters[i] = 0; }
 			gGpuMs = 0.0; gGpuMaxMs = 0.0; gGpuSamples = 0;
 			gGpuRejNotReady = 0; gGpuRejDisjoint = 0;
+			for (int b = 0; b < Gpu_COUNT; b++) { gRangeMs[b] = 0.0; gRangeMaxMs[b] = 0.0; gRangeSamples[b] = 0; }
+			gShaderAggs.clear();
+			gSegFrames = 0; gSegOverflow = 0;
 			gFrames = 0;
 		}
 	}
@@ -145,8 +299,38 @@ namespace FrameProfiler {
 		gCalls[bucket]++;
 	}
 
+	void GpuBegin(int bucket) {
+		if (!Active || gActiveSlot < 0 || gRangeState[bucket] != 0) return;
+		gSlot[gActiveSlot].RangeBegin[bucket]->Issue(D3DISSUE_END);
+		gRangeState[bucket] = 1;
+	}
+
+	void GpuEnd(int bucket) {
+		if (gActiveSlot < 0 || gRangeState[bucket] != 1) return;
+		GpuSlot& s = gSlot[gActiveSlot];
+		if (bucket == Gpu_MainPass && s.SegCount > 0) {
+			s.SegTs[s.SegCount]->Issue(D3DISSUE_END);
+			s.SegClosed = true;
+		}
+		s.RangeEnd[bucket]->Issue(D3DISSUE_END);
+		gRangeState[bucket] = 2;
+	}
+
+	void GpuShaderSegment(const void* Key, const char* PixelName, const char* VertexName, unsigned int Flags) {
+		if (!ShaderDetail || !Active || gActiveSlot < 0 || gRangeState[Gpu_MainPass] != 1) return;
+		GpuSlot& s = gSlot[gActiveSlot];
+		if (s.SegCount > 0) {
+			ShaderSeg& Last = s.Segs[s.SegCount - 1];
+			if (Last.Key == Key && Last.Flags == Flags) { Last.Draws++; return; }
+			if (s.SegCount == MaxShaderSegs) { Last.Draws++; gSegOverflow++; return; }
+		}
+		s.SegTs[s.SegCount]->Issue(D3DISSUE_END);
+		s.Segs[s.SegCount++] = { Key, PixelName, VertexName, Flags, (Flags & Seg_MidScene) ? 0u : 1u };
+	}
+
 	void FrameBegin() {
 		Active = TheSettingManager && TheSettingManager->SettingsMain.Develop.ProfileFrame != 0;
+		for (int b = 0; b < Gpu_COUNT; b++) gRangeState[b] = 0;
 		if (!Active) return;
 		if (gQpcFreq == 0) { LARGE_INTEGER f; QueryPerformanceFrequency(&f); gQpcFreq = f.QuadPart; }
 		for (int i = 0; i < Buck_COUNT; i++) gFrameMs[i] = 0.0;
@@ -164,6 +348,13 @@ namespace FrameProfiler {
 			GpuSlot& s = gSlot[gActiveSlot];
 			s.Disjoint->Issue(D3DISSUE_BEGIN);
 			s.Begin->Issue(D3DISSUE_END);
+			s.SegCount = 0;
+			s.SegClosed = false;
+		}
+		ShaderDetail = false;
+		if (TheSettingManager->SettingsMain.Develop.ProfileFrame >= 2 && gActiveSlot >= 0) {
+			GpuEnsureSegQueries(Device);
+			ShaderDetail = gSegAvailable;
 		}
 	}
 
@@ -177,6 +368,7 @@ namespace FrameProfiler {
 				s.End->Issue(D3DISSUE_END);
 				s.Freq->Issue(D3DISSUE_END);
 				s.Disjoint->Issue(D3DISSUE_END);
+				for (int b = 0; b < Gpu_COUNT; b++) s.RangeIssued[b] = gRangeState[b] == 2;
 				s.Pending = true;
 			}
 			// Collect any slot pending from a previous frame (not the one just issued).
@@ -1255,6 +1447,7 @@ UInt32 RenderHook::TrackSetupShaderPrograms(NiGeometry* Geometry, NiSkinInstance
 		// drawn by then and no near water yet. InMainScenePass keeps it out of the
 		// water reflection render, which binds the same shaders later.
 		if (TheShaderManager->InMainScenePass && !TheShaderManager->PreWaterDepthBufferFilled && PixelShader->isNearWater) {
+			FrameProfiler::GpuShaderSegment(NULL, "(mid-scene)", "-", FrameProfiler::Seg_MidScene);
 			FrameProfiler::Scope MidSceneScope(FrameProfiler::Buck_HookMidScene);
 			{
 				FrameProfiler::Scope ResolveScope(FrameProfiler::Buck_MidResolve);
@@ -1262,6 +1455,13 @@ UInt32 RenderHook::TrackSetupShaderPrograms(NiGeometry* Geometry, NiSkinInstance
 			}
 			TheShaderManager->RenderShadowsMidScene();
 			TheShaderManager->PreWaterDepthBufferFilled = true;
+		}
+
+		if (FrameProfiler::ShaderDetail) {
+			unsigned int Flags = (VertexShader->isSkin ? FrameProfiler::Seg_Actor : 0) | (VertexShader->isTree ? FrameProfiler::Seg_Tree : 0) |
+				(VertexShader->isGrass ? FrameProfiler::Seg_Grass : 0) | (PixelShader->isNearWater ? FrameProfiler::Seg_NearWater : 0) |
+				(PixelShader->ShaderProg ? FrameProfiler::Seg_OurPS : 0) | (VertexShader->ShaderProg ? FrameProfiler::Seg_OurVS : 0);
+			FrameProfiler::GpuShaderSegment(PixelShader, PixelShader->ShaderName, VertexShader->ShaderName, Flags);
 		}
 
 		if (RenderManager::CurrentPass == RenderManager::PassNear && !ShellNearWaterPrepDone && PixelShader->isNearWater) {
@@ -1392,7 +1592,9 @@ void __cdecl TrackRenderObject(NiCamera* Camera, NiNode* Object, NiCullingProces
 		ShellDrawLogCount = FarWaterLogCount = 0;
 		RenderManager::ApplyPass(RenderManager::PassFar);
 	}
+	if (MainScenePass) FrameProfiler::GpuBegin(FrameProfiler::Gpu_MainPass);
 	RenderObject(Camera, Object, CullingProcess, VisibleArray);
+	if (MainScenePass) FrameProfiler::GpuEnd(FrameProfiler::Gpu_MainPass);
 	// Clear before the shell renders: this disarms the mid-scene shadow trigger and
 	// SetCT's depth resolve for the rest of the frame (shell, first-person and
 	// reflection renders). Unlike the latches, BeginScene does not reset it.
@@ -1427,7 +1629,9 @@ void __cdecl TrackRenderObject(NiCamera* Camera, NiNode* Object, NiCullingProces
 				// painting over the far pass; the shell loses only ~0.00001 units of depth.
 				// The engine's Clear() cannot set the value, hence the device call.
 				TheRenderManager->device->Clear(0, NULL, D3DCLEAR_ZBUFFER, 0, RenderManager::ShellClearDepth, 0);
+				FrameProfiler::GpuBegin(FrameProfiler::Gpu_Shell);
 				RenderObject(Camera, Object, CullingProcess, VisibleArray);
+				FrameProfiler::GpuEnd(FrameProfiler::Gpu_Shell);
 				RestoreShellWaterDepthSamplers();
 				// Flatten only after the last shell draw, since shell water reads the untouched
 				// far-pass depth, and before the image-space effects that sample it.
@@ -1448,6 +1652,7 @@ void __cdecl TrackRenderObject(NiCamera* Camera, NiNode* Object, NiCullingProces
 		// resolve here would replace the far-pass depth with the near-blank shell.
 		if (!RenderManager::ShellActive) TheRenderManager->ResolveDepthBuffer();
 		TheRenderManager->Clear(NULL, NiRenderer::kClear_ZBUFFER);
+		FrameProfiler::GpuScope FirstPersonGpu(FrameProfiler::Gpu_FirstPerson);
 		RenderObject(Camera, Object, CullingProcess, VisibleArray);
 	}
 
