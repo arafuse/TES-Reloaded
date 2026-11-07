@@ -1,6 +1,6 @@
 ---
 name: gpu-frame-breakdown
-description: MEASURED 2026-11-07 GPU frame attribution (ProfileFrame = 2) - grass is ~half the main pass and only partly fill-bound, shadow maps are mostly per-frame dynamic trees, the shadow-apply block after fixes; how to read the per-shader report and its two blind spots
+description: MEASURED 2026-11-07 GPU frame attribution (ProfileFrame = 2) - grass ~2.9 ms is dominated by the ~12 batches nearest the camera (overdraw), not distance; tree shadow composites split near/far; how to read the per-shader and per-batch reports and their blind spots
 metadata:
   type: project
 ---
@@ -17,17 +17,26 @@ GPU frame ~11.0 ms:
     branches 0.2.
 - Effect chain ~2.1 ms. VolumetricLight and AO were optimized in earlier rounds; the user asked
   to leave them alone.
-- **Shadow maps ~1.1-1.3 ms.** The cascades are cached, so this is almost all `DynamicTrees` /
-  `DynamicTreesFar` redrawing ~800 non-instanced tree draws into the near and far maps every frame.
-  ShadowMapInstanced.vso cannot apply the tree wind transform.
+- **Shadow maps ~1.1-1.3 ms.** The cascades are cached, so this is almost all the dynamic-tree
+  composites: near 107 tree pieces 0.42-0.51 ms, far 688 pieces 0.66 ms (~1 us of GPU per draw,
+  i.e. per-draw overhead). ShadowMapInstanced.vso cannot apply the tree wind transform. Since commit
+  7dd21dc, `DynamicTreesFarInterval` (Shadows.ini ships 3) runs the far composite every Nth frame:
+  GPU:ShadowExt 1.09 → 0.74 ms, and the user reported a big FPS win. GPU:TreesFar is averaged only
+  over frames that ran it, so read the saving in GPU:ShadowExt.
 - Residual ~1.3 ms: water reflection, HDR and the rest of the engine.
 
-**Grass is not vertex-ALU bound and only partly fill-bound.**
+**Grass is real and is near-camera overdraw.**
+- Timed per batch (ProfileFrame = 2), with batches grouped by nearest blade: within 1k units, 12
+  batches cost 1.26 ms (~105 us each); 1-3k, 24 batches 0.66 ms; 3-6k, 75 batches 0.61 ms; beyond 6k,
+  48 batches 0.37 ms (~8 us each).
+- `grass tail+gap` measured 0.00 ms, so no engine work hides between the last grass batch and near
+  water.
+- About 29k instances and 1.6M triangles per frame; ~55 triangles per instance.
 - Halving its vertex work for most batches saved just 0.28 ms.
 - At a lower resolution it fell only 2.97 → 2.13 ms, while the shadow applies halved.
-- Halving Grass.ini Min/MaxDistance changed nothing. That is unexplained, since DrawGrass skips
-  squares beyond the end distance ([[grass-manager-generation]]). Verify the change actually took
-  effect, for example with an instance counter, before concluding distance doesn't matter.
+- Halving Grass.ini Min/MaxDistance (to 4500/6000) did take effect, but it only cut instances by
+  27% (29.2k → 21.3k; DrawGrass culls whole land squares, so 6-9k still had 6.5k instances) and
+  saved no measurable time. The far batches are cheap; distance is not the lever.
 - Grass.ini `GrassDensity = 24` is silently ignored: `ApplyGrassDensitySettings` maps only 1-16
   (iMinGrassSize 240..20). Anything else leaves Oblivion.ini's own value in charge.
 
@@ -38,10 +47,16 @@ GPU frame ~11.0 ms:
   SetupShaderPrograms once per batch ([[grass-batched-per-geometry-hook]],
   [[speedtree-shader-variants]]), so they show "1 draw". Their time is still fully counted.
 - Blind spot 2: a draw that bypasses the hook is billed to the shader before it.
+- Grass rows (`grass b<1k` ... `b>6k`) are one segment per batch from the instance-staging hook,
+  grouped by nearest blade; their `draws` column is batches per frame. `GRASS2004.pso` itself then
+  shows only the sliver before the first batch.
 - GPU timings jitter 0.1-0.2 ms run to run. Compare ProfileFrame = 2 runs only with each other.
+- The FrameProfile distance-bucket counters fill only on frames that carry a GPU slot (every other
+  frame), so their `max` column is the true per-frame count; the average is half of it.
 
 **How to apply:** start the next GPU round from these numbers. Open candidates:
-- grass, which needs the distance test redone with a counter;
-- tree shadow redraws: refresh the far map's trees less often, or instance them with wind;
-- the remaining sun PCF (0.63 ms);
+- near grass overdraw (the 12 nearest batches), which needs a visual trade-off or a cheaper
+  near-grass pixel path. Ask about MSAA / driver transparency AA first; it multiplies exactly this cost;
+- the near tree composite (0.42-0.51 ms every frame);
+- the remaining sun PCF (0.63-0.75 ms);
 - merging the mid-scene copies.
