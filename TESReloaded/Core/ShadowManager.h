@@ -214,6 +214,10 @@ public:
 	// Latched once per sun frame by UpdateDynamicTreeRegions; a change invalidates the region, because
 	// its existing bake was drawn with the other tree mode.
 	bool					TreesDynamic[2];
+	// The live map's last composite no longer matches its bake or projection, so the next frame must
+	// composite even when DynamicTreesFarInterval would skip it. Set by every bake, redraw and mode change.
+	bool					TreeCompositeDirty[2];
+	int						FarTreeFramesSinceComposite;
 
 	//-------SHADOW CUBE MAP--------
 

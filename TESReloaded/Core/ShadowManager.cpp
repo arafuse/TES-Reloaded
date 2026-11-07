@@ -396,6 +396,8 @@ ShadowManager::ShadowManager() {
 	CollectTreesOnly = false;
 	TreeWindPass = false;
 	TreesDynamic[0] = TreesDynamic[1] = false;
+	TreeCompositeDirty[0] = TreeCompositeDirty[1] = true;
+	FarTreeFramesSinceComposite = 0;
 	CollectAnchor = D3DXVECTOR3(0.0f, 0.0f, 0.0f);
 
 	StaticFadeT = 1.0f;
@@ -800,6 +802,7 @@ void ShadowManager::SetupCachedRegionMatrices(ShadowMapTypeEnum ShadowMapType, S
 	Regions[r].BakedSunDir   = *SunDir;
 	Regions[r].Valid         = true;
 	Regions[r].FingerprintStale = true;
+	TreeCompositeDirty[r]    = true;
 }
 
 D3DXMATRIX ShadowManager::ApplyRegionProjection(ShadowMapTypeEnum ShadowMapType, SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors, D3DXVECTOR4* SunDir, const D3DXVECTOR3& Anchor) {
@@ -1047,6 +1050,7 @@ void ShadowManager::UpdateDynamicTreeRegions(SettingsShadowStruct::ExteriorsStru
 		if (Dynamic != TreesDynamic[r]) {
 			TreesDynamic[r] = Dynamic;
 			Regions[r].Valid = false;
+			TreeCompositeDirty[r] = true;
 		}
 	}
 }
@@ -1631,8 +1635,16 @@ void ShadowManager::RenderExteriorShadows() {
 		}
 
 		// After every bake and redraw, so each live map starts from this frame's static depth.
-		for (int r = 0; r < 2; r++)
-			if (TreesDynamic[r]) CompositeDynamicTrees((ShadowMapTypeEnum)(MapNear + r), ShadowsExteriors);
+		// The far map's trees may refresh every Nth frame: between composites its live map keeps the
+		// last one, which stays valid until a bake, redraw or mode change marks it dirty.
+		int FarInterval = TheSettingManager->SettingsShadows.Exteriors.DynamicTreesFarInterval;
+		for (int r = 0; r < 2; r++) {
+			if (!TreesDynamic[r]) continue;
+			if (r == 1 && !TreeCompositeDirty[r] && ++FarTreeFramesSinceComposite < FarInterval) continue;
+			CompositeDynamicTrees((ShadowMapTypeEnum)(MapNear + r), ShadowsExteriors);
+			TreeCompositeDirty[r] = false;
+			if (r == 1) FarTreeFramesSinceComposite = 0;
+		}
 
 		RenderActorOverlay(ShadowsExteriors, SunDir);
 
