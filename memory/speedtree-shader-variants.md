@@ -63,6 +63,12 @@ every pass must displace bit-identically — any variant left stock will z-fail 
 Leaves are single-pass (STLEAF001, alpha test ref 84). Shadows: `ShadowMap.vso` already has leaf
 (`ShadowData.x == 2`) and branch-wind (`== 3`) paths to extend.
 
+**Sun shadow tree math is shared (since 2026-11-07):** the leaf billboard and branch wind code lives
+in `Shaders/Shadows/ShadowMapTree.hlsl`, used by `ShadowMap.vso` (per tree, with tree collision first)
+and `ShadowMapTreeInstanced.vso` (batched dynamic-tree composites, no collision: any tree that
+`TreeCollisionReaches` draws per tree). Change tree motion there, never in one shader, or batched and
+single tree shadows split apart.
+
 **How to apply:** the `[TreeCapDbg]` instrumentation in RenderHook.cpp (temporary; rides the
 `[GrassOrderDbg]` one-frame capture on the `Develop.LogShaders` key; `xform` lines come from the slot-13
 vtable wrap) is the ground truth for which variants draw. Related:

@@ -23,6 +23,12 @@ GPU frame ~11.0 ms:
   7dd21dc, `DynamicTreesFarInterval` (Shadows.ini ships 3) runs the far composite every Nth frame:
   GPU:ShadowExt 1.09 → 0.74 ms, and the user reported a big FPS win. GPU:TreesFar is averaged only
   over frames that ran it, so read the saving in GPU:ShadowExt.
+  - The static-bake → live-map copy is only ~0.03-0.06 ms; the cost is the tree draws.
+  - The pieces come from few meshes: near 107 pieces from 22 buffers, far 688 from 45. Commit f72bc97
+    instances them (`InstanceDynamicTrees`, default 1). A/B in one session: GPU:ShadowExt 0.77 → 0.64,
+    CPU ShadowMaps 0.89 → 0.72. Most of the remaining ~0.38 ms near composite is per-vertex and
+    per-pixel work (overlapping leaf cards MIN-blended into R32F), which batching cannot remove.
+  - The user does NOT want a near-map tree interval (visible stutter risk); don't propose it again.
 - Residual ~1.3 ms: water reflection, HDR and the rest of the engine.
 
 **Grass is real and is near-camera overdraw.**
@@ -50,13 +56,15 @@ GPU frame ~11.0 ms:
 - Grass rows (`grass b<1k` ... `b>6k`) are one segment per batch from the instance-staging hook,
   grouped by nearest blade; their `draws` column is batches per frame. `GRASS2004.pso` itself then
   shows only the sliver before the first batch.
-- GPU timings jitter 0.1-0.2 ms run to run. Compare ProfileFrame = 2 runs only with each other.
+- GPU timings jitter 0.1-0.2 ms run to run (GPU:TreesFar swung 0.65-0.85 over 100 samples), so
+  settle small differences with an A/B in one session.
+- The `SetCT` counter also counts the shadow-map draws' own `CurrentVertex/CurrentPixel->SetCT()`,
+  two per non-instanced shadow draw; its swings (1711 → 805 → 196) tracked the tree changes, not a bug.
 - The FrameProfile distance-bucket counters fill only on frames that carry a GPU slot (every other
   frame), so their `max` column is the true per-frame count; the average is half of it.
 
 **How to apply:** start the next GPU round from these numbers. Open candidates:
 - near grass overdraw (the 12 nearest batches), which needs a visual trade-off or a cheaper
   near-grass pixel path. Ask about MSAA / driver transparency AA first; it multiplies exactly this cost;
-- the near tree composite (0.42-0.51 ms every frame);
 - the remaining sun PCF (0.63-0.75 ms);
 - merging the mid-scene copies.
