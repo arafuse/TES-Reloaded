@@ -993,7 +993,7 @@ void EffectRecord::SetCT() {
 
 }
 
-void EffectRecord::Render(IDirect3DDevice9* Device, IDirect3DSurface9* RenderTarget, IDirect3DSurface9* RenderedSurface, bool ClearRenderTarget) {
+void EffectRecord::Render(IDirect3DDevice9* Device, IDirect3DSurface9* RenderTarget, IDirect3DSurface9* RenderedSurface, bool ClearRenderTarget, const RECT* CopyRegion) {
 
 	UINT Passes;
 
@@ -1010,7 +1010,7 @@ void EffectRecord::Render(IDirect3DDevice9* Device, IDirect3DSurface9* RenderTar
 			Effect->BeginPass(p);
 			Device->DrawPrimitive(D3DPT_TRIANGLESTRIP, 0, 2);
 			Effect->EndPass();
-			Device->StretchRect(RenderTarget, NULL, RenderedSurface, NULL, D3DTEXF_NONE);
+			Device->StretchRect(RenderTarget, CopyRegion, RenderedSurface, CopyRegion, D3DTEXF_NONE);
 			EffCountPass(); EffCountBlit();
 		}
 		Effect->End();
@@ -3627,6 +3627,59 @@ bool ShaderManager::CaptureDeviceState() {
 // the water surface lets water (and the Underwater post-effect) composite OVER the shadows, so
 // shadows are never painted onto the water surface or over the underwater look.
 //
+// Screen rectangle, in pixels of a Width x Height target, that the point shadow apply can change: the
+// union of the on-screen bounds of every published slot's light sphere (radius = its cube far plane,
+// beyond which ShadowsPoint.fx leaves the pixel alone). Returns false when no sphere reaches the
+// screen. Conservative: a sphere around or partly behind the camera claims the whole screen.
+static bool GetPointShadowRegion(UINT Width, UINT Height, RECT* Region) {
+
+	const D3DXVECTOR4* Lights = TheShaderManager->ShaderConst.ShadowMap.ShadowCastLightPosition;
+	const int LightCount = sizeof(TheShaderManager->ShaderConst.ShadowMap.ShadowCastLightPosition) / sizeof(D3DXVECTOR4);
+	const D3DXMATRIX& WorldViewProj = TheRenderManager->WorldViewProjMatrix;
+	const D3DXVECTOR4& Camera = TheRenderManager->CameraPosition;
+	const float Near = WorldSceneGraph->camera->Frustum.Near;
+	const LONG Margin = 2; // TAA jitter and rounding
+	float MinX = 1.0f, MinY = 1.0f, MaxX = -1.0f, MaxY = -1.0f;
+	bool Full = false;
+
+	for (int s = 0; s < LightCount && !Full; s++) {
+		const D3DXVECTOR4& L = Lights[s];
+		float R = L.w;
+		if (R <= 0.0f) continue;
+		float Reach = R + Near;
+		if (L.x * L.x + L.y * L.y + L.z * L.z <= Reach * Reach) { Full = true; break; }
+
+		int BehindCount = 0;
+		bool Straddles = false;
+		float LMinX = FLT_MAX, LMinY = FLT_MAX, LMaxX = -FLT_MAX, LMaxY = -FLT_MAX;
+		for (int c = 0; c < 8; c++) {
+			D3DXVECTOR4 Corner(Camera.x + L.x + ((c & 1) ? R : -R), Camera.y + L.y + ((c & 2) ? R : -R), Camera.z + L.z + ((c & 4) ? R : -R), 1.0f);
+			D3DXVECTOR4 Clip;
+			D3DXVec4Transform(&Clip, &Corner, &WorldViewProj);
+			if (Clip.w <= 0.0f) { BehindCount++; continue; }
+			if (Clip.w < Near) { Straddles = true; continue; }
+			LMinX = min(LMinX, Clip.x / Clip.w); LMaxX = max(LMaxX, Clip.x / Clip.w);
+			LMinY = min(LMinY, Clip.y / Clip.w); LMaxY = max(LMaxY, Clip.y / Clip.w);
+		}
+		if (BehindCount == 8) continue;
+		if (BehindCount || Straddles) { Full = true; break; }
+		MinX = min(MinX, LMinX); MaxX = max(MaxX, LMaxX);
+		MinY = min(MinY, LMinY); MaxY = max(MaxY, LMaxY);
+	}
+
+	if (Full) { MinX = -1.0f; MinY = -1.0f; MaxX = 1.0f; MaxY = 1.0f; }
+	MinX = max(MinX, -1.0f); MinY = max(MinY, -1.0f);
+	MaxX = min(MaxX, 1.0f); MaxY = min(MaxY, 1.0f);
+	if (MinX >= MaxX || MinY >= MaxY) return false;
+
+	Region->left = max((LONG)floorf((MinX * 0.5f + 0.5f) * Width) - Margin, 0L);
+	Region->right = min((LONG)ceilf((MaxX * 0.5f + 0.5f) * Width) + Margin, (LONG)Width);
+	Region->top = max((LONG)floorf((0.5f - MaxY * 0.5f) * Height) - Margin, 0L);
+	Region->bottom = min((LONG)ceilf((0.5f - MinY * 0.5f) * Height) + Margin, (LONG)Height);
+	return Region->left < Region->right && Region->top < Region->bottom;
+
+}
+
 // Two effects run here: the exterior sun shadows (worldspace only), then the point-light cube
 // shadows (interiors AND exteriors). Order matters and costs nothing extra — a single-pass
 // EffectRecord::Render ends by blitting the render target back into RenderedSurface, so the point
@@ -3677,8 +3730,21 @@ void ShaderManager::RenderShadowsMidScene() {
 	if (DoPoint) {
 		FrameProfiler::Scope PointScope(FrameProfiler::Buck_MidPoint);
 		FrameProfiler::GpuScope PointGpu(FrameProfiler::Gpu_MidPoint);
-		ShadowsPointEffect->SetCT();
-		ShadowsPointEffect->Render(Device, SceneRT, RenderedSurface, false);
+		// Outside the lights' screen bounds the pass is an identity copy, and SceneRT already
+		// matches RenderedSurface there, so scissor the quad to those bounds. The copy back can
+		// shrink too, but only from a non-multisampled target, which StretchRect sub-rects safely.
+		D3DSURFACE_DESC Desc;
+		RECT Region;
+		if (SUCCEEDED(SceneRT->GetDesc(&Desc)) && GetPointShadowRegion(Desc.Width, Desc.Height, &Region)) {
+			RECT PrevScissor;
+			bool HavePrev = SUCCEEDED(Device->GetScissorRect(&PrevScissor));
+			Device->SetScissorRect(&Region);
+			Device->SetRenderState(D3DRS_SCISSORTESTENABLE, TRUE);
+			ShadowsPointEffect->SetCT();
+			ShadowsPointEffect->Render(Device, SceneRT, RenderedSurface, false, Desc.MultiSampleType == D3DMULTISAMPLE_NONE ? &Region : NULL);
+			Device->SetRenderState(D3DRS_SCISSORTESTENABLE, FALSE);
+			if (HavePrev) Device->SetScissorRect(&PrevScissor);
+		}
 	}
 
 	FrameProfiler::Scope RestoreScope(FrameProfiler::Buck_MidRestore);
