@@ -76,6 +76,13 @@ namespace FrameProfiler {
 		Cnt_TreeItemsNear,  // tree geometry redrawn into the near map by the dynamic-tree composite
 		Cnt_TreeItemsFar,   // the same for the far map
 		Cnt_ActorItems,     // casters drawn into the actor (skin) overlay map
+		// Dynamic-tree composite instancing potential, per map: pieces and the distinct buffers they
+		// draw (branches by vertex buffer; leaves by vertex buffer + leaf table). Groups << pieces
+		// means instancing could collapse the draws.
+		Cnt_TreeBranchesNear, Cnt_TreeBranchGroupsNear, Cnt_TreeLeavesNear, Cnt_TreeLeafGroupsNear,
+		Cnt_TreeBranchesFar, Cnt_TreeBranchGroupsFar, Cnt_TreeLeavesFar, Cnt_TreeLeafGroupsFar,
+		Cnt_TreeInstancedDraws,  // instanced draws issued by the dynamic-tree composites (both maps)
+		Cnt_TreeInstancedPieces, // tree pieces those draws covered
 		Cnt_COUNT
 	};
 
@@ -94,6 +101,8 @@ namespace FrameProfiler {
 		Gpu_TreesNear,      // nested in Gpu_ShadowExt: near-map dynamic-tree composite (copy + tree draws)
 		Gpu_TreesFar,       // nested in Gpu_ShadowExt: far-map dynamic-tree composite
 		Gpu_ActorOverlay,   // nested in Gpu_ShadowExt: actor (skin) overlay map
+		Gpu_TreesCopyNear,  // nested in Gpu_TreesNear: the static-bake -> live-map copy
+		Gpu_TreesCopyFar,   // nested in Gpu_TreesFar: the same for the far map
 		Gpu_COUNT
 	};
 

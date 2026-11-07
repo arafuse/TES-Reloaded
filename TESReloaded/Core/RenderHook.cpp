@@ -27,18 +27,21 @@ namespace FrameProfiler {
 		const char* const GpuBucketNames[Gpu_COUNT] = {
 			"GPU:ShadowMaps", "GPU:ShadowExt", "GPU:ShadowPoint", "GPU:MainPass",
 			"GPU:MidSun", "GPU:MidPoint", "GPU:Shell", "GPU:FirstPerson",
-			"GPU:TreesNear", "GPU:TreesFar", "GPU:ActorOverlay"
+			"GPU:TreesNear", "GPU:TreesFar", "GPU:ActorOverlay", "GPU:TreesCopyNear", "GPU:TreesCopyFar"
 		};
 		const char* const GpuBucketNotes[Gpu_COUNT] = {
 			"", "  (in ShadowMaps)", "  (in ShadowMaps)", "",
 			"  (in MainPass unless no near water)", "  (in MainPass unless no near water)", "", "",
-			"  (in ShadowExt)", "  (in ShadowExt)", "  (in ShadowExt)"
+			"  (in ShadowExt)", "  (in ShadowExt)", "  (in ShadowExt)", "  (in TreesNear)", "  (in TreesFar)"
 		};
 		const char* const CounterNames[Cnt_COUNT] = {
 			"Draws", "SetCT", "SetPerGeomCT", "DepthResolves", "RenderedBlits", "Scenes",
 			"GrassBatches", "GrassInstances", "GrassTris",
 			"Grass <1k", "Grass 1-3k", "Grass 3-6k", "Grass 6-9k", "Grass >9k",
-			"TreeItemsNear", "TreeItemsFar", "ActorItems"
+			"TreeItemsNear", "TreeItemsFar", "ActorItems",
+			"TreeBranchesNear", "  groups", "TreeLeavesNear", "  groups",
+			"TreeBranchesFar", "  groups", "TreeLeavesFar", "  groups",
+			"TreeInstDraws", "TreeInstPieces"
 		};
 		const int ReportFrames = 600;
 

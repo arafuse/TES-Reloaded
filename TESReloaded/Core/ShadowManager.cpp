@@ -1,8 +1,10 @@
 #include <algorithm>
 #include <cmath>
 #include <list>
+#include <set>
 #include <string>
 #include <thread>
+#include <unordered_set>
 #include <sstream>
 #if defined(OBLIVION)
 #include "TreeCollision.h"
@@ -1060,18 +1062,49 @@ void ShadowManager::UpdateDynamicTreeRegions(SettingsShadowStruct::ExteriorsStru
 // so they line up with the statics. MIN blending keeps the depth nearer the light, so no depth buffer
 // is needed. The live map is what every consumer samples: the apply, the crossfade copies, the sun
 // shadow probe and volumetric light.
+// FrameProfiler: how far instancing could collapse a composite's tree draws. Branches group by
+// vertex buffer; leaves also by their leaf table, which the leaf path uploads per draw.
+static void CountTreeInstanceGroups(const std::vector<ShadowManager::ShadowGeoItem>& Pool, int Count, int Region) {
+	static std::unordered_set<const void*> Branches;
+	static std::set<std::pair<const void*, const void*>> Leaves;
+	Branches.clear();
+	Leaves.clear();
+	unsigned int BranchItems = 0, LeafItems = 0;
+	for (int i = 0; i < Count; i++) {
+		NiGeometry* Geo = Pool[i].Geo;
+		if (!Pool[i].GeoData) continue;
+		if (Geo->m_parent && Geo->m_parent->m_pcName && !memcmp(Geo->m_parent->m_pcName, "Leaves", 6)) {
+			SpeedTreeLeafShaderProperty* Prop = (SpeedTreeLeafShaderProperty*)Geo->GetProperty(NiProperty::PropertyType::kType_Lighting);
+			Leaves.insert({ Pool[i].GeoData, Prop ? (const void*)Prop->leafData : NULL });
+			LeafItems++;
+		} else {
+			Branches.insert(Pool[i].GeoData);
+			BranchItems++;
+		}
+	}
+	int Base = Region == 0 ? FrameProfiler::Cnt_TreeBranchesNear : FrameProfiler::Cnt_TreeBranchesFar;
+	FrameProfiler::Count(Base + 0, BranchItems);
+	FrameProfiler::Count(Base + 1, (unsigned int)Branches.size());
+	FrameProfiler::Count(Base + 2, LeafItems);
+	FrameProfiler::Count(Base + 3, (unsigned int)Leaves.size());
+}
+
 void ShadowManager::CompositeDynamicTrees(ShadowMapTypeEnum ShadowMapType, SettingsShadowStruct::ExteriorsStruct* S) {
 	ScopeTimer profile(Phase_TreeComposite);
 	int r = ShadowMapType - MapNear;
 	FrameProfiler::GpuScope TreesGpu(r == 0 ? FrameProfiler::Gpu_TreesNear : FrameProfiler::Gpu_TreesFar);
 	if (!ShadowMapSurface[ShadowMapType]) return;
-	if (FAILED(TheRenderManager->device->StretchRect(StaticMapSurface[r], NULL, ShadowMapSurface[ShadowMapType], NULL, D3DTEXF_NONE))) return;
+	{
+		FrameProfiler::GpuScope CopyGpu(r == 0 ? FrameProfiler::Gpu_TreesCopyNear : FrameProfiler::Gpu_TreesCopyFar);
+		if (FAILED(TheRenderManager->device->StretchRect(StaticMapSurface[r], NULL, ShadowMapSurface[ShadowMapType], NULL, D3DTEXF_NONE))) return;
+	}
 	ApplyRegionProjection(ShadowMapType, S, &Regions[r].BakedSunDir, Regions[r].AnchorPos);
 	CollectWorldSpace = true;
 	CollectTreesOnly = true;
 	BuildExteriorGeoItems(S, ShadowMapType);
 	CollectTreesOnly = false;
 	FrameProfiler::Count(r == 0 ? FrameProfiler::Cnt_TreeItemsNear : FrameProfiler::Cnt_TreeItemsFar, ShadowGeoCount);
+	if (FrameProfiler::Active) CountTreeInstanceGroups(ShadowGeoPool, ShadowGeoCount, r);
 	TreeWindPass = true;
 	RenderShadowMap(ShadowMapType, S, &LookAtPosition, &Regions[r].BakedSunDir, &TheShaderManager->ShaderConst.Shadow.Data, /*SkipTerrain=*/true, ShadowMapSurface[ShadowMapType], /*MinBlend=*/true);
 	TreeWindPass = false;
