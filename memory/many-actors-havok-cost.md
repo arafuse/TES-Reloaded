@@ -76,7 +76,11 @@ CPU time: DXVK's per-call device lock, see [[game-runs-on-dxvk]].
   slot is marked valid for that frame only. Visually confirmed in both views. Facing the market
   crowd: 57 of 342 casters culled (17%), `Point:Bake` 0.95 → 0.69 ms; the overlay cull kept 236 of
   288 refs there (18% culled, `Pass:Skin` back at 1.36 ms). Both culls pay off when looking away
-  from the crowd and very little when facing it. Actors inside the torch cube reach `RenderSkinnedGeo` through `Render()`, so the
+  from the crowd and very little when facing it.
+- **Tiny-piece cutoff (95929f9, `[ExteriorsSkin] MinRadius = 4`):** facing the crowd, 76 of 626
+  overlay pieces are under radius 4 (29 under 2), only 18 more under 8, but 258 under 16 (hands,
+  feet, heads: visible). `Pass:Skin` 1.36 → 1.18 ms, `GPU:ActorOverlay` 1.12 → 1.06 ms, no visible
+  change. Raising it past 4 buys almost nothing. Overlay cost is ~2.1 µs CPU per piece drawn. Actors inside the torch cube reach `RenderSkinnedGeo` through `Render()`, so the
   `CubeActorGeo` counter is stale (always 0). Cube instancing (a80f8a0) merges only ~54 of ~760
   cube items/frame in the market: its meshes are mostly unique.
 - **Engine CPU vertex packing, ~1.1-1.6 ms, is the engine's own:** a loop in `sub_76E610`
