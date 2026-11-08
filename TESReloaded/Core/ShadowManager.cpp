@@ -83,13 +83,20 @@ namespace {
 		Phase_StaticMoveCheck, // RedrawMovedStaticRegions: fingerprint walk + any in-place redraws
 		Phase_TreeComposite,   // CompositeDynamicTrees: static copy + tree collection + draw submission
 		Phase_TreeDraw,        // ...of which RenderShadowMap's tree draw submission
+		// Skinned draws (RenderSkinnedGeo, every pass), split by stage:
+		Phase_SkinBones,       // CalculateBoneMatrixes + skin-to-world copy, once per skinned geometry
+		Phase_SkinPack,        // PackSkinnedGeometryBuffer, per partition
+		Phase_SkinSetup,       // bone upload, streams and SetCT, per partition (2 calls each)
+		Phase_SkinDraw,        // DrawGeoArrays, per partition
+		Phase_RigidPack,       // PackGeometryBuffer in Render()'s rigid path, every pass
 		Phase_COUNT
 	};
 	const char* const ShadowPhaseNames[Phase_COUNT] = {
 		"BuildGeoItems", "Pass:Near", "Pass:Far", "Pass:Ortho", "Pass:Skin",
 		"ExtTotal", "Int:Classify", "Int:CubeRender", "IntTotal",
 		"Point:Classify", "Point:Bake", "PointTotal", "FrameTotal", "Ext:MoveCheck",
-		"Ext:Trees", "Ext:TreesDraw"
+		"Ext:Trees", "Ext:TreesDraw",
+		"Skin:Bones", "Skin:Pack", "Skin:Setup", "Skin:Draw", "Rigid:Pack"
 	};
 	// Per-frame counters: how the submission cost breaks down (draws, batches, cache hits).
 	enum ShadowCounter {
@@ -155,6 +162,17 @@ namespace {
 			gPhase[Phase].Calls++;
 		}
 	};
+
+	// Split timing for a sequence of stages: each call charges the time since Last to Phase and returns
+	// the new boundary, one QPC per stage instead of two. Free when profiling is off.
+	inline LONGLONG ProfileStamp() { return ProfilingEnabled ? QpcNow() : 0; }
+	inline LONGLONG ProfileSplit(ShadowPhase Phase, LONGLONG Last) {
+		if (!ProfilingEnabled) return 0;
+		LONGLONG Now = QpcNow();
+		gPhase[Phase].Ms += (double)(Now - Last) * 1000.0 / (double)gQpcFreq;
+		gPhase[Phase].Calls++;
+		return Now;
+	}
 
 	void ShadowProfileFrameBegin() {
 		ProfilingEnabled = TheSettingManager->SettingsMain.Develop.ProfileShadows != 0;
@@ -755,7 +773,9 @@ void ShadowManager::Render(NiGeometry* Geo, D3DXVECTOR4* ShadowData, const D3DMA
 			if (TreeWindPass && *(void**)LProp == VFTSpeedTreeBranchShaderProperty) SetupSpeedTreeBranchShader(Geo, ShadowData);
 			if (AlphaEnabled) SetupAlphaTexture(Geo, LProp, ShadowData);
 		}
+		LONGLONG PackStart = ProfileStamp();
 		TheRenderManager->PackGeometryBuffer(GeoData, ModelData, SkinInstance, ShaderDeclaration);
+		ProfileSplit(Phase_RigidPack, PackStart);
 		SetupGeoStreams(GeoData);
 		CurrentVertex->SetCT();
 		CurrentPixel->SetCT();
@@ -2579,17 +2599,23 @@ void ShadowManager::RenderSkinnedGeo(NiGeometry* Geo, D3DXVECTOR4* ShadowData) {
 	NiSkinPartition* SkinPartition = SkinInstance->SkinPartition;
 	D3DPRIMITIVETYPE PrimitiveType = (SkinPartition->Partitions[0].Strips == 0) ? D3DPT_TRIANGLELIST : D3DPT_TRIANGLESTRIP;
 	ShadowData->x = 1.0f;
+	LONGLONG Split = ProfileStamp();
 	TheRenderManager->CalculateBoneMatrixes(SkinInstance, &Geo->m_worldTransform);
 	if (SkinInstance->SkinToWorldWorldToSkin) memcpy(&TheShaderManager->ShaderConst.ShadowMap.ShadowWorld, SkinInstance->SkinToWorldWorldToSkin, 0x40);
+	Split = ProfileSplit(Phase_SkinBones, Split);
 	for (UInt32 p = 0; p < SkinPartition->PartitionsCount; p++) {
 		NiSkinPartition::Partition* Partition = &SkinPartition->Partitions[p];
 		UploadPartitionBones(Device, SkinInstance, Partition);
 		NiGeometryBufferData* GeoData = Partition->BuffData;
+		Split = ProfileSplit(Phase_SkinSetup, Split);
 		TheRenderManager->PackSkinnedGeometryBuffer(GeoData, ModelData, SkinInstance, Partition, ShaderDeclaration);
+		Split = ProfileSplit(Phase_SkinPack, Split);
 		SetupGeoStreams(GeoData);
 		CurrentVertex->SetCT();
 		CurrentPixel->SetCT();
+		Split = ProfileSplit(Phase_SkinSetup, Split);
 		DrawGeoArrays(GeoData, PrimitiveType, Partition->Vertices);
+		Split = ProfileSplit(Phase_SkinDraw, Split);
 	}
 	// CalculateBoneMatrixes stamped FrameID; invalidate it so the later water
 	// reflection pass recomputes rather than reusing shadow-pass bones.
