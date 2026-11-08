@@ -60,10 +60,22 @@ CPU time: DXVK's per-call device lock, see [[game-runs-on-dxvk]].
   - shadow GPU: 2.98 → 1.89 ms (the tiny draws cost GPU time too).
   What remains is `Pass:Skin` at 1.05 ms (540 pieces) and the player's torch cube rebaked every frame
   (`CanCarry`): `Point:Bake` 0.59 ms CPU, `GPU:ShadowPoint` 0.87 ms.
-- **Engine CPU vertex packing, ~1.1 ms:** a loop in `sub_76E610` (+0x192..+0x1D0) under
-  `sub_76F590` ← `sub_76FE20`, plus `sub_776D80`, which memcpys into a locked VB, unlocks it (vtable
-  `+0x30`) and leaves a critical section. Deeper callers are unreliable, so it is unknown whether our
-  `PackSkinnedGeometryBuffer` calls trigger repacks. An A/B with actor shadows off would settle it.
+- **Actor overlay split (1f0cc02 timers, 2026-11-08, 620 items):** `[ExteriorsSkin] Enabled = 0` saves
+  1.47 ms CPU and 1.10 ms GPU (`GPU:ActorOverlay`). Per skinned partition: Pack 1.0 µs, Bones 0.3,
+  Setup 0.28, Draw 0.2. `Rigid:Pack` is the biggest timer (0.95 ms/frame): ~0.6 µs for a clean static,
+  ~4 µs for actor rigid pieces (likely morphing FaceGen heads, unverified).
+  The overlay has **no camera-side caster culling**: it draws every actor in the 2048-radius near box,
+  including those behind the camera whose shadow cannot reach the view.
+- **The cube re-packs per face:** `Render()` calls `PackGeometryBuffer` once per visible face, not
+  once per bake. Actors inside the torch cube reach `RenderSkinnedGeo` through `Render()`, so the
+  `CubeActorGeo` counter is stale (always 0). Cube instancing (a80f8a0) merges only ~54 of ~760
+  cube items/frame in the market: its meshes are mostly unique.
+- **Engine CPU vertex packing, ~1.1-1.6 ms, is the engine's own:** a loop in `sub_76E610`
+  (+0x192..+0x1D0) under `sub_76F590` ← `sub_76FE20`, plus `sub_776D80`, which memcpys into a locked
+  VB, unlocks it (vtable `+0x30`) and leaves a critical section. It did NOT drop with actor shadows
+  off. Attributed callers: `NiDX9Renderer::PackGeometryBuffers+0x28F` ~45%,
+  `PackSkinnedGeometryBuffer` ~2%; the rest are stack-residue chains. Shadow packs of dirty
+  geometry most likely just come first and spare the main pass its pack.
 
 **How to apply:** optimize per-actor physics stepping and our shadow overlay culling, not AI.
 Havok is statically linked, so the engine-side lever is hooking the per-actor character-proxy step to
