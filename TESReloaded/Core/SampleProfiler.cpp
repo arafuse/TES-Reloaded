@@ -32,10 +32,14 @@ namespace SampleProfiler {
 		const int    ChainWords     = ChainDepth + 1;       // the leaf EIP, then the chain, innermost first
 		const int    ChainLeaves    = 12;                   // top exclusive sites given a caller breakdown
 		const int    ChainsPerLeaf  = 6;
+		const int    GameChainsPerLeaf = 10;             // deeper keys split into more distinct rows
+		const int    GameChainDepth = 6;                    // game-module return addresses kept per game chain
+		const int    GameChainWords = GameChainDepth + 1;
 
 		struct ModuleEntry {
 			UInt32 Base;
 			UInt32 Size;
+			bool   Game;    // Oblivion.exe or this plugin: code we can name and act on
 			char   Name[64];
 			char   Path[MAX_PATH];
 		};
@@ -55,11 +59,16 @@ namespace SampleProfiler {
 		// Leaf EIP plus the first return addresses found above it on the stack. For a leaf that keeps
 		// nothing on the stack (InterlockedIncrement, most tiny helpers) the first one is [ESP]: exact.
 		struct ChainTable {
-			UInt32* Key;    // ChainWords per slot; a slot whose leaf word is 0 is empty
+			UInt32* Key;    // Words per slot; a slot whose leaf word is 0 is empty
 			UInt32* Count;
 			UInt32  Used;
+			int     Words;
 		};
 		ChainTable gChains;
+		// Leaf EIP plus the first return addresses above it that lie in a game module. The plain
+		// chain stops inside the driver for a deep system leaf; this one names the engine call
+		// that led there. Heuristic: a stale game address left in a driver frame can win.
+		ChainTable gGameChains;
 		UInt32 gModuleSamples[MaxModules + 1] = {}; // last slot = address outside every known module
 
 		HANDLE        gThread     = NULL;
@@ -109,10 +118,11 @@ namespace SampleProfiler {
 			}
 		}
 
-		bool AllocChains(ChainTable& T) {
-			T.Key   = (UInt32*)calloc(TableSize * ChainWords, sizeof(UInt32));
+		bool AllocChains(ChainTable& T, int Words) {
+			T.Key   = (UInt32*)calloc(TableSize * Words, sizeof(UInt32));
 			T.Count = (UInt32*)calloc(TableSize, sizeof(UInt32));
 			T.Used  = 0;
+			T.Words = Words;
 			return T.Key && T.Count;
 		}
 
@@ -124,14 +134,14 @@ namespace SampleProfiler {
 		void BumpChain(ChainTable& T, const UInt32* Chain) {
 			if (!T.Key) return;
 			UInt32 h = 0;
-			for (int w = 0; w < ChainWords; w++) h = (h ^ Chain[w]) * 2654435761u;
+			for (int w = 0; w < T.Words; w++) h = (h ^ Chain[w]) * 2654435761u;
 			h >>= (32 - TableBits);
 			for (;;) {
-				UInt32* k = &T.Key[h * ChainWords];
-				if (!memcmp(k, Chain, ChainWords * sizeof(UInt32))) { T.Count[h]++; return; }
+				UInt32* k = &T.Key[h * T.Words];
+				if (!memcmp(k, Chain, T.Words * sizeof(UInt32))) { T.Count[h]++; return; }
 				if (k[0] == 0) {
 					if (T.Used >= TableMax) { gDropped++; return; }
-					memcpy(k, Chain, ChainWords * sizeof(UInt32));
+					memcpy(k, Chain, T.Words * sizeof(UInt32));
 					T.Count[h] = 1; T.Used++;
 					return;
 				}
@@ -147,6 +157,11 @@ namespace SampleProfiler {
 			gModuleCount = 0;
 			HANDLE Snap = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, GetCurrentProcessId());
 			if (Snap == INVALID_HANDLE_VALUE) return;
+			HMODULE Plugin = NULL;
+			GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+				(LPCSTR)&BuildModuleTable, &Plugin);
+			UInt32 ExeBase    = (UInt32)GetModuleHandleA(NULL);
+			UInt32 PluginBase = (UInt32)Plugin;
 			// The W variants, converted down: dbghelp's ANSI entry points need char paths.
 			MODULEENTRY32W Me;
 			Me.dwSize = sizeof(Me);
@@ -154,6 +169,7 @@ namespace SampleProfiler {
 				ModuleEntry& E = gModules[gModuleCount++];
 				E.Base = (UInt32)Me.modBaseAddr;
 				E.Size = (UInt32)Me.modBaseSize;
+				E.Game = E.Base == ExeBase || E.Base == PluginBase;
 				WideCharToMultiByte(CP_ACP, 0, Me.szModule,  -1, E.Name, sizeof(E.Name), NULL, NULL);
 				WideCharToMultiByte(CP_ACP, 0, Me.szExePath, -1, E.Path, sizeof(E.Path), NULL, NULL);
 				E.Name[sizeof(E.Name) - 1] = 0;
@@ -265,6 +281,15 @@ namespace SampleProfiler {
 			UInt32 Chain[ChainWords] = {};
 			for (int w = 0; w < ChainWords && w < SeenCount; w++) Chain[w] = Seen[w];
 			BumpChain(gChains, Chain);
+
+			if (Mod >= 0 && gModules[Mod].Game) return;
+			UInt32 GameChain[GameChainWords] = {};
+			GameChain[0] = Eip;
+			for (int s = 1, w = 1; s < SeenCount && w < GameChainWords; s++) {
+				int m = ModuleOf(Seen[s]);
+				if (m >= 0 && gModules[m].Game) GameChain[w++] = Seen[s];
+			}
+			BumpChain(gGameChains, GameChain);
 		}
 
 		DWORD WINAPI SamplerThread(LPVOID) {
@@ -438,23 +463,53 @@ namespace SampleProfiler {
 
 		struct ChainRow { UInt32 Slot; UInt32 Count; };
 		bool ChainRowGreater(const ChainRow& a, const ChainRow& b) { return a.Count > b.Count; }
+		typedef std::map<UInt32, std::vector<ChainRow> > LeafChains;
+
+		void GroupByLeaf(const ChainTable& T, LeafChains& ByLeaf, std::map<UInt32, UInt32>* LeafTotal) {
+			if (!T.Key) return;
+			for (UInt32 i = 0; i < TableSize; i++) {
+				UInt32 Leaf = T.Key[i * T.Words];
+				if (!Leaf) continue;
+				ChainRow r = { i, T.Count[i] };
+				ByLeaf[Leaf].push_back(r);
+				if (LeafTotal) (*LeafTotal)[Leaf] += T.Count[i];
+			}
+		}
+
+		// One line per distinct chain, ranked; shares are of the leaf's own sample count.
+		void LogChainRows(const ChainTable& T, std::vector<ChainRow>& Rows, UInt32 LeafCount, double MsPerCount, int MaxRows, const char* Empty) {
+			std::sort(Rows.begin(), Rows.end(), ChainRowGreater);
+			for (size_t c = 0; c < Rows.size() && c < (size_t)MaxRows; c++) {
+				const UInt32* K = &T.Key[Rows[c].Slot * T.Words];
+				char Line[1024];
+				int Len = 0;
+				Line[0] = 0;
+				for (int w = 1; w < T.Words && K[w]; w++) {
+					char Frame[200];
+					Describe(K[w], Frame, sizeof(Frame), NULL);
+					Len += _snprintf(Line + Len, sizeof(Line) - 1 - Len, "%s%s", w > 1 ? "  <-  " : "", Frame);
+					if (Len < 0 || Len >= (int)sizeof(Line) - 1) { Len = (int)sizeof(Line) - 1; break; }
+				}
+				Line[sizeof(Line) - 1] = 0;
+				Logger::Log("[Sampler]          %6.2f %%  %8.4f ms/frame   %s", Rows[c].Count * 100.0 / LeafCount,
+					Rows[c].Count * MsPerCount, K[1] ? Line : Empty);
+			}
+		}
 
 		// Who calls the hottest exclusive sites. Grouped by exact leaf address, as the exclusive
 		// tables are, because export-only system DLLs would otherwise merge into one "function".
+		// A leaf outside the game modules also gets the game call sites that led to it.
 		void ReportChains(double MsPerCount) {
 			Logger::Log("[Sampler]   -- CALLERS of the top exclusive sites (all phases; caller <- its caller <- ...) --");
 			Logger::Log("[Sampler]      first return address is exact for leaves that keep nothing on the stack; deeper ones are heuristic");
+			Logger::Log("[Sampler]      'game frames' = first Oblivion.exe / plugin return addresses above a system leaf (heuristic)");
 			if (!gChains.Key || !gSamples) { Logger::Log("[Sampler]      (no samples)"); return; }
 
-			std::map<UInt32, std::vector<ChainRow> > ByLeaf;
+			LeafChains ByLeaf, GameByLeaf;
 			std::map<UInt32, UInt32> LeafTotal;
-			for (UInt32 i = 0; i < TableSize; i++) {
-				UInt32 Leaf = gChains.Key[i * ChainWords];
-				if (!Leaf) continue;
-				ChainRow r = { i, gChains.Count[i] };
-				ByLeaf[Leaf].push_back(r);
-				LeafTotal[Leaf] += gChains.Count[i];
-			}
+			GroupByLeaf(gChains, ByLeaf, &LeafTotal);
+			GroupByLeaf(gGameChains, GameByLeaf, NULL);
+
 			std::vector<Row> Leaves;
 			for (std::map<UInt32, UInt32>::const_iterator it = LeafTotal.begin(); it != LeafTotal.end(); ++it) {
 				Row r = { it->first, it->second };
@@ -466,23 +521,12 @@ namespace SampleProfiler {
 				char Name[512];
 				Describe(Leaves[l].Addr, Name, sizeof(Name), NULL);
 				Logger::Log("[Sampler]     %8.4f ms/frame  %7u  %s", Leaves[l].Count * MsPerCount, Leaves[l].Count, Name);
-				std::vector<ChainRow>& Rows = ByLeaf[Leaves[l].Addr];
-				std::sort(Rows.begin(), Rows.end(), ChainRowGreater);
-				for (size_t c = 0; c < Rows.size() && c < (size_t)ChainsPerLeaf; c++) {
-					const UInt32* K = &gChains.Key[Rows[c].Slot * ChainWords];
-					char Line[1024];
-					int Len = 0;
-					Line[0] = 0;
-					for (int w = 1; w < ChainWords && K[w]; w++) {
-						char Frame[200];
-						Describe(K[w], Frame, sizeof(Frame), NULL);
-						Len += _snprintf(Line + Len, sizeof(Line) - 1 - Len, "%s%s", w > 1 ? "  <-  " : "", Frame);
-						if (Len < 0 || Len >= (int)sizeof(Line) - 1) { Len = (int)sizeof(Line) - 1; break; }
-					}
-					Line[sizeof(Line) - 1] = 0;
-					Logger::Log("[Sampler]          %6.2f %%  %8.4f ms/frame   %s", Rows[c].Count * 100.0 / Leaves[l].Count,
-						Rows[c].Count * MsPerCount, K[1] ? Line : "(no return address found)");
-				}
+				LogChainRows(gChains, ByLeaf[Leaves[l].Addr], Leaves[l].Count, MsPerCount, ChainsPerLeaf, "(no return address found)");
+
+				LeafChains::iterator Game = GameByLeaf.find(Leaves[l].Addr);
+				if (Game == GameByLeaf.end()) continue;
+				Logger::Log("[Sampler]        game frames (call site <- its callers, up to %d):", GameChainDepth);
+				LogChainRows(gGameChains, Game->second, Leaves[l].Count, MsPerCount, GameChainsPerLeaf, "(no game frame found)");
 			}
 		}
 
@@ -544,9 +588,10 @@ namespace SampleProfiler {
 			gMain = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION, FALSE, GetCurrentThreadId());
 			if (!gMain) { Logger::Log("[Sampler] OpenThread failed (%u); not starting.", GetLastError()); return; }
 
-			if (!AllocTable(gExcl[0]) || !AllocTable(gExcl[1]) || !AllocTable(gIncl) || !AllocChains(gChains)) {
+			if (!AllocTable(gExcl[0]) || !AllocTable(gExcl[1]) || !AllocTable(gIncl) || !AllocChains(gChains, ChainWords) ||
+				!AllocChains(gGameChains, GameChainWords)) {
 				Logger::Log("[Sampler] histogram allocation failed; not starting.");
-				FreeTable(gExcl[0]); FreeTable(gExcl[1]); FreeTable(gIncl); FreeChains(gChains);
+				FreeTable(gExcl[0]); FreeTable(gExcl[1]); FreeTable(gIncl); FreeChains(gChains); FreeChains(gGameChains);
 				CloseHandle(gMain); gMain = NULL;
 				return;
 			}
@@ -592,7 +637,7 @@ namespace SampleProfiler {
 			Logger::Log("[Sampler] STOPPED.");
 			Report();
 
-			FreeTable(gExcl[0]); FreeTable(gExcl[1]); FreeTable(gIncl); FreeChains(gChains);
+			FreeTable(gExcl[0]); FreeTable(gExcl[1]); FreeTable(gIncl); FreeChains(gChains); FreeChains(gGameChains);
 			if (gMain) { CloseHandle(gMain); gMain = NULL; }
 		}
 
