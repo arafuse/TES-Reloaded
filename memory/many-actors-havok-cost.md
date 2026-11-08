@@ -69,8 +69,11 @@ CPU time: DXVK's per-call device lock, see [[game-runs-on-dxvk]].
   (the sun-shadow probe). Market combat: 130 of 190 refs culled, ActorItems 620 → 202,
   `Pass:Skin` 1.31 → 0.43 ms, `GPU:ActorOverlay` 1.11 → 0.32 ms, shadow CPU 2.46 → 1.50 ms. No
   visible change reported. The cull ratio depends on where the camera points.
-- **The cube re-packed per face** until dd07726, which packs and skins each item once per bake
-  (`Point:Bake` 0.99 → 0.95 ms; the skipped repeats were mostly cheap clean-buffer checks). Actors inside the torch cube reach `RenderSkinnedGeo` through `Render()`, so the
+- **The cube re-packs per face, and must:** dd07726 packed each item once per bake and was
+  reverted (b8cf27d) for drawing stray triangles, see [[volatile-geometry-pack-reuse]].
+- **Carried-light cube view cull (9010770, `[Point] ViewCull`):** a torch cube rebakes every frame,
+  so casters whose shadow cone (light → bound → far plane) misses the view are dropped, and the
+  slot is marked valid for that frame only. Visually confirmed in both views; not yet profiled. Actors inside the torch cube reach `RenderSkinnedGeo` through `Render()`, so the
   `CubeActorGeo` counter is stale (always 0). Cube instancing (a80f8a0) merges only ~54 of ~760
   cube items/frame in the market: its meshes are mostly unique.
 - **Engine CPU vertex packing, ~1.1-1.6 ms, is the engine's own:** a loop in `sub_76E610`
