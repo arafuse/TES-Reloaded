@@ -55,7 +55,9 @@ public:
 	void					AddInstance(NiGeometryBufferData* GeoData, int ItemIndex);
 	IDirect3DVertexDeclaration9* GetInstancedDeclaration(NiGeometryBufferData* GeoData);
 	bool					EnsureInstanceVB(UINT InstanceCount);
-	void					DrawInstancedGroup(NiGeometryBufferData* GeoData, std::vector<int>& ItemIdx, IDirect3DVertexDeclaration9* Decl);
+	/// Draws ItemIdx's copies of GeoData in one instanced call. Item i's world matrix is read from
+	/// WorldBase + ItemIdx[i] * WorldStride bytes, so any array of items carrying a D3DMATRIX works.
+	void					DrawInstancedGroup(NiGeometryBufferData* GeoData, const std::vector<int>& ItemIdx, IDirect3DVertexDeclaration9* Decl, const D3DMATRIX* WorldBase, size_t WorldStride);
 	void					FlushInstanceGroups(D3DXVECTOR4* ShadowData);
 	void					CollectCellGeo(TESObjectCELL* Cell, SettingsShadowStruct::FormsStruct* Forms, SettingsShadowStruct::ExcludedFormsList* ExcludedForms, bool HasWater, ShadowMapTypeEnum ShadowMapType);
 	void					CollectCubeMapGeometry(NiAVObject* Object, std::vector<NiGeometry*>& Out);
@@ -312,6 +314,28 @@ public:
 	ShaderRecord*			ShadowCubeMapPixel;
 	IDirect3DVertexShader9* ShadowCubeMapVertexShader;
 	IDirect3DPixelShader9*	ShadowCubeMapPixelShader;
+	ShaderRecord*			ShadowCubeMapInstancedVertex;		// optional; NULL shader = no cube instancing
+	IDirect3DVertexShader9* ShadowCubeMapInstancedVertexShader;
+
+	// Cube-face instancing. Groups are built once per cube bake over CubeMapGeoList (repeated opaque
+	// meshes, keyed by buffer); CubeGeoGroup maps each list entry to its group or -1. Each face then
+	// fills Visible with the copies its frustum keeps.
+	struct CubeInstanceGroup {
+		NiGeometryBufferData*			GeoData;
+		NiGeometry*						First;		// packs the shared buffer before the instanced draw
+		IDirect3DVertexDeclaration9*	Decl;
+		UInt32							Total;		// copies in the whole cube list
+		std::vector<int>				Visible;	// CubeMapGeoList indices drawn in this face
+	};
+	std::vector<CubeInstanceGroup> CubeGroupPool;
+	std::unordered_map<NiGeometryBufferData*, int> CubeGroupIndex;
+	int						CubeGroupCount;
+	std::vector<int>		CubeGeoGroup;
+	bool					CubeGeoInstanceable(NiGeometry* Geo);
+	void					BuildCubeInstanceGroups();
+	/// Draws one cube face: everything ungrouped (and groups with one visible copy) through Render(),
+	/// then each group with two or more visible copies in one instanced call.
+	void					DrawCubeFace(D3DXPLANE* Frustum, D3DXVECTOR4* BakeData, bool Instancing);
 
 	//MISC
 	D3DVIEWPORT9			ShadowCubeMapViewPort;

@@ -126,6 +126,9 @@ namespace {
 		Cnt_StitchedStrips,     // strips those draws covered (the per-strip calls they replaced)
 		Cnt_StitchBuilds,       // stitched index buffers built this frame
 		Cnt_StitchFallbacks,    // multi-strip meshes still drawn strip by strip (unstitchable or over budget)
+		// Cube-face instancing (DrawCubeFace):
+		Cnt_CubeInstancedDraws, // instanced draws, summed over faces
+		Cnt_CubeInstancedItems, // mesh copies those draws covered (the Render() calls they replaced)
 		Cnt_COUNT
 	};
 	const char* const ShadowCounterNames[Cnt_COUNT] = {
@@ -134,7 +137,8 @@ namespace {
 		"Dir:TerrainDraws", "Dir:ItemsInstanced", "Dir:ItemsImmNonInst", "Dir:ItemsImmAlpha",
 		"Dir:Groups", "Dir:InstancedItems", "Dir:FallbackItems",
 		"Point:Candidates", "Point:SlotsActive", "Point:Rebakes", "Dir:MovedRedraws",
-		"Stitch:Draws", "Stitch:Strips", "Stitch:Builds", "Stitch:Fallbacks"
+		"Stitch:Draws", "Stitch:Strips", "Stitch:Builds", "Stitch:Fallbacks",
+		"Cube:InstDraws", "Cube:InstItems"
 	};
 	// When true, draw/Render counters attribute to the cube/point-light path (set around its submission).
 	bool gCubeBucket = false;
@@ -268,6 +272,9 @@ void ShadowManager::LoadShadowShaders(IDirect3DDevice9* Device) {
 	// Optional too: without it the dynamic-tree composites draw one tree at a time.
 	ShadowMapTreeInstancedVertex = new ShaderRecord();
 	if (ShadowMapTreeInstancedVertex->LoadShader("ShadowMapTreeInstanced.vso")) Device->CreateVertexShader((const DWORD*)ShadowMapTreeInstancedVertex->Function, &ShadowMapTreeInstancedVertexShader);
+	// Optional too: without it cube faces draw one mesh copy at a time.
+	ShadowCubeMapInstancedVertex = new ShaderRecord();
+	if (ShadowCubeMapInstancedVertex->LoadShader("ShadowCubeMapInstanced.vso")) Device->CreateVertexShader((const DWORD*)ShadowCubeMapInstancedVertex->Function, &ShadowCubeMapInstancedVertexShader);
 }
 
 // Whether the device can MIN-blend into an R32F render target, which CompositeDynamicTrees needs.
@@ -418,6 +425,9 @@ ShadowManager::ShadowManager() {
 	ShadowMapInstancedVertexShader = NULL;
 	ShadowMapTreeInstancedVertexShader = NULL;
 	TreeInstanceGroupCount = 0;
+	ShadowCubeMapInstancedVertex = NULL;
+	ShadowCubeMapInstancedVertexShader = NULL;
+	CubeGroupCount = 0;
 	StitchFrame = 0;
 	StitchBuildsLeft = 0;
 	InstanceVB = NULL;
@@ -1415,7 +1425,7 @@ bool ShadowManager::EnsureInstanceVB(UINT InstanceCount) {
 	return true;
 }
 
-void ShadowManager::DrawInstancedGroup(NiGeometryBufferData* GeoData, std::vector<int>& ItemIdx, IDirect3DVertexDeclaration9* Decl) {
+void ShadowManager::DrawInstancedGroup(NiGeometryBufferData* GeoData, const std::vector<int>& ItemIdx, IDirect3DVertexDeclaration9* Decl, const D3DMATRIX* WorldBase, size_t WorldStride) {
 	IDirect3DDevice9* Device = TheRenderManager->device;
 	NiDX9RenderState* RenderState = TheRenderManager->renderState;
 	UINT Count = (UINT)ItemIdx.size();
@@ -1426,7 +1436,7 @@ void ShadowManager::DrawInstancedGroup(NiGeometryBufferData* GeoData, std::vecto
 	float* Data = NULL;
 	if (FAILED(InstanceVB->Lock(0, Count * ShadowInstanceStride, (void**)&Data, D3DLOCK_DISCARD))) return;
 	for (UINT i = 0; i < Count; i++) {
-		const D3DMATRIX& m = ShadowGeoPool[ItemIdx[i]].World;
+		const D3DMATRIX& m = *(const D3DMATRIX*)((const char*)WorldBase + ItemIdx[i] * WorldStride);
 		float* d = Data + i * 12;
 		d[0] = m._11; d[1] = m._21; d[2]  = m._31; d[3]  = m._41;
 		d[4] = m._12; d[5] = m._22; d[6]  = m._32; d[7]  = m._42;
@@ -1478,7 +1488,7 @@ void ShadowManager::FlushInstanceGroups(D3DXVECTOR4* ShadowData) {
 				ShadowMapPixel->SetCT();
 				InstancedSet = true;
 			}
-			DrawInstancedGroup(Group.GeoData, Group.ItemIdx, Group.Decl);
+			DrawInstancedGroup(Group.GeoData, Group.ItemIdx, Group.Decl, &ShadowGeoPool[0].World, sizeof(ShadowGeoItem));
 			ProfileCount(Cnt_DirInstancedItems, (UInt32)Group.ItemIdx.size());
 		}
 	}
@@ -1575,7 +1585,7 @@ void ShadowManager::FlushTreeInstanceGroups(D3DXVECTOR4* ShadowData) {
 		ShadowMapTreeInstancedVertex->SetCT();
 		ShadowMapPixel->SetCT();
 		TheRenderManager->PackGeometryBuffer(Group.GeoData, Group.First->geomData, NULL, Group.First->shader->ShaderDeclaration);
-		DrawInstancedGroup(Group.GeoData, Group.ItemIdx, Group.Decl);
+		DrawInstancedGroup(Group.GeoData, Group.ItemIdx, Group.Decl, &ShadowGeoPool[0].World, sizeof(ShadowGeoItem));
 		FrameProfiler::Count(FrameProfiler::Cnt_TreeInstancedDraws);
 		FrameProfiler::Count(FrameProfiler::Cnt_TreeInstancedPieces, (unsigned int)Group.ItemIdx.size());
 	}
@@ -2175,6 +2185,100 @@ void ShadowManager::SetupCubeMapRenderState() {
 	RenderState->SetPixelShader(ShadowCubeMapPixelShader, false);
 }
 
+// Whether Render() would draw Geo as a plain opaque static, so the instanced cube shader (position
+// and instance matrix only) reproduces it exactly.
+bool ShadowManager::CubeGeoInstanceable(NiGeometry* Geo) {
+	NiGeometryBufferData* GeoData = Geo->geomData ? Geo->geomData->BuffData : NULL;
+	if (!GeoData || !GeoData->VertexDeclaration || Geo->skinInstance || !Geo->shader) return false;
+	if (Geo->m_pcName && !memcmp(Geo->m_pcName, "Torch", 5)) return false;
+	if (!Geo->m_parent || (Geo->m_parent->m_pcName && !memcmp(Geo->m_parent->m_pcName, "Leaves", 6))) return false;
+	BSShaderProperty* LProp = (BSShaderProperty*)Geo->GetProperty(NiProperty::PropertyType::kType_Lighting);
+	if (!LProp || !LProp->IsLightingProperty()) return false;
+	if (AlphaEnabled) {
+		NiAlphaProperty* AProp = (NiAlphaProperty*)Geo->GetProperty(NiProperty::PropertyType::kType_Alpha);
+		if (AProp && (AProp->flags & (NiAlphaProperty::AlphaFlags::ALPHA_BLEND_MASK | NiAlphaProperty::AlphaFlags::TEST_ENABLE_MASK))) return false;
+	}
+	return true;
+}
+
+// Groups CubeMapGeoList's repeated instanceable meshes. A mesh with one copy in the list stays
+// ungrouped: no face could batch it.
+void ShadowManager::BuildCubeInstanceGroups() {
+	CubeGroupIndex.clear();
+	CubeGroupCount = 0;
+	CubeGeoGroup.assign(CubeMapGeoList.size(), -1);
+	for (size_t g = 0; g < CubeMapGeoList.size(); g++) {
+		NiGeometry* Geo = CubeMapGeoList[g];
+		if (!CubeGeoInstanceable(Geo)) continue;
+		NiGeometryBufferData* GeoData = Geo->geomData->BuffData;
+		auto it = CubeGroupIndex.find(GeoData);
+		int idx;
+		if (it == CubeGroupIndex.end()) {
+			IDirect3DVertexDeclaration9* Decl = GetInstancedDeclaration(GeoData);
+			if (!Decl) continue;
+			idx = CubeGroupCount++;
+			if ((size_t)idx == CubeGroupPool.size()) CubeGroupPool.emplace_back();
+			CubeInstanceGroup& Group = CubeGroupPool[idx];
+			Group.GeoData = GeoData;
+			Group.First = Geo;
+			Group.Decl = Decl;
+			Group.Total = 0;
+			CubeGroupIndex.emplace(GeoData, idx);
+		}
+		else idx = it->second;
+		CubeGroupPool[idx].Total++;
+		CubeGeoGroup[g] = idx;
+	}
+	for (size_t g = 0; g < CubeGeoGroup.size(); g++)
+		if (CubeGeoGroup[g] >= 0 && CubeGroupPool[CubeGeoGroup[g]].Total < 2) CubeGeoGroup[g] = -1;
+}
+
+void ShadowManager::DrawCubeFace(D3DXPLANE* Frustum, D3DXVECTOR4* BakeData, bool Instancing) {
+	if (!Instancing) {
+		for (size_t g = 0; g < CubeMapGeoList.size(); g++)
+			if (InFrustum(Frustum, CubeMapGeoList[g])) Render(CubeMapGeoList[g], BakeData, &CubeMapGeoWorld[g]);
+		return;
+	}
+
+	for (int i = 0; i < CubeGroupCount; i++) CubeGroupPool[i].Visible.clear();
+	for (size_t g = 0; g < CubeMapGeoList.size(); g++) {
+		if (!InFrustum(Frustum, CubeMapGeoList[g])) continue;
+		if (CubeGeoGroup[g] >= 0) CubeGroupPool[CubeGeoGroup[g]].Visible.push_back((int)g);
+		else Render(CubeMapGeoList[g], BakeData, &CubeMapGeoWorld[g]);
+	}
+	UINT MaxGroup = 0;
+	for (int i = 0; i < CubeGroupCount; i++) {
+		std::vector<int>& Visible = CubeGroupPool[i].Visible;
+		if (Visible.size() == 1) Render(CubeMapGeoList[Visible[0]], BakeData, &CubeMapGeoWorld[Visible[0]]);
+		else MaxGroup = max(MaxGroup, (UINT)Visible.size());
+	}
+	if (MaxGroup < 2 || !EnsureInstanceVB(MaxGroup)) {
+		for (int i = 0; i < CubeGroupCount; i++) {
+			std::vector<int>& Visible = CubeGroupPool[i].Visible;
+			if (Visible.size() < 2) continue;
+			for (int g : Visible) Render(CubeMapGeoList[g], BakeData, &CubeMapGeoWorld[g]);
+		}
+		return;
+	}
+
+	NiDX9RenderState* RenderState = TheRenderManager->renderState;
+	BakeData->x = 0.0f;
+	BakeData->y = 0.0f;
+	RenderState->SetVertexShader(ShadowCubeMapInstancedVertexShader, false);
+	RenderState->SetPixelShader(ShadowCubeMapPixelShader, false);
+	ShadowCubeMapInstancedVertex->SetCT();
+	ShadowCubeMapPixel->SetCT();
+	for (int i = 0; i < CubeGroupCount; i++) {
+		CubeInstanceGroup& Group = CubeGroupPool[i];
+		if (Group.Visible.size() < 2) continue;
+		TheRenderManager->PackGeometryBuffer(Group.GeoData, Group.First->geomData, NULL, Group.First->shader->ShaderDeclaration);
+		DrawInstancedGroup(Group.GeoData, Group.Visible, Group.Decl, CubeMapGeoWorld.data(), sizeof(D3DMATRIX));
+		ProfileCount(Cnt_CubeInstancedDraws);
+		ProfileCount(Cnt_CubeInstancedItems, (UInt32)Group.Visible.size());
+	}
+	RenderState->SetVertexShader(ShadowCubeMapVertexShader, false);
+}
+
 // A slot's cached cube is reused unless something it depends on changed.
 bool ShadowManager::PointSlotNeedsRebake(int Slot, UInt64 Checksum) {
 	PointLightSlot& Slot_ = PointSlots[Slot];
@@ -2213,6 +2317,8 @@ void ShadowManager::BakePointCube(int Slot) {
 	CubeMapGeoWorld.resize(CubeMapGeoList.size());
 	for (size_t g = 0; g < CubeMapGeoList.size(); g++)
 		CreateD3DMatrix(&CubeMapGeoWorld[g], &CubeMapGeoList[g]->m_worldTransform);
+	bool Instancing = TheSettingManager->SettingsShadows.Point.UseInstancing && ShadowCubeMapInstancedVertexShader;
+	if (Instancing) BuildCubeInstanceGroups();
 
 	D3DXMATRIX Proj, View;
 	D3DXMatrixPerspectiveFovRH(&Proj, D3DXToRadian(90.0f), 1.0f, 1.0f, LightPos->w);
@@ -2233,8 +2339,7 @@ void ShadowManager::BakePointCube(int Slot) {
 		GetFrustumPlanes(Frustum, &TheShaderManager->ShaderConst.ShadowMap.ShadowViewProj);
 		Device->BeginScene();
 		SetupCubeMapRenderState();
-		for (size_t g = 0; g < CubeMapGeoList.size(); g++)
-			if (InFrustum(Frustum, CubeMapGeoList[g])) Render(CubeMapGeoList[g], BakeData, &CubeMapGeoWorld[g]);
+		DrawCubeFace(Frustum, BakeData, Instancing);
 		Device->EndScene();
 	}
 
