@@ -28,6 +28,10 @@ namespace SampleProfiler {
 		const UInt32 TableMax       = (TableSize * 7) / 10; // keep linear probing short
 		const int    MaxPerSample   = 96;                   // unique return addresses kept per sample
 		const int    TopN           = 40;
+		const int    ChainDepth     = 3;                    // return addresses kept per caller chain
+		const int    ChainWords     = ChainDepth + 1;       // the leaf EIP, then the chain, innermost first
+		const int    ChainLeaves    = 12;                   // top exclusive sites given a caller breakdown
+		const int    ChainsPerLeaf  = 6;
 
 		struct ModuleEntry {
 			UInt32 Base;
@@ -48,6 +52,14 @@ namespace SampleProfiler {
 		};
 		Table  gExcl[2];                    // [0] update phase, [1] render phase
 		Table  gIncl;
+		// Leaf EIP plus the first return addresses found above it on the stack. For a leaf that keeps
+		// nothing on the stack (InterlockedIncrement, most tiny helpers) the first one is [ESP]: exact.
+		struct ChainTable {
+			UInt32* Key;    // ChainWords per slot; a slot whose leaf word is 0 is empty
+			UInt32* Count;
+			UInt32  Used;
+		};
+		ChainTable gChains;
 		UInt32 gModuleSamples[MaxModules + 1] = {}; // last slot = address outside every known module
 
 		HANDLE        gThread     = NULL;
@@ -91,6 +103,36 @@ namespace SampleProfiler {
 				if (k == 0) {
 					if (T.Used >= TableMax) { gDropped++; return; }
 					T.Key[h] = Addr; T.Count[h] = 1; T.Used++;
+					return;
+				}
+				h = (h + 1) & (TableSize - 1);
+			}
+		}
+
+		bool AllocChains(ChainTable& T) {
+			T.Key   = (UInt32*)calloc(TableSize * ChainWords, sizeof(UInt32));
+			T.Count = (UInt32*)calloc(TableSize, sizeof(UInt32));
+			T.Used  = 0;
+			return T.Key && T.Count;
+		}
+
+		void FreeChains(ChainTable& T) {
+			free(T.Key); free(T.Count);
+			T.Key = NULL; T.Count = NULL; T.Used = 0;
+		}
+
+		void BumpChain(ChainTable& T, const UInt32* Chain) {
+			if (!T.Key) return;
+			UInt32 h = 0;
+			for (int w = 0; w < ChainWords; w++) h = (h ^ Chain[w]) * 2654435761u;
+			h >>= (32 - TableBits);
+			for (;;) {
+				UInt32* k = &T.Key[h * ChainWords];
+				if (!memcmp(k, Chain, ChainWords * sizeof(UInt32))) { T.Count[h]++; return; }
+				if (k[0] == 0) {
+					if (T.Used >= TableMax) { gDropped++; return; }
+					memcpy(k, Chain, ChainWords * sizeof(UInt32));
+					T.Count[h] = 1; T.Used++;
 					return;
 				}
 				h = (h + 1) & (TableSize - 1);
@@ -159,7 +201,7 @@ namespace SampleProfiler {
 		// A module can unload while sampling, and a candidate that was inside it when
 		// the module table was built would then fault on the call-byte probe. One bad
 		// sample is worth dropping; taking the game down mid-test is not.
-		void ScanStack(const UInt32* Words, UInt32 WordCount, UInt32* Seen, int SeenCount) {
+		int ScanStack(const UInt32* Words, UInt32 WordCount, UInt32* Seen, int SeenCount) {
 			__try {
 				for (UInt32 i = 0; i < WordCount && SeenCount < MaxPerSample; i++) {
 					UInt32 v = Words[i];
@@ -174,6 +216,7 @@ namespace SampleProfiler {
 				}
 			}
 			__except (EXCEPTION_EXECUTE_HANDLER) {}
+			return SeenCount;
 		}
 
 		void TakeSample(UInt8* StackBuf) {
@@ -216,7 +259,12 @@ namespace SampleProfiler {
 			Seen[SeenCount++] = Eip;
 			Bump(gIncl, Eip);
 
-			ScanStack((const UInt32*)StackBuf, Copied / 4, Seen, SeenCount);
+			SeenCount = ScanStack((const UInt32*)StackBuf, Copied / 4, Seen, SeenCount);
+
+			// Seen holds the leaf, then return addresses in stack order: the chain is its prefix.
+			UInt32 Chain[ChainWords] = {};
+			for (int w = 0; w < ChainWords && w < SeenCount; w++) Chain[w] = Seen[w];
+			BumpChain(gChains, Chain);
 		}
 
 		DWORD WINAPI SamplerThread(LPVOID) {
@@ -388,6 +436,56 @@ namespace SampleProfiler {
 			Logger::Log("[Sampler]      (%u distinct entries)", (UInt32)Rows.size());
 		}
 
+		struct ChainRow { UInt32 Slot; UInt32 Count; };
+		bool ChainRowGreater(const ChainRow& a, const ChainRow& b) { return a.Count > b.Count; }
+
+		// Who calls the hottest exclusive sites. Grouped by exact leaf address, as the exclusive
+		// tables are, because export-only system DLLs would otherwise merge into one "function".
+		void ReportChains(double MsPerCount) {
+			Logger::Log("[Sampler]   -- CALLERS of the top exclusive sites (all phases; caller <- its caller <- ...) --");
+			Logger::Log("[Sampler]      first return address is exact for leaves that keep nothing on the stack; deeper ones are heuristic");
+			if (!gChains.Key || !gSamples) { Logger::Log("[Sampler]      (no samples)"); return; }
+
+			std::map<UInt32, std::vector<ChainRow> > ByLeaf;
+			std::map<UInt32, UInt32> LeafTotal;
+			for (UInt32 i = 0; i < TableSize; i++) {
+				UInt32 Leaf = gChains.Key[i * ChainWords];
+				if (!Leaf) continue;
+				ChainRow r = { i, gChains.Count[i] };
+				ByLeaf[Leaf].push_back(r);
+				LeafTotal[Leaf] += gChains.Count[i];
+			}
+			std::vector<Row> Leaves;
+			for (std::map<UInt32, UInt32>::const_iterator it = LeafTotal.begin(); it != LeafTotal.end(); ++it) {
+				Row r = { it->first, it->second };
+				Leaves.push_back(r);
+			}
+			std::sort(Leaves.begin(), Leaves.end(), RowGreater);
+
+			for (size_t l = 0; l < Leaves.size() && l < (size_t)ChainLeaves; l++) {
+				char Name[512];
+				Describe(Leaves[l].Addr, Name, sizeof(Name), NULL);
+				Logger::Log("[Sampler]     %8.4f ms/frame  %7u  %s", Leaves[l].Count * MsPerCount, Leaves[l].Count, Name);
+				std::vector<ChainRow>& Rows = ByLeaf[Leaves[l].Addr];
+				std::sort(Rows.begin(), Rows.end(), ChainRowGreater);
+				for (size_t c = 0; c < Rows.size() && c < (size_t)ChainsPerLeaf; c++) {
+					const UInt32* K = &gChains.Key[Rows[c].Slot * ChainWords];
+					char Line[1024];
+					int Len = 0;
+					Line[0] = 0;
+					for (int w = 1; w < ChainWords && K[w]; w++) {
+						char Frame[200];
+						Describe(K[w], Frame, sizeof(Frame), NULL);
+						Len += _snprintf(Line + Len, sizeof(Line) - 1 - Len, "%s%s", w > 1 ? "  <-  " : "", Frame);
+						if (Len < 0 || Len >= (int)sizeof(Line) - 1) { Len = (int)sizeof(Line) - 1; break; }
+					}
+					Line[sizeof(Line) - 1] = 0;
+					Logger::Log("[Sampler]          %6.2f %%  %8.4f ms/frame   %s", Rows[c].Count * 100.0 / Leaves[l].Count,
+						Rows[c].Count * MsPerCount, K[1] ? Line : "(no return address found)");
+				}
+			}
+		}
+
 		void Report() {
 			double Seconds = gQpcFreq ? (double)(gStopQpc - gStartQpc) / (double)gQpcFreq : 0.0;
 			double Inv = gSamples ? 100.0 / gSamples : 0.0;
@@ -429,6 +527,7 @@ namespace SampleProfiler {
 			ReportTable(gExcl[0], "EXCLUSIVE, UPDATE phase (game logic: AI, Havok, animation, scripts)", gPhaseCount[0], MsPerCount, false);
 			ReportTable(gExcl[1], "EXCLUSIVE, RENDER phase (inside RenderHook::TrackRender)",            gPhaseCount[1], MsPerCount, false);
 			ReportTable(gIncl,    "INCLUSIVE, all samples (heuristic stack scan; merged by function)",   gSamples,       MsPerCount, true);
+			ReportChains(MsPerCount);
 
 			SymbolsClose();
 			Logger::Log("[Sampler] ================== end report ==================");
@@ -445,9 +544,9 @@ namespace SampleProfiler {
 			gMain = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION, FALSE, GetCurrentThreadId());
 			if (!gMain) { Logger::Log("[Sampler] OpenThread failed (%u); not starting.", GetLastError()); return; }
 
-			if (!AllocTable(gExcl[0]) || !AllocTable(gExcl[1]) || !AllocTable(gIncl)) {
+			if (!AllocTable(gExcl[0]) || !AllocTable(gExcl[1]) || !AllocTable(gIncl) || !AllocChains(gChains)) {
 				Logger::Log("[Sampler] histogram allocation failed; not starting.");
-				FreeTable(gExcl[0]); FreeTable(gExcl[1]); FreeTable(gIncl);
+				FreeTable(gExcl[0]); FreeTable(gExcl[1]); FreeTable(gIncl); FreeChains(gChains);
 				CloseHandle(gMain); gMain = NULL;
 				return;
 			}
@@ -493,7 +592,7 @@ namespace SampleProfiler {
 			Logger::Log("[Sampler] STOPPED.");
 			Report();
 
-			FreeTable(gExcl[0]); FreeTable(gExcl[1]); FreeTable(gIncl);
+			FreeTable(gExcl[0]); FreeTable(gExcl[1]); FreeTable(gIncl); FreeChains(gChains);
 			if (gMain) { CloseHandle(gMain); gMain = NULL; }
 		}
 
