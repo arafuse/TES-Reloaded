@@ -73,7 +73,10 @@ GPU frame ~11.0 ms:
 - NOT the sun PCF: measured 2026-11-07 by swapping the near 5x5 kernel for one tap, GPU:MidSun went
   only 0.43 -> 0.37 ms, so the filter costs ~0.06 ms and a min/max-tile early-out cannot pay for its
   build pass. The rest of the pass is the always-run setup (~160 instr + 72 adaptive bias per pixel:
-  5 view-ray rebuilds for the normal, chained clip->light matrix multiplies); trimming it is worth
-  ~0.05-0.1 ms at most.
+  5 view-ray rebuilds for the normal, chained clip->light matrix multiplies). Commit 196b760
+  rebuilt the normal from one ray plus preshader steps (always-run 152 -> 123 instructions). Do NOT
+  fold the clip->light chain into one CPU matrix: it passes through the TAA-jittered
+  InvViewProjMatrix while WorldViewProj is unjittered, so merging would drop that offset and
+  change the result.
 - `Mid:ProbeRead` averages 0.03-0.1 ms but its worst frame reaches 2.4-3.0 ms in every run. That's an
   occasional stall in the sun probe readback, worth a look if stutter is ever reported.
