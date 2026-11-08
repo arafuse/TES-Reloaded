@@ -763,7 +763,7 @@ void ShadowManager::RenderTerrain(NiAVObject* Object, ShadowMapTypeEnum ShadowMa
 
 }
 
-void ShadowManager::Render(NiGeometry* Geo, D3DXVECTOR4* ShadowData, const D3DMATRIX* PrecomputedWorld, bool Prepared) {
+void ShadowManager::Render(NiGeometry* Geo, D3DXVECTOR4* ShadowData, const D3DMATRIX* PrecomputedWorld) {
 
 	NiGeometryData* ModelData = Geo->geomData;
 	NiGeometryBufferData* GeoData = ModelData->BuffData;
@@ -794,17 +794,15 @@ void ShadowManager::Render(NiGeometry* Geo, D3DXVECTOR4* ShadowData, const D3DMA
 			if (TreeWindPass && *(void**)LProp == VFTSpeedTreeBranchShaderProperty) SetupSpeedTreeBranchShader(Geo, ShadowData);
 			if (AlphaEnabled) SetupAlphaTexture(Geo, LProp, ShadowData);
 		}
-		if (!Prepared) {
-			LONGLONG PackStart = ProfileStamp();
-			TheRenderManager->PackGeometryBuffer(GeoData, ModelData, SkinInstance, ShaderDeclaration);
-			ProfileSplit(Phase_RigidPack, PackStart);
-		}
+		LONGLONG PackStart = ProfileStamp();
+		TheRenderManager->PackGeometryBuffer(GeoData, ModelData, SkinInstance, ShaderDeclaration);
+		ProfileSplit(Phase_RigidPack, PackStart);
 		SetupGeoStreams(GeoData);
 		CurrentVertex->SetCT();
 		CurrentPixel->SetCT();
 		DrawGeoArrays(GeoData, GeoData->PrimitiveType, GeoData->VertCount);
 	} else {
-		RenderSkinnedGeo(Geo, ShadowData, Prepared);
+		RenderSkinnedGeo(Geo, ShadowData);
 	}
 
 }
@@ -2300,7 +2298,6 @@ void ShadowManager::BuildCubeInstanceGroups() {
 			Group.First = Geo;
 			Group.Decl = Decl;
 			Group.Total = 0;
-			Group.Packed = false;
 			CubeGroupIndex.emplace(GeoData, idx);
 		}
 		else idx = it->second;
@@ -2314,7 +2311,7 @@ void ShadowManager::BuildCubeInstanceGroups() {
 void ShadowManager::DrawCubeFace(D3DXPLANE* Frustum, D3DXVECTOR4* BakeData, bool Instancing) {
 	if (!Instancing) {
 		for (size_t g = 0; g < CubeMapGeoList.size(); g++)
-			if (InFrustum(Frustum, CubeMapGeoList[g])) RenderCubeItem(g, BakeData);
+			if (InFrustum(Frustum, CubeMapGeoList[g])) Render(CubeMapGeoList[g], BakeData, &CubeMapGeoWorld[g]);
 		return;
 	}
 
@@ -2322,19 +2319,19 @@ void ShadowManager::DrawCubeFace(D3DXPLANE* Frustum, D3DXVECTOR4* BakeData, bool
 	for (size_t g = 0; g < CubeMapGeoList.size(); g++) {
 		if (!InFrustum(Frustum, CubeMapGeoList[g])) continue;
 		if (CubeGeoGroup[g] >= 0) CubeGroupPool[CubeGeoGroup[g]].Visible.push_back((int)g);
-		else RenderCubeItem(g, BakeData);
+		else Render(CubeMapGeoList[g], BakeData, &CubeMapGeoWorld[g]);
 	}
 	UINT MaxGroup = 0;
 	for (int i = 0; i < CubeGroupCount; i++) {
 		std::vector<int>& Visible = CubeGroupPool[i].Visible;
-		if (Visible.size() == 1) RenderCubeItem(Visible[0], BakeData);
+		if (Visible.size() == 1) Render(CubeMapGeoList[Visible[0]], BakeData, &CubeMapGeoWorld[Visible[0]]);
 		else MaxGroup = max(MaxGroup, (UINT)Visible.size());
 	}
 	if (MaxGroup < 2 || !EnsureInstanceVB(MaxGroup)) {
 		for (int i = 0; i < CubeGroupCount; i++) {
 			std::vector<int>& Visible = CubeGroupPool[i].Visible;
 			if (Visible.size() < 2) continue;
-			for (int g : Visible) RenderCubeItem(g, BakeData);
+			for (int g : Visible) Render(CubeMapGeoList[g], BakeData, &CubeMapGeoWorld[g]);
 		}
 		return;
 	}
@@ -2349,10 +2346,7 @@ void ShadowManager::DrawCubeFace(D3DXPLANE* Frustum, D3DXVECTOR4* BakeData, bool
 	for (int i = 0; i < CubeGroupCount; i++) {
 		CubeInstanceGroup& Group = CubeGroupPool[i];
 		if (Group.Visible.size() < 2) continue;
-		if (!Group.Packed) {
-			TheRenderManager->PackGeometryBuffer(Group.GeoData, Group.First->geomData, NULL, Group.First->shader->ShaderDeclaration);
-			Group.Packed = true;
-		}
+		TheRenderManager->PackGeometryBuffer(Group.GeoData, Group.First->geomData, NULL, Group.First->shader->ShaderDeclaration);
 		DrawInstancedGroup(Group.GeoData, Group.Visible, Group.Decl, CubeMapGeoWorld.data(), sizeof(D3DMATRIX));
 		ProfileCount(Cnt_CubeInstancedDraws);
 		ProfileCount(Cnt_CubeInstancedItems, (UInt32)Group.Visible.size());
@@ -2399,14 +2393,6 @@ bool ShadowManager::CullCubeCastersToView(const D3DXVECTOR3& LightPos, float Far
 	return Culled;
 }
 
-// A bake draws its list into up to 6 faces with nothing changing in between, so each entry's buffers
-// are packed and its bones computed in the first face that draws it, and reused by the rest.
-void ShadowManager::RenderCubeItem(size_t Index, D3DXVECTOR4* BakeData) {
-	bool Prepared = CubeGeoPrepared[Index] != 0;
-	CubeGeoPrepared[Index] = 1;
-	Render(CubeMapGeoList[Index], BakeData, &CubeMapGeoWorld[Index], Prepared);
-}
-
 // A slot's cached cube is reused unless something it depends on changed.
 bool ShadowManager::PointSlotNeedsRebake(int Slot, UInt64 Checksum) {
 	PointLightSlot& Slot_ = PointSlots[Slot];
@@ -2449,7 +2435,6 @@ void ShadowManager::BakePointCube(int Slot) {
 	CubeMapGeoWorld.resize(CubeMapGeoList.size());
 	for (size_t g = 0; g < CubeMapGeoList.size(); g++)
 		CreateD3DMatrix(&CubeMapGeoWorld[g], &CubeMapGeoList[g]->m_worldTransform);
-	CubeGeoPrepared.assign(CubeMapGeoList.size(), 0);
 	bool Instancing = TheSettingManager->SettingsShadows.Point.UseInstancing && ShadowCubeMapInstancedVertexShader;
 	if (Instancing) BuildCubeInstanceGroups();
 
@@ -2829,7 +2814,7 @@ static void UploadPartitionBones(IDirect3DDevice9* Device, NiSkinInstance* SkinI
 	Device->SetVertexShaderConstantF(9, Gathered, Bones * 3);
 }
 
-void ShadowManager::RenderSkinnedGeo(NiGeometry* Geo, D3DXVECTOR4* ShadowData, bool Prepared) {
+void ShadowManager::RenderSkinnedGeo(NiGeometry* Geo, D3DXVECTOR4* ShadowData) {
 	IDirect3DDevice9* Device = TheRenderManager->device;
 	NiGeometryData* ModelData = Geo->geomData;
 	NiSkinInstance* SkinInstance = Geo->skinInstance;
@@ -2838,7 +2823,7 @@ void ShadowManager::RenderSkinnedGeo(NiGeometry* Geo, D3DXVECTOR4* ShadowData, b
 	D3DPRIMITIVETYPE PrimitiveType = (SkinPartition->Partitions[0].Strips == 0) ? D3DPT_TRIANGLELIST : D3DPT_TRIANGLESTRIP;
 	ShadowData->x = 1.0f;
 	LONGLONG Split = ProfileStamp();
-	if (!Prepared) TheRenderManager->CalculateBoneMatrixes(SkinInstance, &Geo->m_worldTransform);
+	TheRenderManager->CalculateBoneMatrixes(SkinInstance, &Geo->m_worldTransform);
 	if (SkinInstance->SkinToWorldWorldToSkin) memcpy(&TheShaderManager->ShaderConst.ShadowMap.ShadowWorld, SkinInstance->SkinToWorldWorldToSkin, 0x40);
 	Split = ProfileSplit(Phase_SkinBones, Split);
 	for (UInt32 p = 0; p < SkinPartition->PartitionsCount; p++) {
@@ -2846,10 +2831,8 @@ void ShadowManager::RenderSkinnedGeo(NiGeometry* Geo, D3DXVECTOR4* ShadowData, b
 		UploadPartitionBones(Device, SkinInstance, Partition);
 		NiGeometryBufferData* GeoData = Partition->BuffData;
 		Split = ProfileSplit(Phase_SkinSetup, Split);
-		if (!Prepared) {
-			TheRenderManager->PackSkinnedGeometryBuffer(GeoData, ModelData, SkinInstance, Partition, ShaderDeclaration);
-			Split = ProfileSplit(Phase_SkinPack, Split);
-		}
+		TheRenderManager->PackSkinnedGeometryBuffer(GeoData, ModelData, SkinInstance, Partition, ShaderDeclaration);
+		Split = ProfileSplit(Phase_SkinPack, Split);
 		SetupGeoStreams(GeoData);
 		CurrentVertex->SetCT();
 		CurrentPixel->SetCT();
