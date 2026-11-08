@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: ae91bd5d-ef17-461e-bc53-0af58fe36e78
-  modified: 2026-11-08T15:30:58.614Z
+  modified: 2026-11-08T15:32:18.943Z
 ---
 
 `TESReloaded/Core/SampleProfiler.{h,cpp}`. A background thread suspends the game's main thread
@@ -36,9 +36,9 @@ QPC calls pollute the results. Overhead while running is ~0.2-0.5% of one core.
 chains of the first 3 return addresses found above the leaf. Use it to attribute hot system-DLL
 leaves (InterlockedIncrement, critical sections, the idle wait) that the inclusive view can't. The
 first frame is exact for leaves that keep nothing on the stack; deeper frames can be stale stack junk.
-A system-DLL leaf also gets a **game frames** breakdown: the first 2 return addresses above it that
-lie in Oblivion.exe or OblivionReloaded.dll (`gGameChains`). The 3-deep chain stops inside the driver
-for deep leaves like the native-D3D9 driver wait; this names the engine call that led there. Same
+A system-DLL leaf also gets a **game frames** breakdown: the first 6 return addresses above it that
+lie in Oblivion.exe or OblivionReloaded.dll (`gGameChains`, up to 10 rows per leaf; 2 frames
+proved too few when the first one was stale). The 3-deep chain stops inside the driver for deep leaves like the native-D3D9 driver wait; this names the engine call that led there. Same
 heuristic caveat: a stale game address left in a driver frame can win a minority of samples, or
 even the majority. After the native-D3D9 index lock was removed, the same wait's top game frame was
 junk (a return from a one-byte setter). A big wait under a single call site is not proof that the
