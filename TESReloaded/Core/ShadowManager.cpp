@@ -2064,28 +2064,31 @@ void ShadowManager::ClearCubeMapNodeLists() {
 
 ShadowManager::RefLightInfo ShadowManager::BuildRefLightInfo(TESObjectREFR* Ref) {
 	RefLightInfo Info;
+	Info.Ref = Ref;
 	Info.Node = Ref->GetNode();
 	UInt8 TypeID = Ref->baseForm->formType;
 	Info.IsActorType = (TypeID >= TESForm::FormType::kFormType_NPC && TypeID <= TESForm::FormType::kFormType_LeveledCreature);
 	Info.BoundRadius = Info.Node->GetWorldBoundRadius();
-	if (Info.IsActorType) {
-		// Bound centre to whole units only: an idle NPC's breathing jitters it,
-		// and its root pose would rebake every cube every frame.
-		NiBound* B = Ref->niNode->GetWorldBound();
-		Info.PoseHash = MixHash(MixHash(MixHash(MixHash(0, (UInt64)(uintptr_t)Info.Node),
-			(UInt32)(SInt32)floorf(B->Center.x)), (UInt32)(SInt32)floorf(B->Center.y)), (UInt32)(SInt32)floorf(B->Center.z));
-	}
-	else {
-		Info.PoseHash = RefPoseHash(Info.Node);
-	}
+	Info.PoseHash = 0;
+	Info.Hashed = false;
 	Info.IsPlayer = (Ref->refID == Player->refID);
 	return Info;
+}
+
+// The ref's contribution to a cube's rebake checksum.
+static UInt64 RefLightPoseHash(const ShadowManager::RefLightInfo& Info) {
+	if (!Info.IsActorType) return RefPoseHash(Info.Node);
+	// Bound centre to whole units only: an idle NPC's breathing jitters it,
+	// and its root pose would rebake every cube every frame.
+	NiBound* B = Info.Ref->niNode->GetWorldBound();
+	return MixHash(MixHash(MixHash(MixHash(0, (UInt64)(uintptr_t)Info.Node),
+		(UInt32)(SInt32)floorf(B->Center.x)), (UInt32)(SInt32)floorf(B->Center.y)), (UInt32)(SInt32)floorf(B->Center.z));
 }
 
 // Tests one ref against one slot's light and files it under statics or actors. Actors (and any
 // carried light) get a wider radius because they move: a caster just outside the strict radius
 // can step inside it before the next rebake.
-void ShadowManager::ClassifyRefForPointSlot(const RefLightInfo& Info, int Slot, UInt64* Checksums) {
+void ShadowManager::ClassifyRefForPointSlot(RefLightInfo& Info, int Slot, UInt64* Checksums) {
 	NiPointLight* Light = PointSlots[Slot].Light;
 	NiPoint3* LightPos = &Light->m_worldTransform.pos;
 	float FarPlane = TheShaderManager->ShaderConst.ShadowMap.ShadowCastLightPosition[Slot].w;
@@ -2100,6 +2103,7 @@ void ShadowManager::ClassifyRefForPointSlot(const RefLightInfo& Info, int Slot, 
 	else {
 		CubeMapRefMap[Slot].emplace_back(Info.Node);
 	}
+	if (!Info.Hashed) { Info.PoseHash = RefLightPoseHash(Info); Info.Hashed = true; }
 	Checksums[Slot] += Info.PoseHash;
 }
 

@@ -30,13 +30,16 @@ public:
 	};
 
 	// Per-ref data needed when classifying a ref against each point light. Computed once per
-	// ref (independent of the light) so the per-light loop only does the distance test.
+	// ref (independent of the light) so the per-light loop only does the distance test. The pose
+	// hash is filled on the first light the ref reaches: most loaded refs reach none.
 	struct RefLightInfo {
+		TESObjectREFR*	Ref;
 		NiNode*	Node;
 		UInt64	PoseHash;	// RefPoseHash for statics; floored bound centre for actors
 		float	BoundRadius;
 		bool	IsActorType;
 		bool	IsPlayer;
+		bool	Hashed;		// PoseHash is valid
 	};
 
 	void					CreateD3DMatrix(D3DMATRIX* Matrix, NiTransform* Transform);
@@ -74,7 +77,7 @@ public:
 	void					PublishPointLightConstants();
 	void					BuildPointGeoLists(UInt64* Checksums);
 	void					ClassifyCellForPointSlots(TESObjectCELL* Cell, UInt64* Checksums);
-	void					ClassifyRefForPointSlot(const RefLightInfo& Info, int Slot, UInt64* Checksums);
+	void					ClassifyRefForPointSlot(RefLightInfo& Info, int Slot, UInt64* Checksums);
 	bool					PointSlotNeedsRebake(int Slot, UInt64 Checksum);
 	void					BakePointCube(int Slot);
 	void					RenderShadowMaps();
