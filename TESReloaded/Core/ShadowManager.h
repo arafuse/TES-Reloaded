@@ -62,7 +62,9 @@ public:
 	void					CollectCellGeo(TESObjectCELL* Cell, SettingsShadowStruct::FormsStruct* Forms, SettingsShadowStruct::ExcludedFormsList* ExcludedForms, bool HasWater, ShadowMapTypeEnum ShadowMapType);
 	void					CollectCubeMapGeometry(NiAVObject* Object, std::vector<NiGeometry*>& Out);
 	void					RenderTerrain(NiAVObject* Object, ShadowMapTypeEnum ShadowMapType, D3DXVECTOR4* ShadowData);
-	void					Render(NiGeometry* Geo, D3DXVECTOR4* ShadowData, const D3DMATRIX* PrecomputedWorld = NULL);
+	/// Prepared skips the buffer pack (and, for skinned geometry, the bone computation): only valid when
+	/// the same geometry was already drawn earlier in the same pass, with nothing changed since.
+	void					Render(NiGeometry* Geo, D3DXVECTOR4* ShadowData, const D3DMATRIX* PrecomputedWorld = NULL, bool Prepared = false);
 	// Draws the collected ShadowGeoPool into a map. Target defaults to the map's live surface. MinBlend
 	// draws over the target's existing contents, keeping the depth nearer the light, instead of clearing
 	// it and depth-testing.
@@ -93,7 +95,7 @@ public:
 	void					SetupSpeedTreeLeafShader(NiGeometry* Geo, D3DXVECTOR4* ShadowData);
 	void					SetupSpeedTreeBranchShader(NiGeometry* Geo, D3DXVECTOR4* ShadowData);
 	void					SetupAlphaTexture(NiGeometry* Geo, BSShaderProperty* LProp, D3DXVECTOR4* ShadowData);
-	void					RenderSkinnedGeo(NiGeometry* Geo, D3DXVECTOR4* ShadowData);
+	void					RenderSkinnedGeo(NiGeometry* Geo, D3DXVECTOR4* ShadowData, bool Prepared = false);
 	void					SetupShadowMapMatrices(ShadowMapTypeEnum ShadowMapType, SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors, D3DXVECTOR3* At, D3DXVECTOR4* ShadowLightDir);
 	/// Publishes the precipitation occlusion map's projection: top-down over At, sheared so each point
 	/// lands where precipitation passing through it falls (Shear = horizontal drift per unit of height).
@@ -325,17 +327,23 @@ public:
 		NiGeometry*						First;		// packs the shared buffer before the instanced draw
 		IDirect3DVertexDeclaration9*	Decl;
 		UInt32							Total;		// copies in the whole cube list
+		bool							Packed;		// shared buffer already packed during this bake
 		std::vector<int>				Visible;	// CubeMapGeoList indices drawn in this face
 	};
 	std::vector<CubeInstanceGroup> CubeGroupPool;
 	std::unordered_map<NiGeometryBufferData*, int> CubeGroupIndex;
 	int						CubeGroupCount;
 	std::vector<int>		CubeGeoGroup;
+	// Per CubeMapGeoList entry: already drawn in an earlier face of this bake, so its buffers are
+	// packed and its bones computed, and later faces only draw it.
+	std::vector<UInt8>		CubeGeoPrepared;
 	bool					CubeGeoInstanceable(NiGeometry* Geo);
 	void					BuildCubeInstanceGroups();
 	/// Draws one cube face: everything ungrouped (and groups with one visible copy) through Render(),
 	/// then each group with two or more visible copies in one instanced call.
 	void					DrawCubeFace(D3DXPLANE* Frustum, D3DXVECTOR4* BakeData, bool Instancing);
+	/// Draws one CubeMapGeoList entry, preparing its buffers only the first time this bake.
+	void					RenderCubeItem(size_t Index, D3DXVECTOR4* BakeData);
 
 	//MISC
 	D3DVIEWPORT9			ShadowCubeMapViewPort;
