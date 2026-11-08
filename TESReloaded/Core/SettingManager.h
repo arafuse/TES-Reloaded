@@ -355,6 +355,7 @@ struct SettingsShadowStruct {
 		bool				UseInstancing;
 		bool				StitchStrips;			// [Exteriors] StitchStrips: draw each multi-strip mesh in one call in every shadow pass
 		bool				SkinViewCull;			// [ExteriorsSkin] ViewCull: skip actors whose shadow cannot reach the view or the player
+		float				SkinMinRadius;			// [ExteriorsSkin] MinRadius: actor-overlay pieces with a smaller bound radius are not drawn
 		float				deferredNormBias;
 		float				deferredFarNormBias;
 		float				deferredConstBias;

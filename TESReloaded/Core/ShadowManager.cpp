@@ -135,6 +135,12 @@ namespace {
 		// Carried-light cube camera-side cull (CullCubeCastersToView):
 		Cnt_CubeCastersKept,    // cube list entries whose shadow can reach the view
 		Cnt_CubeCastersCulled,  // cube list entries dropped because it cannot
+		// Actor-overlay piece sizes, before the [ExteriorsSkin] MinRadius cut (cumulative):
+		Cnt_SkinRadius2,        // pieces with bound radius under 2 units
+		Cnt_SkinRadius4,        // ...under 4
+		Cnt_SkinRadius8,        // ...under 8
+		Cnt_SkinRadius16,       // ...under 16
+		Cnt_SkinSmallSkipped,   // pieces the MinRadius cut dropped
 		Cnt_COUNT
 	};
 	const char* const ShadowCounterNames[Cnt_COUNT] = {
@@ -146,7 +152,8 @@ namespace {
 		"Stitch:Draws", "Stitch:Strips", "Stitch:Builds", "Stitch:Fallbacks",
 		"Cube:InstDraws", "Cube:InstItems",
 		"Skin:RefsKept", "Skin:RefsCulled",
-		"Cube:CastersKept", "Cube:CastersCulled"
+		"Cube:CastersKept", "Cube:CastersCulled",
+		"Skin:Radius<2", "Skin:Radius<4", "Skin:Radius<8", "Skin:Radius<16", "Skin:SmallSkipped"
 	};
 	// When true, draw/Render counters attribute to the cube/point-light path (set around its submission).
 	bool gCubeBucket = false;
@@ -1422,6 +1429,13 @@ void ShadowManager::CollectExteriorGeo(NiAVObject* Object, bool HasWater, Shadow
 		// SpeedTree leaves draw via SetupSpeedTreeLeafShader and are never instanced.
 	}
 
+	// Overlay pieces under a texel or two (eyes, teeth, rings) cast nothing the apply can resolve.
+	if (ShadowMapType == MapSkin) {
+		float R = Bound->Radius;
+		static const float kSizeBuckets[4] = { 2.0f, 4.0f, 8.0f, 16.0f };
+		for (int b = 0; b < 4; b++) if (R < kSizeBuckets[b]) ProfileCount((ShadowCounter)(Cnt_SkinRadius2 + b));
+		if (R < TheSettingManager->SettingsShadows.Exteriors.SkinMinRadius) { ProfileCount(Cnt_SkinSmallSkipped); return; }
+	}
 	if (ShadowGeoCount == (int)ShadowGeoPool.size()) ShadowGeoPool.emplace_back();
 	ShadowGeoItem& Item = ShadowGeoPool[ShadowGeoCount++];
 	Item.Geo = Geo;

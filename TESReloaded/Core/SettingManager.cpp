@@ -1309,6 +1309,8 @@ void SettingManager::LoadSettings() {
 	SettingsShadows.Exteriors.UseInstancing = GetPrivateProfileIntA("Exteriors", "UseInstancing", 1, Filename);
 	SettingsShadows.Exteriors.StitchStrips = GetPrivateProfileIntA("Exteriors", "StitchStrips", 1, Filename);
 	SettingsShadows.Exteriors.SkinViewCull = GetPrivateProfileIntA("ExteriorsSkin", "ViewCull", 1, Filename);
+	GetPrivateProfileStringA("ExteriorsSkin", "MinRadius", "4.0", value, SettingStringBuffer, Filename);
+	SettingsShadows.Exteriors.SkinMinRadius = atof(value);
 	SettingsShadows.Exteriors.CacheStaticShadows = GetPrivateProfileIntA("Exteriors", "CacheStaticShadows", 1, Filename);
 	SettingsShadows.Exteriors.RebakeMovedStatics = GetPrivateProfileIntA("Exteriors", "RebakeMovedStatics", 1, Filename);
 	SettingsShadows.Exteriors.DynamicTrees = GetPrivateProfileIntA("Exteriors", "DynamicTrees", 0, Filename);
