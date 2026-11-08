@@ -54,6 +54,12 @@ CPU time: DXVK's per-call device lock, see [[game-runs-on-dxvk]].
   `DrawGeoArrays` makes one draw per strip, about 43 per actor item and 16 per cube geometry.
   `RenderSkinnedGeo` adds one `SetVertexShaderConstantF` per bone and two full `SetCT` calls per
   partition. Every one of those calls also pays DXVK's device lock.
+  **Fixed in b6d8ac8** (`[Exteriors] StitchStrips`, plus one bone upload per partition):
+  - draws: 33,306 → 936/frame, with 0 fallbacks (every multi-strip buffer has a CPU `IndexArray`);
+  - shadow CPU: 3.00 → 1.79 ms;
+  - shadow GPU: 2.98 → 1.89 ms (the tiny draws cost GPU time too).
+  What remains is `Pass:Skin` at 1.05 ms (540 pieces) and the player's torch cube rebaked every frame
+  (`CanCarry`): `Point:Bake` 0.59 ms CPU, `GPU:ShadowPoint` 0.87 ms.
 - **Engine CPU vertex packing, ~1.1 ms:** a loop in `sub_76E610` (+0x192..+0x1D0) under
   `sub_76F590` ← `sub_76FE20`, plus `sub_776D80`, which memcpys into a locked VB, unlocks it (vtable
   `+0x30`) and leaves a critical section. Deeper callers are unreliable, so it is unknown whether our
