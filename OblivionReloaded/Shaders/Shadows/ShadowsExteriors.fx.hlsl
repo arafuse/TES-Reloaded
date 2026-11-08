@@ -103,27 +103,33 @@ float reliefDepth(in float2 coord, in float depth)
 	return (abs(pom.x - depth) < depth * 0.001f) ? pom.y : depth;
 }
 
-float3 getPosition(in float2 tex, in float depth)
-{
-	return (TESR_CameraPosition.xyz + toWorld(tex) * depth);
-}
+// toWorld is affine in the UV, so the view ray one texel over is this pixel's ray plus a constant
+// step. Preshaders: evaluated once per draw, not per pixel.
+static const float3 rayStepX = (2.0f * TESR_ReciprocalResolution.x / TESR_ProjectionTransform[0][0]) *
+	float3(TESR_ViewTransform[0][0], TESR_ViewTransform[1][0], TESR_ViewTransform[2][0]);
+static const float3 rayStepY = (-2.0f * TESR_ReciprocalResolution.y / TESR_ProjectionTransform[1][1]) *
+	float3(TESR_ViewTransform[0][1], TESR_ViewTransform[1][1], TESR_ViewTransform[2][1]);
 
 // Screen-space normal reconstruction: the world-space cross of the depth derivatives. The SIGN is
 // deliberately left unresolved -- the cross product's orientation depends on tap winding, and the two
 // bias paths disambiguate it differently (the adaptive path flips toward the camera, the legacy path
 // mirrors z and encodes). Both derive from this single result so the depth taps happen only once.
+// Positions are camera-relative: only their differences matter, and absolute coordinates would spend
+// float precision on the worldspace offset.
 float3 getRawNormal(float2 UVCoord)
 {
-	float depth = readDepth(UVCoord);
-	float3 pos = getPosition(UVCoord, depth);
+	float2 texelX = float2(TESR_ReciprocalResolution.x, 0.0f);
+	float2 texelY = float2(0.0f, TESR_ReciprocalResolution.y);
+	float3 ray = toWorld(UVCoord);
+	float3 pos = ray * readDepth(UVCoord);
 
-	float3 left = pos - getPosition(UVCoord + TESR_ReciprocalResolution.xy * float2(-1, 0), readDepth(UVCoord + TESR_ReciprocalResolution.xy * float2(-1, 0)));
-	float3 right = getPosition(UVCoord + TESR_ReciprocalResolution.xy * float2(1, 0), readDepth(UVCoord + TESR_ReciprocalResolution.xy * float2(1, 0))) - pos;
-	float3 up = pos - getPosition(UVCoord + TESR_ReciprocalResolution.xy * float2(0, -1), readDepth(UVCoord + TESR_ReciprocalResolution.xy * float2(0, -1)));
-	float3 down = getPosition(UVCoord + TESR_ReciprocalResolution.xy * float2(0, 1), readDepth(UVCoord + TESR_ReciprocalResolution.xy * float2(0, 1))) - pos;
+	float3 left = pos - (ray - rayStepX) * readDepth(UVCoord - texelX);
+	float3 right = (ray + rayStepX) * readDepth(UVCoord + texelX) - pos;
+	float3 up = pos - (ray - rayStepY) * readDepth(UVCoord - texelY);
+	float3 down = (ray + rayStepY) * readDepth(UVCoord + texelY) - pos;
 	// Shorter derivative wins: at a silhouette the far side spans a depth jump.
-	float3 dx = length(left) < length(right) ? left : right;
-	float3 dy = length(up) < length(down) ? up : down;
+	float3 dx = dot(left, left) < dot(right, right) ? left : right;
+	float3 dy = dot(up, up) < dot(down, down) ? up : down;
 
 	return normalize(cross(dx, dy));
 }
