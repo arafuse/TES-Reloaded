@@ -193,6 +193,26 @@ public:
 	int						TreeInstanceGroupCount;
 	bool					AddTreeInstance(int ItemIndex);
 	void					FlushTreeInstanceGroups(D3DXVECTOR4* ShadowData);
+	// A multi-strip mesh's strips joined into one by degenerate triangles, so a shadow pass draws it
+	// in one call instead of one per strip. Every shadow pass draws with culling off, so the joins'
+	// winding flips are harmless. IB = NULL marks a mesh that cannot be stitched.
+	struct StitchedStrip {
+		IDirect3DIndexBuffer9*	IB;
+		IDirect3DIndexBuffer9*	SourceIB;		// SourceIB, SourceIndices and SourceKey catch a freed
+		const UInt16*			SourceIndices;	// mesh whose buffer address is reused by another
+		UInt32					SourceKey;
+		UInt32					PrimCount;
+		UInt32					LastUsedFrame;
+	};
+	std::unordered_map<NiGeometryBufferData*, StitchedStrip> StitchedStrips;
+	std::vector<UInt16>		StitchScratch;
+	UInt32					StitchFrame;
+	int						StitchBuildsLeft;	// builds allowed this frame, so a new area cannot hitch
+	/// The stitched strip for GeoData's strips, building it from the buffer's CPU index copy on
+	/// first use. NULL means draw strip by strip: unstitchable, or this frame's build budget is spent.
+	const StitchedStrip*	GetStitchedStrip(NiGeometryBufferData* GeoData, UINT VertCount);
+	/// Once per frame: resets the build budget and periodically frees strips no pass has drawn lately.
+	void					AdvanceStitchedStrips();
 	D3DVIEWPORT9			ShadowMapViewPort[4];
 	D3DXPLANE				ShadowMapFrustum[4][6];
 	NiVector4				BillboardRight;

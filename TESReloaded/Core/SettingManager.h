@@ -353,6 +353,7 @@ struct SettingsShadowStruct {
 		bool				IsPlayerInSunShadow;	// [Exteriors] IsPlayerInSunShadow: run the player sun shadow probe for the OBSE command
 		bool				UseIntervalUpdate;
 		bool				UseInstancing;
+		bool				StitchStrips;			// [Exteriors] StitchStrips: draw each multi-strip mesh in one call in every shadow pass
 		float				deferredNormBias;
 		float				deferredFarNormBias;
 		float				deferredConstBias;

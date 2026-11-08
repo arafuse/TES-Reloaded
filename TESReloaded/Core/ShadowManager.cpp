@@ -114,6 +114,11 @@ namespace {
 		Cnt_PointSlotsActive,   // slots holding a light after assignment
 		Cnt_PointRebakes,       // slot cubes (re)baked this frame (6 faces each)
 		Cnt_MovedStaticRedraws, // cached Near/Far maps redrawn in place because a static moved
+		// Strip stitching (DrawGeoArrays):
+		Cnt_StitchedDraws,      // multi-strip meshes drawn in one call
+		Cnt_StitchedStrips,     // strips those draws covered (the per-strip calls they replaced)
+		Cnt_StitchBuilds,       // stitched index buffers built this frame
+		Cnt_StitchFallbacks,    // multi-strip meshes still drawn strip by strip (unstitchable or over budget)
 		Cnt_COUNT
 	};
 	const char* const ShadowCounterNames[Cnt_COUNT] = {
@@ -121,7 +126,8 @@ namespace {
 		"InstancedDraws", "CubeLightsDrawn", "CubeLightsCached",
 		"Dir:TerrainDraws", "Dir:ItemsInstanced", "Dir:ItemsImmNonInst", "Dir:ItemsImmAlpha",
 		"Dir:Groups", "Dir:InstancedItems", "Dir:FallbackItems",
-		"Point:Candidates", "Point:SlotsActive", "Point:Rebakes", "Dir:MovedRedraws"
+		"Point:Candidates", "Point:SlotsActive", "Point:Rebakes", "Dir:MovedRedraws",
+		"Stitch:Draws", "Stitch:Strips", "Stitch:Builds", "Stitch:Fallbacks"
 	};
 	// When true, draw/Render counters attribute to the cube/point-light path (set around its submission).
 	bool gCubeBucket = false;
@@ -394,6 +400,8 @@ ShadowManager::ShadowManager() {
 	ShadowMapInstancedVertexShader = NULL;
 	ShadowMapTreeInstancedVertexShader = NULL;
 	TreeInstanceGroupCount = 0;
+	StitchFrame = 0;
+	StitchBuildsLeft = 0;
 	InstanceVB = NULL;
 	InstanceVBCapacity = 0;
 	InstanceGroupCount = 0;
@@ -2294,6 +2302,7 @@ void ShadowManager::RenderShadowMaps() {
 	Global->RenderShadowMaps(); //Window reflections seem to be rendered here
 
 	FrameProfiler::Scope ProfileScope(FrameProfiler::Buck_ShadowMaps);
+	AdvanceStitchedStrips();
 
 	IDirect3DDevice9* Device = TheRenderManager->device;
 	IDirect3DSurface9* DepthSurface = NULL;
@@ -2350,18 +2359,122 @@ void ShadowManager::SetupGeoStreams(NiGeometryBufferData* GeoData) {
 		RenderState->SetVertexDeclaration(GeoData->VertexDeclaration, false);
 }
 
+static inline void CountShadowDraw() {
+	ProfileCount(Cnt_DrawCalls);
+	if (gCubeBucket) ProfileCount(Cnt_DrawCallsCube);
+	if (gCubeActorBucket) ProfileCount(Cnt_DrawCallsCubeActor);
+	if (gTerrainBucket) ProfileCount(Cnt_DirTerrainDraws);
+}
+
 void ShadowManager::DrawGeoArrays(NiGeometryBufferData* GeoData, D3DPRIMITIVETYPE PrimitiveType, UINT VertCount) {
 	IDirect3DDevice9* Device = TheRenderManager->device;
+	if (GeoData->NumArrays > 1 && PrimitiveType == D3DPT_TRIANGLESTRIP && TheSettingManager->SettingsShadows.Exteriors.StitchStrips) {
+		if (const StitchedStrip* Stitched = GetStitchedStrip(GeoData, VertCount)) {
+			Device->SetIndices(Stitched->IB);
+			Device->DrawIndexedPrimitive(D3DPT_TRIANGLESTRIP, GeoData->BaseVertexIndex, 0, VertCount, 0, Stitched->PrimCount);
+			CountShadowDraw();
+			ProfileCount(Cnt_StitchedDraws);
+			ProfileCount(Cnt_StitchedStrips, GeoData->NumArrays);
+			return;
+		}
+		ProfileCount(Cnt_StitchFallbacks);
+	}
 	int StartIndex = 0;
 	for (UInt32 i = 0; i < GeoData->NumArrays; i++) {
 		int PrimitiveCount = GeoData->ArrayLengths ? (int)GeoData->ArrayLengths[i] - 2 : GeoData->TriCount;
 		Device->DrawIndexedPrimitive(PrimitiveType, GeoData->BaseVertexIndex, 0, VertCount, StartIndex, PrimitiveCount);
 		StartIndex += PrimitiveCount + 2;
-		ProfileCount(Cnt_DrawCalls);
-		if (gCubeBucket) ProfileCount(Cnt_DrawCallsCube);
-		if (gCubeActorBucket) ProfileCount(Cnt_DrawCallsCubeActor);
-		if (gTerrainBucket) ProfileCount(Cnt_DirTerrainDraws);
+		CountShadowDraw();
 	}
+}
+
+namespace {
+	const int    StitchBuildsPerFrame = 64;
+	const UInt32 StitchEvictFrames    = 600;
+	const UInt32 StitchSweepInterval  = 256;
+}
+
+// Identity of a mesh's index data, cheap enough to check on every draw: strip count, total length
+// and a handful of sampled indices.
+static UInt32 StitchSourceKey(const NiGeometryBufferData* GeoData, UInt32 Total) {
+	const UInt16* Indices = GeoData->IndexArray;
+	UInt32 Hash = (GeoData->NumArrays * 2654435761u) ^ Total;
+	for (UInt32 k = 0; k < 8; k++) Hash = (Hash ^ Indices[(UInt64)Total * k / 8]) * 16777619u;
+	return Hash ^ Indices[Total - 1];
+}
+
+void ShadowManager::AdvanceStitchedStrips() {
+	StitchFrame++;
+	StitchBuildsLeft = StitchBuildsPerFrame;
+	if (StitchFrame % StitchSweepInterval) return;
+	for (auto it = StitchedStrips.begin(); it != StitchedStrips.end();) {
+		if (StitchFrame - it->second.LastUsedFrame > StitchEvictFrames) {
+			if (it->second.IB) it->second.IB->Release();
+			it = StitchedStrips.erase(it);
+		}
+		else ++it;
+	}
+}
+
+const ShadowManager::StitchedStrip* ShadowManager::GetStitchedStrip(NiGeometryBufferData* GeoData, UINT VertCount) {
+	const UInt16* Lengths = GeoData->ArrayLengths;
+	const UInt16* Indices = GeoData->IndexArray;
+	if (!Lengths || !Indices) return NULL;
+	UInt32 Total = 0;
+	for (UInt32 i = 0; i < GeoData->NumArrays; i++) Total += Lengths[i];
+	if (Total < 3) return NULL;
+	UInt32 Key = StitchSourceKey(GeoData, Total);
+
+	auto it = StitchedStrips.find(GeoData);
+	if (it != StitchedStrips.end()) {
+		StitchedStrip& Cached = it->second;
+		if (Cached.SourceIB == GeoData->IB && Cached.SourceIndices == Indices && Cached.SourceKey == Key) {
+			Cached.LastUsedFrame = StitchFrame;
+			return Cached.IB ? &Cached : NULL;
+		}
+		if (Cached.IB) Cached.IB->Release();
+		StitchedStrips.erase(it);
+	}
+	if (StitchBuildsLeft <= 0) return NULL;
+	StitchBuildsLeft--;
+	ProfileCount(Cnt_StitchBuilds);
+
+	// Each join repeats the previous strip's last index and the next strip's first, giving four
+	// degenerate triangles the GPU discards. An out-of-range index means the CPU copy does not match
+	// what the per-strip draws read, so such a mesh is never stitched.
+	StitchedStrip Built = { NULL, GeoData->IB, Indices, Key, 0, StitchFrame };
+	std::vector<UInt16>& Out = StitchScratch;
+	Out.clear();
+	bool Valid = true;
+	UInt32 Offset = 0;
+	for (UInt32 i = 0; i < GeoData->NumArrays && Valid; i++) {
+		const UInt16* Strip = Indices + Offset;
+		UInt32 Length = Lengths[i];
+		Offset += Length;
+		if (Length < 3) continue;
+		if (!Out.empty()) { Out.push_back(Out.back()); Out.push_back(Strip[0]); }
+		for (UInt32 k = 0; k < Length; k++) {
+			if (Strip[k] >= VertCount) { Valid = false; break; }
+			Out.push_back(Strip[k]);
+		}
+	}
+	if (Valid && Out.size() >= 3) {
+		IDirect3DIndexBuffer9* IB = NULL;
+		UINT Bytes = (UINT)(Out.size() * sizeof(UInt16));
+		if (SUCCEEDED(TheRenderManager->device->CreateIndexBuffer(Bytes, D3DUSAGE_WRITEONLY, D3DFMT_INDEX16, D3DPOOL_MANAGED, &IB, NULL))) {
+			void* Data = NULL;
+			if (SUCCEEDED(IB->Lock(0, Bytes, &Data, 0))) {
+				memcpy(Data, Out.data(), Bytes);
+				IB->Unlock();
+				Built.IB = IB;
+				Built.PrimCount = (UInt32)Out.size() - 2;
+			}
+			else IB->Release();
+		}
+	}
+	StitchedStrip& Stored = StitchedStrips[GeoData];
+	Stored = Built;
+	return Stored.IB ? &Stored : NULL;
 }
 
 // Look-at target and up vector for each cube face. The sampling convention in the apply shader
@@ -2435,6 +2548,29 @@ void ShadowManager::SetupAlphaTexture(NiGeometry* Geo, BSShaderProperty* LProp, 
 	}
 }
 
+// Uploads a skin partition's bone palette from c9, 3 registers per bone, in one call: the partition
+// picks its bones out of the skin's full palette, so they are gathered first. A partition too big for
+// the gather buffer falls back to one call per bone.
+static void UploadPartitionBones(IDirect3DDevice9* Device, NiSkinInstance* SkinInstance, NiSkinPartition::Partition* Partition) {
+	const int MaxGathered = 64;
+	const float* Palette = (const float*)SkinInstance->BoneMatrixes;
+	int Bones = Partition->Bones;
+	if (Bones <= 0) return;
+	if (Bones > MaxGathered) {
+		for (int i = 0; i < Bones; i++) {
+			UInt16 Index = Partition->pBones ? Partition->pBones[i] : (UInt16)i;
+			Device->SetVertexShaderConstantF(9 + i * 3, Palette + Index * 12, 3);
+		}
+		return;
+	}
+	float Gathered[MaxGathered * 12];
+	for (int i = 0; i < Bones; i++) {
+		UInt16 Index = Partition->pBones ? Partition->pBones[i] : (UInt16)i;
+		memcpy(Gathered + i * 12, Palette + Index * 12, 12 * sizeof(float));
+	}
+	Device->SetVertexShaderConstantF(9, Gathered, Bones * 3);
+}
+
 void ShadowManager::RenderSkinnedGeo(NiGeometry* Geo, D3DXVECTOR4* ShadowData) {
 	IDirect3DDevice9* Device = TheRenderManager->device;
 	NiGeometryData* ModelData = Geo->geomData;
@@ -2446,13 +2582,8 @@ void ShadowManager::RenderSkinnedGeo(NiGeometry* Geo, D3DXVECTOR4* ShadowData) {
 	TheRenderManager->CalculateBoneMatrixes(SkinInstance, &Geo->m_worldTransform);
 	if (SkinInstance->SkinToWorldWorldToSkin) memcpy(&TheShaderManager->ShaderConst.ShadowMap.ShadowWorld, SkinInstance->SkinToWorldWorldToSkin, 0x40);
 	for (UInt32 p = 0; p < SkinPartition->PartitionsCount; p++) {
-		int StartRegister = 9;
 		NiSkinPartition::Partition* Partition = &SkinPartition->Partitions[p];
-		for (int i = 0; i < Partition->Bones; i++) {
-			UInt16 NewIndex = (Partition->pBones == NULL) ? i : Partition->pBones[i];
-			Device->SetVertexShaderConstantF(StartRegister, ((float*)SkinInstance->BoneMatrixes) + (NewIndex * 3 * 4), 3);
-			StartRegister += 3;
-		}
+		UploadPartitionBones(Device, SkinInstance, Partition);
 		NiGeometryBufferData* GeoData = Partition->BuffData;
 		TheRenderManager->PackSkinnedGeometryBuffer(GeoData, ModelData, SkinInstance, Partition, ShaderDeclaration);
 		SetupGeoStreams(GeoData);
