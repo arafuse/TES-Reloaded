@@ -1,6 +1,6 @@
 ---
 name: native-d3d9-skinned-index-stall
-description: "DISPROVEN AS THE CAUSE - on native D3D9 the ~5.6 ms/frame NVIDIA driver wait sat under PackSkinnedGeometryBuffer's per-frame MANAGED index re-upload, but removing the upload only moved the wait (FPS unchanged); it is a throttle, and the native-vs-DXVK gap is elsewhere"
+description: "RESOLVED - native D3D9 is GPU-bound (PresentMon GPU busy 12.63 of 12.67 ms); the ~5.6 ms/frame NVIDIA driver wait is the CPU blocked in Present, and both of its sampler game frames (PackSkinnedGeometryBuffer, then RenderTriGeometries) were stale; the native-vs-DXVK gap is GPU execution time"
 metadata:
   node_type: memory
   type: project
@@ -15,16 +15,17 @@ put 96.7% of the 5.6 ms/frame driver wait (`nvd3dum+0x13BF94` → `WaitForSingle
 
 **It was where the wait happened, not why.** The ProtoPlugin repo's `SkinIndexUpload` module skipped
 the re-upload (9708 uploads skipped, 1 kept). Native still ran 76-78 FPS against 92-93 on DXVK, and
-the same leaf still cost 5.63 ms/frame, now under a different call. A wait that keeps its size and
-moves when its call site goes away is a throttle: the CPU blocks at whichever call first needs the
-GPU to catch up. Full write-up: ProtoPlugin `memory/oblivion-skinned-index-reupload-stall.md`.
+the same leaf still cost 5.63 ms/frame, now under `sub_7672F0+0x21E` ← `RenderTriGeometries+0xFC`.
+That frame is stale too: 0x76750E returns from `NiDX9RenderState` vtable `+0xFC` = 0x77B330, which only
+stores one byte. The module was dropped before merge.
 
-Still-open suspects for the gap:
-- the GPU is slower per frame on native D3D9 (GPU 13.06 ms vs ~11 on DXVK; main pass 7.05 vs ~5.9);
-- a D3D9-only render-ahead limit, e.g. NVIDIA Low Latency Mode, which applies to DX9-11, not Vulkan;
-- driver-profile settings that apply only to D3D (transparency AA, forced AO or AF).
-Special K is in the process but its Oblivion profile has `[API.Hook] d3d9=false`, so it does not hook
-native D3D9; its limiter is 222 FPS.
+**PresentMon settled it (same session, gameplay medians):** 12.67 ms between presents, GPU busy 12.63,
+GPU wait 0.15, CPU busy 6.83, MsInPresentAPI 5.82. The sampler's inclusive list has
+`NiDX9Renderer::PresentScene` at 5.66 ms/frame. The wait was always the CPU blocked in Present on a
+GPU-bound frame. The gap to DXVK (~10.8 ms/frame) is GPU execution time for the same frame.
+Present mode was "Composed: Copy with GPU GDI" (blt model through DWM). The user ruled out Special K
+and NVIDIA latency settings (Low Latency Mode). Full write-up: ProtoPlugin
+`memory/oblivion-skinned-index-reupload-stall.md`.
 
 Engine facts from the disassembly, still true:
 - `sub_7781F0` (on renderer `+0x8B4`) is the INDEX buffer helper: it reuses the existing IB if its desc
@@ -32,9 +33,12 @@ Engine facts from the disassembly, still true:
   `CreateIndexBuffer`, then `Lock(0, size, &p, 0)` + memcpy of the partition's triangle list.
 - `PackSkinnedGeometryBuffer` (0x763130) sets the dirty mask to 0xFFF for volatile data or arg6 (force)
   at 0x763241, so it re-uploads identical indices every frame. Its main-render caller `sub_77A310`
-  passes force = 0.
+  passes force = 0. Skipping it is safe if the index count, triangle count, strip count and triangle
+  list pointer all match the stored ones (`+0x28/+0x3C/+0x44/+0x4C`); it saves nothing measurable.
 - The vertex side (`sub_7774C0` on `+0x8B0`) does not stall.
 
-**How to apply:** do not chase per-call driver waits on native D3D9 until GPU busy time is known;
-fix the wait site and the wait just moves. Next step is a same-session `ProfileFrame = 2` A/B (native
-vs DXVK) and a look at the NVIDIA profile. See [[game-runs-on-dxvk]], [[gpu-frame-breakdown]].
+**How to apply:** for native-D3D9 FPS, find which pass is slower on the GPU: a same-session
+`ProfileFrame = 2` A/B (native vs DXVK) or OR effect toggles. Nothing CPU-side in the engine will
+close it. Still-open GPU suspects: driver-profile settings that apply only to D3D (transparency AA,
+forced AO or AF), and the blt present model. See [[game-runs-on-dxvk]], [[gpu-frame-breakdown]],
+[[profiling-method-rules]].

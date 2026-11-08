@@ -23,7 +23,9 @@ What it changes (checked 2026-11-07 with the sampler's CALLERS section, see [[sa
   then `lock cmpxchg [owner]`, then spin with `pause` at 1999 iterations. Samples land on the `jne`
   after the cmpxchg, so the lock is uncontended but expensive: 0.29 ms/frame in the forest, 1.22
   ms/frame in market combat (~33k shadow draws). Cost scales with API call count, ours included
-  (`ShaderRecord::SetCT`, `DrawGeoArrays`, per-bone constants). Fewer calls is the only lever.
+  (`ShaderRecord::SetCT`, `DrawGeoArrays`, per-bone constants). Fewer calls is the only lever:
+  dropping `D3DCREATE_MULTITHREADED` is not an option, because the loader thread creates textures
+  ([[dxvk-combat-cpu-headroom]]).
 - The readback stall in [[d3d9-gpu-readback-stall]] is a DXVK sync. `Mid:ProbeRead`'s occasional
   ~3 ms worst frame is probably the same sync, even on the sysmem path.
 - `floatEmulation = Strict` is DXVK's most expensive float mode. Untested GPU lever: A/B it against

@@ -63,7 +63,8 @@ CPU time: DXVK's per-call device lock, see [[game-runs-on-dxvk]].
 - **Actor overlay split (1f0cc02 timers, 2026-11-08, 620 items):** `[ExteriorsSkin] Enabled = 0` saves
   1.47 ms CPU and 1.10 ms GPU (`GPU:ActorOverlay`). Per skinned partition: Pack 1.0 µs, Bones 0.3,
   Setup 0.28, Draw 0.2. `Rigid:Pack` is the biggest timer (0.95 ms/frame): ~0.6 µs for a clean static,
-  ~4 µs for actor rigid pieces (likely morphing FaceGen heads, unverified).
+  ~4 µs for actor rigid pieces. Those are volatile morph geometry (goblin heads 69%), not FaceGen;
+  see [[dxvk-combat-cpu-headroom]].
   **Fixed in 3e5d5f8** (`[ExteriorsSkin] ViewCull`): a caster draws only if its bound, swept 2×radius
   away from the sun, crosses the view's near/left/right/bottom planes or the player's keep sphere
   (the sun-shadow probe). Market combat: 130 of 190 refs culled, ActorItems 620 → 202,
@@ -88,7 +89,9 @@ CPU time: DXVK's per-call device lock, see [[game-runs-on-dxvk]].
   VB, unlocks it (vtable `+0x30`) and leaves a critical section. It did NOT drop with actor shadows
   off. Attributed callers: `NiDX9Renderer::PackGeometryBuffers+0x28F` ~45%,
   `PackSkinnedGeometryBuffer` ~2%; the rest are stack-residue chains. Shadow packs of dirty
-  geometry most likely just come first and spare the main pass its pack.
+  geometry most likely just come first and spare the main pass its pack. Measured directly later:
+  `PackGeometryBuffers` totals ~0.79 ms/frame in combat, only ~0.41 ms of it avoidable
+  ([[dxvk-combat-cpu-headroom]]).
 
 **How to apply:** optimize per-actor physics stepping and our shadow overlay culling, not AI.
 Havok is statically linked, so the engine-side lever is hooking the per-actor character-proxy step to
