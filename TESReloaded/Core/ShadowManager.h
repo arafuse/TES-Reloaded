@@ -274,6 +274,7 @@ public:
 		D3DXVECTOR3		BakedLightPos;	// world-space light position at last bake
 		UInt64			Checksum;		// sum of in-radius refs' RefLightInfo::PoseHash at last bake
 		bool			Valid;			// false => cube must be (re)baked
+		bool			ViewCulled;		// last bake left out casters the camera could not see: valid for that frame only
 		// --- Fade ([Point] FadeTime) ---
 		// Weight the published luminance is scaled by, 0..1. Ramps to 1 while the slot holds a light
 		// and to 0 once it loses one; the shader's darkness term is proportional to luminance, so this
@@ -349,6 +350,9 @@ public:
 	void					DrawCubeFace(D3DXPLANE* Frustum, D3DXVECTOR4* BakeData, bool Instancing);
 	/// Draws one CubeMapGeoList entry, preparing its buffers only the first time this bake.
 	void					RenderCubeItem(size_t Index, D3DXVECTOR4* BakeData);
+	/// Drops CubeMapGeoList entries whose shadow, cast outward from the camera-relative light out to
+	/// FarPlane, cannot reach the view. Returns whether anything was dropped.
+	bool					CullCubeCastersToView(const D3DXVECTOR3& LightPos, float FarPlane);
 
 	//MISC
 	D3DVIEWPORT9			ShadowCubeMapViewPort;

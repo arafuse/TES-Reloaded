@@ -132,6 +132,9 @@ namespace {
 		// Actor overlay camera-side cull (CollectCellGeo):
 		Cnt_OverlayRefsKept,    // overlay refs whose shadow can reach the view or the player
 		Cnt_OverlayRefsCulled,  // overlay refs dropped because it cannot
+		// Carried-light cube camera-side cull (CullCubeCastersToView):
+		Cnt_CubeCastersKept,    // cube list entries whose shadow can reach the view
+		Cnt_CubeCastersCulled,  // cube list entries dropped because it cannot
 		Cnt_COUNT
 	};
 	const char* const ShadowCounterNames[Cnt_COUNT] = {
@@ -142,7 +145,8 @@ namespace {
 		"Point:Candidates", "Point:SlotsActive", "Point:Rebakes", "Dir:MovedRedraws",
 		"Stitch:Draws", "Stitch:Strips", "Stitch:Builds", "Stitch:Fallbacks",
 		"Cube:InstDraws", "Cube:InstItems",
-		"Skin:RefsKept", "Skin:RefsCulled"
+		"Skin:RefsKept", "Skin:RefsCulled",
+		"Cube:CastersKept", "Cube:CastersCulled"
 	};
 	// When true, draw/Render counters attribute to the cube/point-light path (set around its submission).
 	bool gCubeBucket = false;
@@ -476,6 +480,7 @@ ShadowManager::ShadowManager() {
 		PointSlots[i].BakedLightPos = D3DXVECTOR3(0.0f, 0.0f, 0.0f);
 		PointSlots[i].Checksum = 0;
 		PointSlots[i].Valid = false;
+		PointSlots[i].ViewCulled = false;
 		PointSlots[i].Intensity = 0.0f;
 		PointSlots[i].LastFarPlane = 0.0f;
 		PointSlots[i].LastLuminance = 0.0f;
@@ -1066,12 +1071,11 @@ void ShadowManager::RenderActorOverlay(SettingsShadowStruct::ExteriorsStruct* S,
 // player (the sun-shadow probe). A caster's shadow leaves it along the sun ray, so the region it can
 // darken is its bound swept away from the sun across the map. Camera-relative planes through the eye,
 // built from the same camera and frustum as SetupSceneCamera's projection.
-void ShadowManager::SetupOverlayViewCull(SettingsShadowStruct::ExteriorsStruct* S, const D3DXVECTOR4* SunDir) {
-	static const float kKeepLift = 64.0f;    // keep sphere centre above the player's feet
-	static const float kKeepRadius = 192.0f; // covers the probe points, all within ~130 units of the feet
-	OverlayViewCull = false;
+// Camera-relative planes through the eye bounding what the camera sees: in front, left, right and
+// bottom. No top plane: water reflections show what lies above the view. False without a camera.
+static bool BuildViewCullPlanes(D3DXPLANE* Planes) {
 	NiCamera* Camera = WorldSceneGraph ? WorldSceneGraph->camera : NULL;
-	if (!S->SkinViewCull || !Camera || Camera->Frustum.Ortho) return;
+	if (!Camera || Camera->Frustum.Ortho) return false;
 	NiMatrix33* R = &Camera->m_worldTransform.rot;
 	D3DXVECTOR3 Forward(R->data[0][0], R->data[1][0], R->data[2][0]);
 	D3DXVECTOR3 Up(R->data[0][1], R->data[1][1], R->data[2][1]);
@@ -1085,8 +1089,16 @@ void ShadowManager::SetupOverlayViewCull(SettingsShadowStruct::ExteriorsStruct* 
 	};
 	for (int i = 0; i < 4; i++) {
 		D3DXVec3Normalize(&Normals[i], &Normals[i]);
-		OverlayViewPlanes[i] = D3DXPLANE(Normals[i].x, Normals[i].y, Normals[i].z, 0.0f);
+		Planes[i] = D3DXPLANE(Normals[i].x, Normals[i].y, Normals[i].z, 0.0f);
 	}
+	return true;
+}
+
+void ShadowManager::SetupOverlayViewCull(SettingsShadowStruct::ExteriorsStruct* S, const D3DXVECTOR4* SunDir) {
+	static const float kKeepLift = 64.0f;    // keep sphere centre above the player's feet
+	static const float kKeepRadius = 192.0f; // covers the probe points, all within ~130 units of the feet
+	OverlayViewCull = false;
+	if (!S->SkinViewCull || !BuildViewCullPlanes(OverlayViewPlanes)) return;
 	float Reach = 2.0f * S->ShadowMapRadius[MapSkin];
 	OverlaySweep = D3DXVECTOR3(-SunDir->x, -SunDir->y, -SunDir->z) * Reach;
 	const D3DXVECTOR4& Cam = TheRenderManager->CameraPosition;
@@ -2348,6 +2360,45 @@ void ShadowManager::DrawCubeFace(D3DXPLANE* Frustum, D3DXVECTOR4* BakeData, bool
 	RenderState->SetVertexShader(ShadowCubeMapVertexShader, false);
 }
 
+// A caster's shadow fills the cone from the light through its bound, out to the far plane. That cone
+// lies inside the hull of a sphere at the caster and one at the far end, each the cone's width there
+// plus the caster's radius, so it misses the view if both spheres lie outside one view plane.
+bool ShadowManager::CullCubeCastersToView(const D3DXVECTOR3& LightPos, float FarPlane) {
+	static const float kSkinnedPadding = 64.0f; // skinned bounds trail the animated pose
+	static const float kRigidPadding = 4.0f;
+	D3DXPLANE Planes[4];
+	if (!BuildViewCullPlanes(Planes)) return false;
+	const D3DXVECTOR4& Cam = TheRenderManager->CameraPosition;
+	size_t Kept = 0;
+	for (size_t g = 0; g < CubeMapGeoList.size(); g++) {
+		NiGeometry* Geo = CubeMapGeoList[g];
+		NiBound* Bound = Geo->GetWorldBound();
+		bool Reaches = true;
+		if (Bound) {
+			D3DXVECTOR3 C(Bound->Center.x - Cam.x, Bound->Center.y - Cam.y, Bound->Center.z - Cam.z);
+			float R = Bound->Radius + (Geo->skinInstance ? kSkinnedPadding : kRigidPadding);
+			D3DXVECTOR3 Ray = C - LightPos;
+			float DistSq = D3DXVec3LengthSq(&Ray);
+			if (DistSq > R * R * 1.1f) {
+				float Dist = sqrtf(DistSq);
+				float Slope = R / sqrtf(DistSq - R * R); // cone half-width per unit along the ray
+				float Far = max(FarPlane, Dist);
+				D3DXVECTOR3 End = LightPos + Ray * (Far / Dist);
+				float NearWidth = R + Slope * Dist;
+				float FarWidth = R + Slope * Far;
+				for (int i = 0; i < 4 && Reaches; i++)
+					if (D3DXPlaneDotCoord(&Planes[i], &C) < -NearWidth && D3DXPlaneDotCoord(&Planes[i], &End) < -FarWidth) Reaches = false;
+			}
+		}
+		if (Reaches) CubeMapGeoList[Kept++] = Geo;
+	}
+	ProfileCount(Cnt_CubeCastersKept, (UInt32)Kept);
+	ProfileCount(Cnt_CubeCastersCulled, (UInt32)(CubeMapGeoList.size() - Kept));
+	bool Culled = Kept < CubeMapGeoList.size();
+	CubeMapGeoList.resize(Kept);
+	return Culled;
+}
+
 // A bake draws its list into up to 6 faces with nothing changing in between, so each entry's buffers
 // are packed and its bones computed in the first face that draws it, and reused by the rest.
 void ShadowManager::RenderCubeItem(size_t Index, D3DXVECTOR4* BakeData) {
@@ -2360,6 +2411,7 @@ void ShadowManager::RenderCubeItem(size_t Index, D3DXVECTOR4* BakeData) {
 bool ShadowManager::PointSlotNeedsRebake(int Slot, UInt64 Checksum) {
 	PointLightSlot& Slot_ = PointSlots[Slot];
 	if (!Slot_.Valid) return true;          // never baked, or reassigned to a different light
+	if (Slot_.ViewCulled) return true;      // baked for last frame's view only
 	if (!EnableStaticMaps) return true;     // post-cell-change warmup: havok still settling
 	NiPoint3* P = &Slot_.Light->m_worldTransform.pos;
 	D3DXVECTOR3 Pos(P->x, P->y, P->z);
@@ -2391,6 +2443,9 @@ void ShadowManager::BakePointCube(int Slot) {
 	CubeMapGeoList.clear();
 	for (NiNode* RefNode : CubeMapRefMap[Slot]) CollectCubeMapGeometry(RefNode, CubeMapGeoList);
 	for (NiNode* RefNode : CubeMapActorMap[Slot]) CollectCubeMapGeometry(RefNode, CubeMapGeoList);
+	// A carried light rebakes every frame anyway, so its cube can be cut to this frame's view.
+	PointSlots[Slot].ViewCulled = TheSettingManager->SettingsShadows.Point.ViewCull && PointSlots[Slot].Light->CanCarry
+		&& CullCubeCastersToView(D3DXVECTOR3(LightPos->x, LightPos->y, LightPos->z), LightPos->w);
 	CubeMapGeoWorld.resize(CubeMapGeoList.size());
 	for (size_t g = 0; g < CubeMapGeoList.size(); g++)
 		CreateD3DMatrix(&CubeMapGeoWorld[g], &CubeMapGeoList[g]->m_worldTransform);

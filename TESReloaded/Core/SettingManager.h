@@ -383,6 +383,7 @@ struct SettingsShadowStruct {
 		float				FadeTime;			// seconds a slot takes to fade its shadow in or out (0 = snap)
 		float				FogStrength;		// shadow strength multiplier under full volumetric fog (1 = unchanged, 0 = none)
 		bool				UseInstancing;		// [Point] UseInstancing: draw a cube face's repeated opaque meshes in one call each
+		bool				ViewCull;			// [Point] ViewCull: carried lights skip casters whose shadow cannot reach the view
 		ExcludedFormsList	ExcludedForms;
 	};
 
