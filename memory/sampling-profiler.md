@@ -34,9 +34,10 @@ chains of the first 3 return addresses found above the leaf. Use it to attribute
 leaves (InterlockedIncrement, critical sections, the idle wait) that the inclusive view can't. The
 first frame is exact for leaves that keep nothing on the stack; deeper frames can be stale stack junk.
 
-**Idle wait = GPU-bound:** with the frame GPU-bound, the main thread idles in
-`NtWaitForAlertByThreadId` in the UPDATE phase (Present is outside `TrackRender`). Measured 4.7 of
-11.65 ms/frame in an outdoor forest (2026-11-07), so subtract it before calling update time "game logic".
+**Idle wait = Present:** the main thread's `NtWaitForAlertByThreadId` in the UPDATE phase is DXVK's
+Present latency wait under the engine's end of frame `sub_7D7210`. Present is outside `TrackRender`.
+Measured 4.7-5.0 of 11.6 ms/frame in an outdoor forest (2026-11-07). Subtract it before calling
+update time "game logic". See [[game-runs-on-dxvk]].
 
 **Deadlock safety (do not "simplify" this):** between SuspendThread and
 ResumeThread the sampler does ONLY GetThreadContext + memcpy. No allocation, no
