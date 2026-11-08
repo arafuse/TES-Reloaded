@@ -995,7 +995,7 @@ void EffectRecord::SetCT() {
 
 }
 
-void EffectRecord::Render(IDirect3DDevice9* Device, IDirect3DSurface9* RenderTarget, IDirect3DSurface9* RenderedSurface, bool ClearRenderTarget, const RECT* CopyRegion) {
+void EffectRecord::Render(IDirect3DDevice9* Device, IDirect3DSurface9* RenderTarget, IDirect3DSurface9* RenderedSurface, bool ClearRenderTarget, const RECT* CopyRegion, bool CopyToRendered) {
 
 	UINT Passes;
 
@@ -1012,8 +1012,11 @@ void EffectRecord::Render(IDirect3DDevice9* Device, IDirect3DSurface9* RenderTar
 			Effect->BeginPass(p);
 			Device->DrawPrimitive(D3DPT_TRIANGLESTRIP, 0, 2);
 			Effect->EndPass();
-			Device->StretchRect(RenderTarget, CopyRegion, RenderedSurface, CopyRegion, D3DTEXF_NONE);
-			EffCountPass(); EffCountBlit();
+			EffCountPass();
+			if (CopyToRendered) {
+				Device->StretchRect(RenderTarget, CopyRegion, RenderedSurface, CopyRegion, D3DTEXF_NONE);
+				EffCountBlit();
+			}
 		}
 		Effect->End();
 		return;
@@ -3682,10 +3685,47 @@ static bool GetPointShadowRegion(UINT Width, UINT Height, RECT* Region) {
 
 }
 
+// Whether the mid-scene shadow apply can multiply into a target of this surface's format, i.e. the
+// device can alpha-blend into it. Cached per format: the scene target never changes format mid-game.
+static bool CanBlendIntoSurface(IDirect3DSurface9* Surface) {
+
+	static D3DFORMAT CachedFormat = D3DFMT_UNKNOWN;
+	static bool CachedResult = false;
+	D3DSURFACE_DESC Desc;
+	if (FAILED(Surface->GetDesc(&Desc))) return false;
+	if (Desc.Format == CachedFormat) return CachedResult;
+
+	IDirect3DDevice9* Device = TheRenderManager->device;
+	D3DDEVICE_CREATION_PARAMETERS Params;
+	D3DDISPLAYMODE Mode;
+	IDirect3D9* D3D = NULL;
+	bool Result = false;
+	if (SUCCEEDED(Device->GetCreationParameters(&Params)) && SUCCEEDED(Device->GetDirect3D(&D3D))) {
+		Result = SUCCEEDED(D3D->GetAdapterDisplayMode(Params.AdapterOrdinal, &Mode)) &&
+			SUCCEEDED(D3D->CheckDeviceFormat(Params.AdapterOrdinal, Params.DeviceType, Mode.Format,
+				D3DUSAGE_RENDERTARGET | D3DUSAGE_QUERY_POSTPIXELSHADER_BLENDING, D3DRTYPE_TEXTURE, Desc.Format));
+		D3D->Release();
+	}
+	CachedFormat = Desc.Format;
+	CachedResult = Result;
+	return Result;
+
+}
+
+// True for a shadow effect compiled to output its shadow factor rather than the shadowed colour
+// (see ShadowOutputsFactor in ShadowsExteriors.fx.hlsl). A stale compiled effect lacks the marker.
+static bool OutputsShadowFactor(EffectRecord* Effect) {
+
+	return Effect && Effect->Effect && Effect->Effect->GetParameterByName(NULL, "ShadowOutputsFactor") != NULL;
+
+}
+
 // Two effects run here: the exterior sun shadows (worldspace only), then the point-light cube
-// shadows (interiors AND exteriors). Order matters and costs nothing extra — a single-pass
-// EffectRecord::Render ends by blitting the render target back into RenderedSurface, so the point
-// effect reads the already-sun-shadowed image through TESR_RenderedBuffer with no second blit.
+// shadows (interiors AND exteriors). Both only darken, so each outputs its shadow factor and the GPU
+// multiplies it into the scene (DESTCOLOR blending). Neither reads the scene, so neither needs a
+// copy of it first; one copy at the end refreshes TESR_RenderedBuffer for the near water's
+// refraction. An effect still compiled to output colour (no ShadowOutputsFactor) takes the old
+// path: TESR_RenderedBuffer is brought in sync with the scene, the pass reads it and copies back.
 //
 // The engine is mid-accumulation here, so all device changes go through raw Device calls (NOT
 // NiDX9RenderState, whose cache must keep matching the device) and are bracketed by a full state
@@ -3703,12 +3743,31 @@ void ShaderManager::RenderShadowsMidScene() {
 	FrameProfiler::Scope SetupScope(FrameProfiler::Buck_MidSetup);
 	if (!RenderedSurface || !EffectVertex) return;
 	if (FAILED(Device->GetRenderTarget(0, &SceneRT)) || !SceneRT) return;
+
+	// A factor-output effect cannot run without blending; it would paint its factor over the scene.
+	bool CanBlend = CanBlendIntoSurface(SceneRT);
+	bool SunMultiplies = DoSun && OutputsShadowFactor(ShadowsExteriorsEffect);
+	bool PointMultiplies = DoPoint && OutputsShadowFactor(ShadowsPointEffect);
+	if (!CanBlend && (SunMultiplies || PointMultiplies)) {
+		static bool Logged = false;
+		if (!Logged) {
+			Logged = true;
+			Logger::Log("ERROR: The scene target cannot be blended into, so the sun and point shadow effects are skipped.");
+		}
+		if (SunMultiplies) DoSun = false;
+		if (PointMultiplies) DoPoint = false;
+		if (!DoSun && !DoPoint) { SceneRT->Release(); return; }
+	}
 	if (!CaptureDeviceState()) { SceneRT->Release(); return; }
 
 	TheRenderManager->SetupSceneCamera(); // CPU-side matrices only; refreshes WorldViewProj/InvViewProj for SetCT
 	Device->SetRenderState(D3DRS_ZENABLE, FALSE);
 	Device->SetRenderState(D3DRS_ZWRITEENABLE, FALSE);
 	Device->SetRenderState(D3DRS_ALPHABLENDENABLE, FALSE);
+	Device->SetRenderState(D3DRS_SEPARATEALPHABLENDENABLE, FALSE);
+	Device->SetRenderState(D3DRS_BLENDOP, D3DBLENDOP_ADD);
+	Device->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_DESTCOLOR);
+	Device->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_ZERO);
 	Device->SetRenderState(D3DRS_ALPHATESTENABLE, FALSE);
 	Device->SetRenderState(D3DRS_COLORWRITEENABLE, 15);
 	Device->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE);
@@ -3716,38 +3775,53 @@ void ShaderManager::RenderShadowsMidScene() {
 	Device->SetRenderState(D3DRS_STENCILENABLE, FALSE);
 	Device->SetStreamSource(0, EffectVertex, 0, sizeof(EffectQuad));
 	Device->SetFVF(EFFECTQUADFORMAT);
-	// Seed TESR_RenderedBuffer with the scene; each Render() re-blits for the next.
-	Device->StretchRect(SceneRT, NULL, RenderedSurface, NULL, D3DTEXF_NONE);
 	SetupScope.Close();
+
+	// Whether TESR_RenderedBuffer currently matches SceneRT. A copy-path pass needs it to and keeps
+	// it so; a multiplying pass changes SceneRT only.
+	bool InSync = false;
 	if (DoSun) {
 		{
 			FrameProfiler::Scope SunScope(FrameProfiler::Buck_MidSun);
 			FrameProfiler::GpuScope SunGpu(FrameProfiler::Gpu_MidSun);
+			if (!SunMultiplies) Device->StretchRect(SceneRT, NULL, RenderedSurface, NULL, D3DTEXF_NONE);
+			Device->SetRenderState(D3DRS_ALPHABLENDENABLE, SunMultiplies);
 			ShadowsExteriorsEffect->SetCT();
-			ShadowsExteriorsEffect->Render(Device, SceneRT, RenderedSurface, false);
+			ShadowsExteriorsEffect->Render(Device, SceneRT, RenderedSurface, false, NULL, !SunMultiplies);
+			InSync = !SunMultiplies;
 		}
 		FrameProfiler::Scope ProbeScope(FrameProfiler::Buck_MidProbe);
+		// The probe writes raw visibility into its own target; blending would scale it.
+		Device->SetRenderState(D3DRS_ALPHABLENDENABLE, FALSE);
 		RenderSunShadowProbe(Device);
 	}
 	if (DoPoint) {
 		FrameProfiler::Scope PointScope(FrameProfiler::Buck_MidPoint);
 		FrameProfiler::GpuScope PointGpu(FrameProfiler::Gpu_MidPoint);
-		// Outside the lights' screen bounds the pass is an identity copy, and SceneRT already
-		// matches RenderedSurface there, so scissor the quad to those bounds. The copy back can
-		// shrink too, but only from a non-multisampled target, which StretchRect sub-rects safely.
+		// Outside the lights' screen bounds the pass changes nothing, so scissor the quad to those
+		// bounds. On the copy path the copy back can shrink too, but only from a non-multisampled
+		// target, which StretchRect sub-rects safely.
 		D3DSURFACE_DESC Desc;
 		RECT Region;
 		if (SUCCEEDED(SceneRT->GetDesc(&Desc)) && GetPointShadowRegion(Desc.Width, Desc.Height, &Region)) {
+			if (!PointMultiplies && !InSync) {
+				Device->StretchRect(SceneRT, NULL, RenderedSurface, NULL, D3DTEXF_NONE);
+				InSync = true;
+			}
 			RECT PrevScissor;
 			bool HavePrev = SUCCEEDED(Device->GetScissorRect(&PrevScissor));
 			Device->SetScissorRect(&Region);
 			Device->SetRenderState(D3DRS_SCISSORTESTENABLE, TRUE);
+			Device->SetRenderState(D3DRS_ALPHABLENDENABLE, PointMultiplies);
 			ShadowsPointEffect->SetCT();
-			ShadowsPointEffect->Render(Device, SceneRT, RenderedSurface, false, Desc.MultiSampleType == D3DMULTISAMPLE_NONE ? &Region : NULL);
+			ShadowsPointEffect->Render(Device, SceneRT, RenderedSurface, false, Desc.MultiSampleType == D3DMULTISAMPLE_NONE ? &Region : NULL, !PointMultiplies);
 			Device->SetRenderState(D3DRS_SCISSORTESTENABLE, FALSE);
 			if (HavePrev) Device->SetScissorRect(&PrevScissor);
+			if (PointMultiplies) InSync = false;
 		}
 	}
+	// The near water refracts TESR_RenderedBuffer, so it must hold the shadowed scene.
+	if (!InSync) Device->StretchRect(SceneRT, NULL, RenderedSurface, NULL, D3DTEXF_NONE);
 
 	FrameProfiler::Scope RestoreScope(FrameProfiler::Buck_MidRestore);
 	CachedStateBlock->Apply();

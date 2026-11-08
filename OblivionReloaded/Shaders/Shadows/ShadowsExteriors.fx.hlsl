@@ -1,5 +1,11 @@
 // Image space shadows shader for Oblivion Reloaded
 
+// Output is the shadow FACTOR, not the shadowed colour: RenderShadowsMidScene multiplies it into the
+// scene with DESTCOLOR blending, so the pass never reads the scene and needs no copy of it first.
+// The CPU looks this parameter up and keeps the old read-and-copy path when it is missing (a stale
+// compiled effect that still outputs colour), so keep it declared.
+bool ShadowOutputsFactor = true;
+
 float4x4 TESR_WorldViewProjectionTransform;
 float4x4 TESR_ViewTransform;
 float4x4 TESR_ProjectionTransform;
@@ -26,14 +32,14 @@ float4 TESR_ShadowSkinBounds; // skin map UV rect holding every caster (xy min, 
 float4 TESR_ShadowFadeData;
 float4 TESR_FogData;
 
-// TESR_DepthBuffer (s1) and TESR_SourceBuffer (s4) are NOT sampled by this effect any more -- the
-// sky guard reads TESR_DepthBufferPreWater instead. They stay declared regardless, because for an
+// TESR_RenderedBuffer (s0), TESR_DepthBuffer (s1) and TESR_SourceBuffer (s4) are NOT sampled by this
+// effect any more -- it outputs a factor, and the sky guard reads TESR_DepthBufferPreWater instead. They stay declared regardless, because for an
 // EFFECT the runtime binds textures by ORDINAL, not by the declared register: EffectRecord::CreateCT
 // passes the Nth TESR_ sampler parameter's index to TextureManager::LoadTexture, which then matches
 // it against the register(sN) it parses out of this source. Deleting a sampler from the middle
 // renumbers every ordinal after it while the registers here stay put, and every later sampler binds
-// the wrong texture. Removing these two means renumbering the whole block contiguously; until that
-// is done and tested they cost two SetTexture calls a frame and nothing else.
+// the wrong texture. Removing these three means renumbering the whole block contiguously; until that
+// is done and tested they cost three SetTexture calls a frame and nothing else.
 sampler2D TESR_RenderedBuffer : register(s0) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
 sampler2D TESR_DepthBuffer : register(s1) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
 sampler2D TESR_ShadowMapBufferNear : register(s2) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = POINT; MINFILTER = POINT; MIPFILTER = NONE; };
@@ -135,7 +141,7 @@ float AddProximityLight(float4 WorldPos, float4 ExternalLightPos) {
 #include "ShadowsExteriorsLookup.hlsl"
 
 float4 Shadow(VSOUT IN) : COLOR0{
-	float3 color = tex2D(TESR_RenderedBuffer, IN.UVCoord).rgb;
+	float3 color = 1.0f;
 
 	// Sky guard on depth, not brightness, so sun glare on receivers is shadowed.
 	float rawDepth = tex2D(TESR_DepthBufferPreWater, IN.UVCoord).x;

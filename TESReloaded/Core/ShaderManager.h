@@ -405,8 +405,10 @@ public:
 	void						CreateCT();
 	void						SetCT();
 	/// CopyRegion limits the single-pass copy back into RenderedSurface to the pixels the pass could
-	/// change; NULL copies the whole surface. Ignored by the multi-pass ping-pong path.
-	void						Render(IDirect3DDevice9* Device, IDirect3DSurface9* RenderTarget, IDirect3DSurface9* RenderedSurface, bool ClearRenderTarget, const RECT* CopyRegion = NULL);
+	/// change; NULL copies the whole surface. CopyToRendered = false skips that copy, for a pass that
+	/// blends into RenderTarget and never reads RenderedSurface. Both are ignored by the multi-pass
+	/// ping-pong path.
+	void						Render(IDirect3DDevice9* Device, IDirect3DSurface9* RenderTarget, IDirect3DSurface9* RenderedSurface, bool ClearRenderTarget, const RECT* CopyRegion = NULL, bool CopyToRendered = true);
 	// Chain-rotation variant of Render (Main.EffectChainPingPong). Reads the chain's current
 	// buffer and writes into the two scratch buffers, leaving the result in one of them; the caller
 	// then adopts it as the new current. Issues NO StretchRect at all.

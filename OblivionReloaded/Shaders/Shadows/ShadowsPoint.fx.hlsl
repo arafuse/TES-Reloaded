@@ -8,6 +8,12 @@
 // shader reconstructs camera-relative positions too, so sampling needs no matrix at all - which is
 // what lets a cached cube stay valid while the camera moves.
 
+// Output is the shadow FACTOR, not the shadowed colour: RenderShadowsMidScene multiplies it into the
+// scene with DESTCOLOR blending, so the pass never reads the scene and needs no copy of it first.
+// The CPU looks this parameter up and keeps the old read-and-copy path when it is missing (a stale
+// compiled effect that still outputs colour), so keep it declared.
+bool ShadowOutputsFactor = true;
+
 float4x4 TESR_ViewTransform;
 float4x4 TESR_ProjectionTransform;
 float4 TESR_ShadowPointData;      // x = shadow strength scale, z = 1 / cube map size, w = depth bias
@@ -17,6 +23,8 @@ float4 TESR_ShadowLightPosition2;
 float4 TESR_ShadowLightPosition3;
 float4 TESR_ShadowLightLuminance; // one component per slot (x=0..w=3): luma(Diff) * Dimmer
 
+// Not sampled any more (the pass outputs a factor), but kept: effect textures bind by ordinal, so
+// removing the first sampler would shift every other one. See ShadowsExteriors.fx.hlsl.
 sampler2D TESR_RenderedBuffer : register(s0) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
 sampler2D TESR_DepthBufferPreWater : register(s1) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
 samplerCUBE TESR_ShadowCubeMapBuffer0 : register(s2) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; ADDRESSW = CLAMP; MAGFILTER = POINT; MINFILTER = POINT; MIPFILTER = NONE; };
@@ -160,7 +168,7 @@ float GetPointShadow(samplerCUBE cubeMap, float4 lightPos, float lum, float3 pix
 }
 
 float4 Shadow(VSOUT IN) : COLOR0{
-	float3 color = tex2D(TESR_RenderedBuffer, IN.UVCoord).rgb;
+	float3 color = 1.0f;
 
 	// Sky guard on depth, not brightness, so sun glare on receivers is shadowed.
 	float rawDepth = tex2D(TESR_DepthBufferPreWater, IN.UVCoord).x;
