@@ -129,6 +129,9 @@ namespace {
 		// Cube-face instancing (DrawCubeFace):
 		Cnt_CubeInstancedDraws, // instanced draws, summed over faces
 		Cnt_CubeInstancedItems, // mesh copies those draws covered (the Render() calls they replaced)
+		// Actor overlay camera-side cull (CollectCellGeo):
+		Cnt_OverlayRefsKept,    // overlay refs whose shadow can reach the view or the player
+		Cnt_OverlayRefsCulled,  // overlay refs dropped because it cannot
 		Cnt_COUNT
 	};
 	const char* const ShadowCounterNames[Cnt_COUNT] = {
@@ -138,7 +141,8 @@ namespace {
 		"Dir:Groups", "Dir:InstancedItems", "Dir:FallbackItems",
 		"Point:Candidates", "Point:SlotsActive", "Point:Rebakes", "Dir:MovedRedraws",
 		"Stitch:Draws", "Stitch:Strips", "Stitch:Builds", "Stitch:Fallbacks",
-		"Cube:InstDraws", "Cube:InstItems"
+		"Cube:InstDraws", "Cube:InstItems",
+		"Skin:RefsKept", "Skin:RefsCulled"
 	};
 	// When true, draw/Render counters attribute to the cube/point-light path (set around its submission).
 	bool gCubeBucket = false;
@@ -436,6 +440,8 @@ ShadowManager::ShadowManager() {
 	ShadowGeoCount = 0;
 	CollectWorldSpace = false;
 	CollectSkinnedOnly = false;
+	OverlayViewCull = false;
+	OverlayKeepRadius = 0.0f;
 	CollectTreesOnly = false;
 	TreeWindPass = false;
 	TreesDynamic[0] = TreesDynamic[1] = false;
@@ -1044,14 +1050,66 @@ void ShadowManager::RenderActorOverlay(SettingsShadowStruct::ExteriorsStruct* S,
 	D3DXVECTOR3 At = Center - D3DXVECTOR3(TheRenderManager->CameraPosition.x, TheRenderManager->CameraPosition.y, TheRenderManager->CameraPosition.z);
 	D3DXVECTOR4* OverlaySunDir = NearBaked ? &Regions[0].BakedSunDir : SunDir;
 	SetupShadowMapMatrices(MapSkin, S, &At, OverlaySunDir);
+	SetupOverlayViewCull(S, OverlaySunDir);
 	// CollectSkinnedOnly drops rigid non-actor statics during the walk, leaving
 	// only the camera-relative skinned and actor casters.
 	CollectSkinnedOnly = true;
 	BuildExteriorGeoItems(S, MapSkin);
 	CollectSkinnedOnly = false;
+	OverlayViewCull = false;
 	FrameProfiler::Count(FrameProfiler::Cnt_ActorItems, ShadowGeoCount);
 	PublishSkinBounds(S);
 	RenderShadowMap(MapSkin, S, &At, OverlaySunDir, &TheShaderManager->ShaderConst.Shadow.Data, /*SkipTerrain=*/true);
+}
+
+// The overlay is read only where the camera looks (the apply and the main-pass shaders) and at the
+// player (the sun-shadow probe). A caster's shadow leaves it along the sun ray, so the region it can
+// darken is its bound swept away from the sun across the map. Camera-relative planes through the eye,
+// built from the same camera and frustum as SetupSceneCamera's projection.
+void ShadowManager::SetupOverlayViewCull(SettingsShadowStruct::ExteriorsStruct* S, const D3DXVECTOR4* SunDir) {
+	static const float kKeepLift = 64.0f;    // keep sphere centre above the player's feet
+	static const float kKeepRadius = 192.0f; // covers the probe points, all within ~130 units of the feet
+	OverlayViewCull = false;
+	NiCamera* Camera = WorldSceneGraph ? WorldSceneGraph->camera : NULL;
+	if (!S->SkinViewCull || !Camera || Camera->Frustum.Ortho) return;
+	NiMatrix33* R = &Camera->m_worldTransform.rot;
+	D3DXVECTOR3 Forward(R->data[0][0], R->data[1][0], R->data[2][0]);
+	D3DXVECTOR3 Up(R->data[0][1], R->data[1][1], R->data[2][1]);
+	D3DXVECTOR3 Right(R->data[0][2], R->data[1][2], R->data[2][2]);
+	NiFrustum* F = &Camera->Frustum;
+	D3DXVECTOR3 Normals[4] = {
+		Forward,                       // in front of the eye
+		Right - F->Left * Forward,     // x >= Left * z
+		F->Right * Forward - Right,    // x <= Right * z
+		Up - F->Bottom * Forward,      // y >= Bottom * z
+	};
+	for (int i = 0; i < 4; i++) {
+		D3DXVec3Normalize(&Normals[i], &Normals[i]);
+		OverlayViewPlanes[i] = D3DXPLANE(Normals[i].x, Normals[i].y, Normals[i].z, 0.0f);
+	}
+	float Reach = 2.0f * S->ShadowMapRadius[MapSkin];
+	OverlaySweep = D3DXVECTOR3(-SunDir->x, -SunDir->y, -SunDir->z) * Reach;
+	const D3DXVECTOR4& Cam = TheRenderManager->CameraPosition;
+	OverlayKeepCenter = D3DXVECTOR3(Player->pos.x - Cam.x, Player->pos.y - Cam.y, Player->pos.z + kKeepLift - Cam.z);
+	OverlayKeepRadius = kKeepRadius * Player->scale;
+	OverlayViewCull = true;
+}
+
+bool ShadowManager::OverlayCasterMatters(const D3DXVECTOR3& Center, float Radius) const {
+	static const float kCasterPadding = 64.0f; // skinned bounds trail the animated pose
+	float R = Radius + kCasterPadding;
+	D3DXVECTOR3 End = Center + OverlaySweep;
+	bool InView = true;
+	for (int i = 0; i < 4 && InView; i++)
+		if (D3DXPlaneDotCoord(&OverlayViewPlanes[i], &Center) < -R && D3DXPlaneDotCoord(&OverlayViewPlanes[i], &End) < -R) InView = false;
+	if (InView) return true;
+	D3DXVECTOR3 ToKeep = OverlayKeepCenter - Center;
+	float SweepLenSq = D3DXVec3LengthSq(&OverlaySweep);
+	float t = SweepLenSq > 0.0f ? D3DXVec3Dot(&ToKeep, &OverlaySweep) / SweepLenSq : 0.0f;
+	t = max(0.0f, min(1.0f, t));
+	D3DXVECTOR3 Gap = ToKeep - OverlaySweep * t;
+	float Reach = R + OverlayKeepRadius;
+	return D3DXVec3LengthSq(&Gap) <= Reach * Reach;
 }
 
 // Publishes ShadowSkinBounds: the union of the overlay casters' footprints in the skin map's UV space,
@@ -1255,6 +1313,11 @@ void ShadowManager::CollectCellGeo(TESObjectCELL* Cell, SettingsShadowStruct::Fo
 		if (CollectWorldSpace) { RootCenter.x = RootBound->Center.x - CollectAnchor.x; RootCenter.y = RootBound->Center.y - CollectAnchor.y; RootCenter.z = RootBound->Center.z - CollectAnchor.z; }
 		else { RootCenter.x = RootBound->Center.x - TheRenderManager->CameraPosition.x; RootCenter.y = RootBound->Center.y - TheRenderManager->CameraPosition.y; RootCenter.z = RootBound->Center.z - TheRenderManager->CameraPosition.z; }
 		if (!SphereInShadowFrustum(ShadowMapType, RootCenter, RootBound->Radius)) continue; // whole-subtree cull
+		if (OverlayViewCull) {
+			bool Matters = OverlayCasterMatters(RootCenter, RootBound->Radius);
+			ProfileCount(Matters ? Cnt_OverlayRefsKept : Cnt_OverlayRefsCulled);
+			if (!Matters) continue;
+		}
 		bool IsActorRef = (TypeID >= TESForm::FormType::kFormType_NPC && TypeID <= TESForm::FormType::kFormType_LeveledCreature);
 		bool IsTreeRef = (TypeID == TESForm::FormType::kFormType_Tree);
 		CollectExteriorGeo(Node, HasWater, ShadowMapType, IsActorRef, IsTreeRef);

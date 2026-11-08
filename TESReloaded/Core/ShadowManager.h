@@ -116,6 +116,11 @@ public:
 	void					RedrawMovedStaticRegions(SettingsShadowStruct::ExteriorsStruct* S);
 	void					RenderActorOverlay(SettingsShadowStruct::ExteriorsStruct* S, D3DXVECTOR4* SunDir);
 	void					PublishSkinBounds(SettingsShadowStruct::ExteriorsStruct* S);
+	/// Sets up the overlay's camera-side caster cull for this frame (see OverlayCasterMatters).
+	void					SetupOverlayViewCull(SettingsShadowStruct::ExteriorsStruct* S, const D3DXVECTOR4* SunDir);
+	/// Whether a camera-relative caster sphere's shadow can land on anything the overlay is read for:
+	/// the camera's view, or the player (the sun-shadow probe).
+	bool					OverlayCasterMatters(const D3DXVECTOR3& Center, float Radius) const;
 	void					RenderShadowMapCellTerrain(TESObjectCELL* Cell, ShadowMapTypeEnum ShadowMapType, D3DXVECTOR4* ShadowData);
 	void					BuildExteriorGeoItems(SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors, ShadowMapTypeEnum ShadowMapType);
 	void					CollectExteriorGeo(NiAVObject* Object, bool HasWater, ShadowMapTypeEnum ShadowMapType, bool IsActorRef, bool IsTreeRef);
@@ -401,6 +406,14 @@ public:
 	// When true (the per-frame actor overlay), CollectExteriorGeo skips rigid non-actor geometry during
 	// collection so the walk doesn't build+store matrices for statics that the overlay would only discard.
 	bool                        CollectSkinnedOnly;
+	// The overlay's camera-side caster cull, camera-relative: a caster is dropped when the capsule its
+	// shadow sweeps (its bound, moved along OverlaySweep) lies wholly outside one of the view planes and
+	// misses the player's keep sphere. No top plane: water reflections show what lies above the view.
+	bool                        OverlayViewCull;
+	D3DXPLANE                   OverlayViewPlanes[4];
+	D3DXVECTOR3                 OverlaySweep;
+	D3DXVECTOR3                 OverlayKeepCenter;
+	float                       OverlayKeepRadius;
 	// When true (CompositeDynamicTrees), collection takes Tree-form refs only and never instances them,
 	// since ShadowMapInstanced.vso cannot apply the branch wind transform.
 	bool                        CollectTreesOnly;

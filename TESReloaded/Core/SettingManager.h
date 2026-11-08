@@ -354,6 +354,7 @@ struct SettingsShadowStruct {
 		bool				UseIntervalUpdate;
 		bool				UseInstancing;
 		bool				StitchStrips;			// [Exteriors] StitchStrips: draw each multi-strip mesh in one call in every shadow pass
+		bool				SkinViewCull;			// [ExteriorsSkin] ViewCull: skip actors whose shadow cannot reach the view or the player
 		float				deferredNormBias;
 		float				deferredFarNormBias;
 		float				deferredConstBias;
