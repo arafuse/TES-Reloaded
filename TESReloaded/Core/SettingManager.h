@@ -345,16 +345,22 @@ struct SettingsShadowStruct {
 		bool				RebakeMovedStatics;		// [Exteriors] RebakeMovedStatics: redraw a cached map when a static in it moves
 		bool				DynamicTrees;			// [Exteriors] DynamicTrees: redraw trees every frame so they sway
 		bool				DynamicTreesFar;		// [Exteriors] DynamicTreesFar: DynamicTrees for the far map too
+		int					DynamicTreesFarInterval;	// [Exteriors] DynamicTreesFarInterval: redraw the far map's trees every Nth frame (1..8)
+		bool				InstanceDynamicTrees;	// [Exteriors] InstanceDynamicTrees: batch repeated tree meshes in the dynamic-tree composites
 		float				FadeTime;				// [Exteriors] FadeTime: static-map crossfade seconds (0 = off)
 		bool                UsePostProcessing;
 		bool				SunShadowStealth;		// [Exteriors] SunShadowStealth: sun shadow lowers the player's light level
 		bool				IsPlayerInSunShadow;	// [Exteriors] IsPlayerInSunShadow: run the player sun shadow probe for the OBSE command
 		bool				UseIntervalUpdate;
 		bool				UseInstancing;
+		bool				StitchStrips;			// [Exteriors] StitchStrips: draw each multi-strip mesh in one call in every shadow pass
+		bool				SkinViewCull;			// [ExteriorsSkin] ViewCull: skip actors whose shadow cannot reach the view or the player
+		float				SkinMinRadius;			// [ExteriorsSkin] MinRadius: actor-overlay pieces with a smaller bound radius are not drawn
 		float				deferredNormBias;
 		float				deferredFarNormBias;
 		float				deferredConstBias;
 		float				deferredFarConstBias;
+		float				deferredSkinConstBias;	// actor (skin map) depth bias; falls back to deferredConstBias
 		bool				AdaptiveBias;			// 0 = legacy bias math (see Shadows.ini)
 		float				BiasTerminatorWidth;	// smoothstep upper bound on N.L
 		float				BiasMaxSlope;			// clamp on the slope-scaled bias multiplier
@@ -377,6 +383,8 @@ struct SettingsShadowStruct {
 		float				Bias;				// depth bias in normalized cube distance (scales with light radius)
 		float				FadeTime;			// seconds a slot takes to fade its shadow in or out (0 = snap)
 		float				FogStrength;		// shadow strength multiplier under full volumetric fog (1 = unchanged, 0 = none)
+		bool				UseInstancing;		// [Point] UseInstancing: draw a cube face's repeated opaque meshes in one call each
+		bool				ViewCull;			// [Point] ViewCull: carried lights skip casters whose shadow cannot reach the view
 		ExcludedFormsList	ExcludedForms;
 	};
 
@@ -447,6 +455,14 @@ struct SettingsGrassStruct {
 	float TreeCoverLightReduction;		///< Fraction of the light level removed at full cover
 	bool TreeCoverBlockLOS;				///< Shrubs the sneaking player is inside block observers' line of sight
 	float TreeCoverLOSDepth;			///< Effective foliage depth, world units, along a sight line that blocks it
+	bool GrassCover;					///< Scale the sneaking player's detection light level by tall-grass cover
+	float GrassCoverLightReduction;		///< Fraction of the light level removed at full grass cover
+	float GrassCoverMinHeight;			///< Clump top above the player's feet, world units, where cover begins
+	float GrassCoverFullHeight;			///< Clump top above the player's feet where a clump counts fully
+	float GrassCoverRadius;				///< World units around the player scanned for grass clumps
+	float GrassCoverOpacity;			///< How much one full-height clump blocks, 0-1; overlapping clumps compound
+	bool GrassCoverBlockLOS;			///< Tall grass around the sneaking player blocks observers' line of sight
+	float GrassCoverLOSDepth;			///< Effective grass depth, world units, along a sight line that blocks it
 };
 
 /// Parallax settings from POM\POM.ini.

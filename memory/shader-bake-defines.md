@@ -23,9 +23,11 @@ references its macros.
 
 **Traps:**
 - The grass collision loop is `[unroll]` + `break`, which compiles to MASKING, not flow control —
-  every slot the compile-time bound allows is paid regardless of the live source count. The runtime
-  guard must stay: slot 0 has a hardcoded weight of 1.0 against a position that is 0 when no sources
-  are live, which would displace grass around the worldspace origin.
+  every slot the compile-time bound allows is paid regardless of the live source count. Since
+  2026-11-07 a uniform `[branch]` on c253.w > 0.5 skips the whole body for batches with NO source,
+  but a batch with 1 source still pays all 3. The in-loop guard must stay: slot 0 has a hardcoded
+  weight of 1.0 against a position that is 0 when no sources are live, which would displace grass
+  around the worldspace origin.
 - `AdaptiveBias` and `BiasTerminatorWidth` are single globals, not per-weather —
   `PublishShadowBiasConstants` reads the canonical `Exteriors` struct, never the selected tier.
 - `SettingManager::SettingsVolumetricLight` is private; only per-weather lookup

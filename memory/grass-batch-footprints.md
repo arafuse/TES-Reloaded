@@ -1,12 +1,17 @@
 ---
 name: grass-batch-footprints
-description: MEASURED grass batch layout - instance XY is absolute world space (identity transform), batches are at most one cell (~4160) wide, unused slots are (0,0,0,0) at the tail
+description: "MEASURED grass batch layout - instance XY is absolute world space (identity transform), batches are at most one cell (~4160) wide, unused slots are (0,0,0,0) at the tail"
 metadata:
+  node_type: memory
   type: project
+  originSessionId: fd68ac1b-9420-4460-a9ca-a54b0b68b933
+  modified: 2026-11-02T23:06:56.930Z
 ---
 
 Measured in-game 2026-11-01 by reading each batch's instance array in the `0x7E6A90` hook
-(`[[prop+0x9C]+0x10]` = float4 array, UInt16 count at `[prop+0x9C]+0x0C`, 16 bytes each):
+(`[[prop+0x9C]+0x10]` = float4 array, UInt16 count at `[prop+0x9C]+0x0C`, 16 bytes each). Static RE
+later showed `+0x0C` is the CAPACITY and `+0x0E` the used count ([[grass-manager-generation]]), which
+is why the unused slots below sit at the tail:
 
 - Every grass geometry's world transform is identity (pos 0, no rotation, scale 1), so
   `InstanceData.xy` is **absolute world XY**. The "batch-relative" collision sources are really

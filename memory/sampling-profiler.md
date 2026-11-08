@@ -29,6 +29,16 @@ QPC calls pollute the results. Overhead while running is ~0.2-0.5% of one core.
    OblivionReloaded.dll (real PDB). `RenderHook::TrackRender`'s inclusive share
    matching the render phase split is a good sanity check that the scan works.
 
+**CALLERS section:** for the top 12 exclusive sites (exact addresses, all phases), the most common
+chains of the first 3 return addresses found above the leaf. Use it to attribute hot system-DLL
+leaves (InterlockedIncrement, critical sections, the idle wait) that the inclusive view can't. The
+first frame is exact for leaves that keep nothing on the stack; deeper frames can be stale stack junk.
+
+**Idle wait = Present:** the main thread's `NtWaitForAlertByThreadId` in the UPDATE phase is DXVK's
+Present latency wait under the engine's end of frame `sub_7D7210`. Present is outside `TrackRender`.
+Measured 4.7-5.0 of 11.6 ms/frame in an outdoor forest (2026-11-07). Subtract it before calling
+update time "game logic". See [[game-runs-on-dxvk]].
+
 **Deadlock safety (do not "simplify" this):** between SuspendThread and
 ResumeThread the sampler does ONLY GetThreadContext + memcpy. No allocation, no
 VirtualQuery, no lock of any kind - the main thread may be stopped inside the

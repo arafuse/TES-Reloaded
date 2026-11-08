@@ -621,6 +621,20 @@ void SettingManager::LoadSettings() {
 	SettingsGrass.TreeCoverBlockLOS = GetPrivateProfileIntA("Default", "TreeCoverBlockLOS", 0, Filename);
 	GetPrivateProfileStringA("Default", "TreeCoverLOSDepth", "64.0", value, SettingStringBuffer, Filename);
 	SettingsGrass.TreeCoverLOSDepth = atof(value);
+	SettingsGrass.GrassCover = GetPrivateProfileIntA("Default", "GrassCover", 0, Filename);
+	GetPrivateProfileStringA("Default", "GrassCoverLightReduction", "0.6", value, SettingStringBuffer, Filename);
+	SettingsGrass.GrassCoverLightReduction = atof(value);
+	GetPrivateProfileStringA("Default", "GrassCoverMinHeight", "90.0", value, SettingStringBuffer, Filename);
+	SettingsGrass.GrassCoverMinHeight = atof(value);
+	GetPrivateProfileStringA("Default", "GrassCoverFullHeight", "120.0", value, SettingStringBuffer, Filename);
+	SettingsGrass.GrassCoverFullHeight = atof(value);
+	GetPrivateProfileStringA("Default", "GrassCoverRadius", "200.0", value, SettingStringBuffer, Filename);
+	SettingsGrass.GrassCoverRadius = atof(value);
+	GetPrivateProfileStringA("Default", "GrassCoverOpacity", "0.5", value, SettingStringBuffer, Filename);
+	SettingsGrass.GrassCoverOpacity = atof(value);
+	SettingsGrass.GrassCoverBlockLOS = GetPrivateProfileIntA("Default", "GrassCoverBlockLOS", 0, Filename);
+	GetPrivateProfileStringA("Default", "GrassCoverLOSDepth", "150.0", value, SettingStringBuffer, Filename);
+	SettingsGrass.GrassCoverLOSDepth = atof(value);
 
 	strcpy(Filename, CurrentPath);
 	strcat(Filename, SettingsPath);
@@ -1293,10 +1307,16 @@ void SettingManager::LoadSettings() {
 	SettingsShadows.Exteriors.IsPlayerInSunShadow = GetPrivateProfileIntA("Exteriors", "IsPlayerInSunShadow", 0, Filename);
 	SettingsShadows.Exteriors.UseIntervalUpdate = GetPrivateProfileIntA("Exteriors", "UseIntervalUpdate", 1, Filename);
 	SettingsShadows.Exteriors.UseInstancing = GetPrivateProfileIntA("Exteriors", "UseInstancing", 1, Filename);
+	SettingsShadows.Exteriors.StitchStrips = GetPrivateProfileIntA("Exteriors", "StitchStrips", 1, Filename);
+	SettingsShadows.Exteriors.SkinViewCull = GetPrivateProfileIntA("ExteriorsSkin", "ViewCull", 1, Filename);
+	GetPrivateProfileStringA("ExteriorsSkin", "MinRadius", "4.0", value, SettingStringBuffer, Filename);
+	SettingsShadows.Exteriors.SkinMinRadius = atof(value);
 	SettingsShadows.Exteriors.CacheStaticShadows = GetPrivateProfileIntA("Exteriors", "CacheStaticShadows", 1, Filename);
 	SettingsShadows.Exteriors.RebakeMovedStatics = GetPrivateProfileIntA("Exteriors", "RebakeMovedStatics", 1, Filename);
 	SettingsShadows.Exteriors.DynamicTrees = GetPrivateProfileIntA("Exteriors", "DynamicTrees", 0, Filename);
 	SettingsShadows.Exteriors.DynamicTreesFar = GetPrivateProfileIntA("Exteriors", "DynamicTreesFar", 1, Filename);
+	SettingsShadows.Exteriors.DynamicTreesFarInterval = min(max((int)GetPrivateProfileIntA("Exteriors", "DynamicTreesFarInterval", 1, Filename), 1), 8);
+	SettingsShadows.Exteriors.InstanceDynamicTrees = GetPrivateProfileIntA("Exteriors", "InstanceDynamicTrees", 1, Filename);
 	GetPrivateProfileStringA("Exteriors", "FadeTime", "1.0", value, SettingStringBuffer, Filename);
 	SettingsShadows.Exteriors.FadeTime = atof(value);
 	GetPrivateProfileStringA("Exteriors", "Darkness", "0.2", value, SettingStringBuffer, Filename);
@@ -1323,6 +1343,9 @@ void SettingManager::LoadSettings() {
 	SettingsShadows.Exteriors.deferredConstBias = atof(value);
 	GetPrivateProfileStringA("Exteriors", "deferredFarConstBias", "0.001", value, SettingStringBuffer, Filename);
 	SettingsShadows.Exteriors.deferredFarConstBias = atof(value);
+	// Missing key = same as deferredConstBias, so a Shadows.ini predating it keeps its actor shadows.
+	GetPrivateProfileStringA("Exteriors", "deferredSkinConstBias", "", value, SettingStringBuffer, Filename);
+	SettingsShadows.Exteriors.deferredSkinConstBias = value[0] ? atof(value) : SettingsShadows.Exteriors.deferredConstBias;
 	// Defaults off so a Shadows.ini predating AdaptiveBias keeps the legacy bias
 	// math; the shipped INI enables it.
 	SettingsShadows.Exteriors.AdaptiveBias = GetPrivateProfileIntA("Exteriors", "AdaptiveBias", 0, Filename);
@@ -1353,6 +1376,8 @@ void SettingManager::LoadSettings() {
 	SettingsShadows.Point.FadeTime = atof(value);
 	GetPrivateProfileStringA("Point", "FogStrength", "0.5", value, SettingStringBuffer, Filename);
 	SettingsShadows.Point.FogStrength = std::clamp((float)atof(value), 0.0f, 1.0f);
+	SettingsShadows.Point.UseInstancing = GetPrivateProfileIntA("Point", "UseInstancing", 1, Filename);
+	SettingsShadows.Point.ViewCull = GetPrivateProfileIntA("Point", "ViewCull", 1, Filename);
 	SettingsShadows.Point.Forms.Activators = GetPrivateProfileIntA("Point", "Activators", 1, Filename);
 	SettingsShadows.Point.Forms.Actors = GetPrivateProfileIntA("Point", "Actors", 1, Filename);
 	SettingsShadows.Point.Forms.Apparatus = GetPrivateProfileIntA("Point", "Apparatus", 1, Filename);
@@ -1636,6 +1661,14 @@ void SettingManager::SaveSettings(const char* Item, const char* Definition, cons
 			WritePrivateProfileStringA("Default", "TreeCoverLightReduction", ToString(SettingsGrass.TreeCoverLightReduction).c_str(), Filename);
 			WritePrivateProfileStringA("Default", "TreeCoverBlockLOS", ToString(SettingsGrass.TreeCoverBlockLOS).c_str(), Filename);
 			WritePrivateProfileStringA("Default", "TreeCoverLOSDepth", ToString(SettingsGrass.TreeCoverLOSDepth).c_str(), Filename);
+			WritePrivateProfileStringA("Default", "GrassCover", ToString(SettingsGrass.GrassCover).c_str(), Filename);
+			WritePrivateProfileStringA("Default", "GrassCoverLightReduction", ToString(SettingsGrass.GrassCoverLightReduction).c_str(), Filename);
+			WritePrivateProfileStringA("Default", "GrassCoverMinHeight", ToString(SettingsGrass.GrassCoverMinHeight).c_str(), Filename);
+			WritePrivateProfileStringA("Default", "GrassCoverFullHeight", ToString(SettingsGrass.GrassCoverFullHeight).c_str(), Filename);
+			WritePrivateProfileStringA("Default", "GrassCoverRadius", ToString(SettingsGrass.GrassCoverRadius).c_str(), Filename);
+			WritePrivateProfileStringA("Default", "GrassCoverOpacity", ToString(SettingsGrass.GrassCoverOpacity).c_str(), Filename);
+			WritePrivateProfileStringA("Default", "GrassCoverBlockLOS", ToString(SettingsGrass.GrassCoverBlockLOS).c_str(), Filename);
+			WritePrivateProfileStringA("Default", "GrassCoverLOSDepth", ToString(SettingsGrass.GrassCoverLOSDepth).c_str(), Filename);
 		}
 		else if (!strcmp(Definition, "MotionBlur")) {
 			WritePrivateProfileStringA("Effects", "MotionBlur", ToString(SettingsMain.Effects.MotionBlur).c_str(), SettingsMain.Main.MainFile);
@@ -1678,6 +1711,7 @@ void SettingManager::SaveSettings(const char* Item, const char* Definition, cons
 			WritePrivateProfileStringA("Exteriors", "deferredFarNormBias", ToString(SettingsShadows.Exteriors.deferredFarNormBias).c_str(), Filename);
 			WritePrivateProfileStringA("Exteriors", "deferredConstBias", ToString(SettingsShadows.Exteriors.deferredConstBias).c_str(), Filename);
 			WritePrivateProfileStringA("Exteriors", "deferredFarConstBias", ToString(SettingsShadows.Exteriors.deferredFarConstBias).c_str(), Filename);
+			WritePrivateProfileStringA("Exteriors", "deferredSkinConstBias", ToString(SettingsShadows.Exteriors.deferredSkinConstBias).c_str(), Filename);
 			WritePrivateProfileStringA("Exteriors", "AdaptiveBias", ToString(SettingsShadows.Exteriors.AdaptiveBias).c_str(), Filename);
 			WritePrivateProfileStringA("Exteriors", "BiasTerminatorWidth", ToString(SettingsShadows.Exteriors.BiasTerminatorWidth).c_str(), Filename);
 			WritePrivateProfileStringA("Exteriors", "BiasMaxSlope", ToString(SettingsShadows.Exteriors.BiasMaxSlope).c_str(), Filename);
@@ -2340,6 +2374,14 @@ SettingsList SettingManager::GetMenuSettings(const char* Item, const char* Defin
 			Settings["TreeCoverLightReduction"] = SettingsGrass.TreeCoverLightReduction;
 			Settings["TreeCoverBlockLOS"] = SettingsGrass.TreeCoverBlockLOS;
 			Settings["TreeCoverLOSDepth"] = SettingsGrass.TreeCoverLOSDepth;
+			Settings["GrassCover"] = SettingsGrass.GrassCover;
+			Settings["GrassCoverLightReduction"] = SettingsGrass.GrassCoverLightReduction;
+			Settings["GrassCoverMinHeight"] = SettingsGrass.GrassCoverMinHeight;
+			Settings["GrassCoverFullHeight"] = SettingsGrass.GrassCoverFullHeight;
+			Settings["GrassCoverRadius"] = SettingsGrass.GrassCoverRadius;
+			Settings["GrassCoverOpacity"] = SettingsGrass.GrassCoverOpacity;
+			Settings["GrassCoverBlockLOS"] = SettingsGrass.GrassCoverBlockLOS;
+			Settings["GrassCoverLOSDepth"] = SettingsGrass.GrassCoverLOSDepth;
 		}
 		else if (!strcmp(Definition, "MotionBlur")) {
 			SettingsMotionBlurStruct* sms = GetSettingsMotionBlur(Section);
@@ -2365,6 +2407,7 @@ SettingsList SettingManager::GetMenuSettings(const char* Item, const char* Defin
 				Settings["deferredFarNormBias"] = SettingsShadows.Exteriors.deferredFarNormBias;
 				Settings["deferredConstBias"] = SettingsShadows.Exteriors.deferredConstBias;
 				Settings["deferredFarConstBias"] = SettingsShadows.Exteriors.deferredFarConstBias;
+				Settings["deferredSkinConstBias"] = SettingsShadows.Exteriors.deferredSkinConstBias;
 				Settings["AdaptiveBias"] = SettingsShadows.Exteriors.AdaptiveBias;
 				Settings["BiasTerminatorWidth"] = SettingsShadows.Exteriors.BiasTerminatorWidth;
 				Settings["BiasMaxSlope"] = SettingsShadows.Exteriors.BiasMaxSlope;
@@ -3123,6 +3166,22 @@ void SettingManager::SetMenuSetting(const char* Item, const char* Definition, co
 				SettingsGrass.TreeCoverBlockLOS = Value;
 			else if (!strcmp(Setting, "TreeCoverLOSDepth"))
 				SettingsGrass.TreeCoverLOSDepth = Value;
+			else if (!strcmp(Setting, "GrassCover"))
+				SettingsGrass.GrassCover = Value;
+			else if (!strcmp(Setting, "GrassCoverLightReduction"))
+				SettingsGrass.GrassCoverLightReduction = Value;
+			else if (!strcmp(Setting, "GrassCoverMinHeight"))
+				SettingsGrass.GrassCoverMinHeight = Value;
+			else if (!strcmp(Setting, "GrassCoverFullHeight"))
+				SettingsGrass.GrassCoverFullHeight = Value;
+			else if (!strcmp(Setting, "GrassCoverRadius"))
+				SettingsGrass.GrassCoverRadius = Value;
+			else if (!strcmp(Setting, "GrassCoverOpacity"))
+				SettingsGrass.GrassCoverOpacity = Value;
+			else if (!strcmp(Setting, "GrassCoverBlockLOS"))
+				SettingsGrass.GrassCoverBlockLOS = Value;
+			else if (!strcmp(Setting, "GrassCoverLOSDepth"))
+				SettingsGrass.GrassCoverLOSDepth = Value;
 		}
 		else if (!strcmp(Definition, "MotionBlur")) {
 			SettingsMotionBlurStruct* sms = GetSettingsMotionBlur(Section);
@@ -3170,6 +3229,9 @@ void SettingManager::SetMenuSetting(const char* Item, const char* Definition, co
 				}
 				else if (!strcmp(Setting, "deferredFarConstBias")) {
 					SettingsShadows.Exteriors.deferredFarConstBias = Value;
+				}
+				else if (!strcmp(Setting, "deferredSkinConstBias")) {
+					SettingsShadows.Exteriors.deferredSkinConstBias = Value;
 				}
 				else if (!strcmp(Setting, "AdaptiveBias")) {
 					SettingsShadows.Exteriors.AdaptiveBias = Value;

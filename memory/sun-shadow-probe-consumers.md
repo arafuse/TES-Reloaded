@@ -7,7 +7,8 @@ metadata:
 
 `SunShadowStealth.cpp` draws an 8-point probe of the exterior sun shadow maps (4 heights × 2 sides,
 each pushed sunward out of a body capsule) in `RenderShadowsMidScene` right after the sun apply, and
-reads it back through an event-query ring with no stall. Results trail rendering by 1–2 frames.
+reads it back through an event-query ring: GetRenderTargetData into a SYSTEMMEM surface, locked only
+once the query signals (see [[d3d9-gpu-readback-stall]]). Results trail rendering by 1–2 frames.
 
 Since 2026-10-28 it has two consumers, each with its own `[Exteriors]` switch in Shadows.ini. The
 probe runs (and holds its resources) while EITHER switch is on, and is released when both are off:

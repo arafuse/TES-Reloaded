@@ -1,8 +1,10 @@
 #include <algorithm>
 #include <cmath>
 #include <list>
+#include <set>
 #include <string>
 #include <thread>
+#include <unordered_set>
 #include <sstream>
 #if defined(OBLIVION)
 #include "TreeCollision.h"
@@ -81,13 +83,20 @@ namespace {
 		Phase_StaticMoveCheck, // RedrawMovedStaticRegions: fingerprint walk + any in-place redraws
 		Phase_TreeComposite,   // CompositeDynamicTrees: static copy + tree collection + draw submission
 		Phase_TreeDraw,        // ...of which RenderShadowMap's tree draw submission
+		// Skinned draws (RenderSkinnedGeo, every pass), split by stage:
+		Phase_SkinBones,       // CalculateBoneMatrixes + skin-to-world copy, once per skinned geometry
+		Phase_SkinPack,        // PackSkinnedGeometryBuffer, per partition
+		Phase_SkinSetup,       // bone upload, streams and SetCT, per partition (2 calls each)
+		Phase_SkinDraw,        // DrawGeoArrays, per partition
+		Phase_RigidPack,       // PackGeometryBuffer in Render()'s rigid path, every pass
 		Phase_COUNT
 	};
 	const char* const ShadowPhaseNames[Phase_COUNT] = {
 		"BuildGeoItems", "Pass:Near", "Pass:Far", "Pass:Ortho", "Pass:Skin",
 		"ExtTotal", "Int:Classify", "Int:CubeRender", "IntTotal",
 		"Point:Classify", "Point:Bake", "PointTotal", "FrameTotal", "Ext:MoveCheck",
-		"Ext:Trees", "Ext:TreesDraw"
+		"Ext:Trees", "Ext:TreesDraw",
+		"Skin:Bones", "Skin:Pack", "Skin:Setup", "Skin:Draw", "Rigid:Pack"
 	};
 	// Per-frame counters: how the submission cost breaks down (draws, batches, cache hits).
 	enum ShadowCounter {
@@ -112,6 +121,26 @@ namespace {
 		Cnt_PointSlotsActive,   // slots holding a light after assignment
 		Cnt_PointRebakes,       // slot cubes (re)baked this frame (6 faces each)
 		Cnt_MovedStaticRedraws, // cached Near/Far maps redrawn in place because a static moved
+		// Strip stitching (DrawGeoArrays):
+		Cnt_StitchedDraws,      // multi-strip meshes drawn in one call
+		Cnt_StitchedStrips,     // strips those draws covered (the per-strip calls they replaced)
+		Cnt_StitchBuilds,       // stitched index buffers built this frame
+		Cnt_StitchFallbacks,    // multi-strip meshes still drawn strip by strip (unstitchable or over budget)
+		// Cube-face instancing (DrawCubeFace):
+		Cnt_CubeInstancedDraws, // instanced draws, summed over faces
+		Cnt_CubeInstancedItems, // mesh copies those draws covered (the Render() calls they replaced)
+		// Actor overlay camera-side cull (CollectCellGeo):
+		Cnt_OverlayRefsKept,    // overlay refs whose shadow can reach the view or the player
+		Cnt_OverlayRefsCulled,  // overlay refs dropped because it cannot
+		// Carried-light cube camera-side cull (CullCubeCastersToView):
+		Cnt_CubeCastersKept,    // cube list entries whose shadow can reach the view
+		Cnt_CubeCastersCulled,  // cube list entries dropped because it cannot
+		// Actor-overlay piece sizes, before the [ExteriorsSkin] MinRadius cut (cumulative):
+		Cnt_SkinRadius2,        // pieces with bound radius under 2 units
+		Cnt_SkinRadius4,        // ...under 4
+		Cnt_SkinRadius8,        // ...under 8
+		Cnt_SkinRadius16,       // ...under 16
+		Cnt_SkinSmallSkipped,   // pieces the MinRadius cut dropped
 		Cnt_COUNT
 	};
 	const char* const ShadowCounterNames[Cnt_COUNT] = {
@@ -119,7 +148,12 @@ namespace {
 		"InstancedDraws", "CubeLightsDrawn", "CubeLightsCached",
 		"Dir:TerrainDraws", "Dir:ItemsInstanced", "Dir:ItemsImmNonInst", "Dir:ItemsImmAlpha",
 		"Dir:Groups", "Dir:InstancedItems", "Dir:FallbackItems",
-		"Point:Candidates", "Point:SlotsActive", "Point:Rebakes", "Dir:MovedRedraws"
+		"Point:Candidates", "Point:SlotsActive", "Point:Rebakes", "Dir:MovedRedraws",
+		"Stitch:Draws", "Stitch:Strips", "Stitch:Builds", "Stitch:Fallbacks",
+		"Cube:InstDraws", "Cube:InstItems",
+		"Skin:RefsKept", "Skin:RefsCulled",
+		"Cube:CastersKept", "Cube:CastersCulled",
+		"Skin:Radius<2", "Skin:Radius<4", "Skin:Radius<8", "Skin:Radius<16", "Skin:SmallSkipped"
 	};
 	// When true, draw/Render counters attribute to the cube/point-light path (set around its submission).
 	bool gCubeBucket = false;
@@ -147,6 +181,17 @@ namespace {
 			gPhase[Phase].Calls++;
 		}
 	};
+
+	// Split timing for a sequence of stages: each call charges the time since Last to Phase and returns
+	// the new boundary, one QPC per stage instead of two. Free when profiling is off.
+	inline LONGLONG ProfileStamp() { return ProfilingEnabled ? QpcNow() : 0; }
+	inline LONGLONG ProfileSplit(ShadowPhase Phase, LONGLONG Last) {
+		if (!ProfilingEnabled) return 0;
+		LONGLONG Now = QpcNow();
+		gPhase[Phase].Ms += (double)(Now - Last) * 1000.0 / (double)gQpcFreq;
+		gPhase[Phase].Calls++;
+		return Now;
+	}
 
 	void ShadowProfileFrameBegin() {
 		ProfilingEnabled = TheSettingManager->SettingsMain.Develop.ProfileShadows != 0;
@@ -192,12 +237,16 @@ void ShadowManager::PublishShadowBiasConstants(SettingsShadowStruct::ExteriorsSt
 
 	float ScaleNear = 1.0f;
 	float ScaleFar = 1.0f;
+	float ScaleSkin = 1.0f;
 	float WorldToOrthoDepth = 1.0f;
 	if (Ext.AdaptiveBias) {
 		if (Selected->ShadowMapSize[MapNear])
 			ScaleNear = (2.0f * Selected->ShadowMapRadius[MapNear]) / (float)Selected->ShadowMapSize[MapNear];
 		if (Selected->ShadowMapSize[MapFar])
 			ScaleFar = (2.0f * Selected->ShadowMapRadius[MapFar]) / (float)Selected->ShadowMapSize[MapFar];
+		// The skin map is allocated at the near size (CreateShadowMapSurfaces), over its own radius.
+		if (Selected->ShadowMapSize[MapNear])
+			ScaleSkin = (2.0f * Selected->ShadowMapRadius[MapSkin]) / (float)Selected->ShadowMapSize[MapNear];
 		// Selected, not canonical: the bake built its projection from it.
 		if (Selected->ShadowMapFarPlane > 0.0f)
 			WorldToOrthoDepth = 1.0f / (2.0f * Selected->ShadowMapFarPlane);
@@ -207,6 +256,7 @@ void ShadowManager::PublishShadowBiasConstants(SettingsShadowStruct::ExteriorsSt
 	Sm.ShadowBiasDeferred.y = Ext.deferredFarNormBias * ScaleFar;
 	Sm.ShadowBiasDeferred.z = Ext.deferredConstBias * ScaleNear * WorldToOrthoDepth;
 	Sm.ShadowBiasDeferred.w = Ext.deferredFarConstBias * ScaleFar * WorldToOrthoDepth;
+	Sm.ShadowBiasSkin.x = Ext.deferredSkinConstBias * ScaleSkin * WorldToOrthoDepth;
 
 	Sm.ShadowBiasAdaptive.x = Ext.BiasTerminatorWidth;
 	Sm.ShadowBiasAdaptive.y = Ext.BiasMaxSlope;
@@ -234,6 +284,12 @@ void ShadowManager::LoadShadowShaders(IDirect3DDevice9* Device) {
 	// and rendering falls back to the per-object path.
 	ShadowMapInstancedVertex = new ShaderRecord();
 	if (ShadowMapInstancedVertex->LoadShader("ShadowMapInstanced.vso")) Device->CreateVertexShader((const DWORD*)ShadowMapInstancedVertex->Function, &ShadowMapInstancedVertexShader);
+	// Optional too: without it the dynamic-tree composites draw one tree at a time.
+	ShadowMapTreeInstancedVertex = new ShaderRecord();
+	if (ShadowMapTreeInstancedVertex->LoadShader("ShadowMapTreeInstanced.vso")) Device->CreateVertexShader((const DWORD*)ShadowMapTreeInstancedVertex->Function, &ShadowMapTreeInstancedVertexShader);
+	// Optional too: without it cube faces draw one mesh copy at a time.
+	ShadowCubeMapInstancedVertex = new ShaderRecord();
+	if (ShadowCubeMapInstancedVertex->LoadShader("ShadowCubeMapInstanced.vso")) Device->CreateVertexShader((const DWORD*)ShadowCubeMapInstancedVertex->Function, &ShadowCubeMapInstancedVertexShader);
 }
 
 // Whether the device can MIN-blend into an R32F render target, which CompositeDynamicTrees needs.
@@ -382,15 +438,26 @@ ShadowManager::ShadowManager() {
 	EnableStaticMaps = false;
 	EnableStaticMapsFrameCount = 0;
 	ShadowMapInstancedVertexShader = NULL;
+	ShadowMapTreeInstancedVertexShader = NULL;
+	TreeInstanceGroupCount = 0;
+	ShadowCubeMapInstancedVertex = NULL;
+	ShadowCubeMapInstancedVertexShader = NULL;
+	CubeGroupCount = 0;
+	StitchFrame = 0;
+	StitchBuildsLeft = 0;
 	InstanceVB = NULL;
 	InstanceVBCapacity = 0;
 	InstanceGroupCount = 0;
 	ShadowGeoCount = 0;
 	CollectWorldSpace = false;
 	CollectSkinnedOnly = false;
+	OverlayViewCull = false;
+	OverlayKeepRadius = 0.0f;
 	CollectTreesOnly = false;
 	TreeWindPass = false;
 	TreesDynamic[0] = TreesDynamic[1] = false;
+	TreeCompositeDirty[0] = TreeCompositeDirty[1] = true;
+	FarTreeFramesSinceComposite = 0;
 	CollectAnchor = D3DXVECTOR3(0.0f, 0.0f, 0.0f);
 
 	StaticFadeT = 1.0f;
@@ -401,6 +468,8 @@ ShadowManager::ShadowManager() {
 	// Seeded like Shadow.Data.y: 1.0 is the neutral "no crossfade" value the
 	// apply must see before the first sun frame.
 	TheShaderManager->ShaderConst.ShadowMap.ShadowFadeData = D3DXVECTOR4(1.0f, 0.0f, 0.0f, 0.0f);
+	// The whole map, so the apply never skips the actor kernel before the first overlay publishes.
+	TheShaderManager->ShaderConst.ShadowMap.ShadowSkinBounds = D3DXVECTOR4(0.0f, 0.0f, 1.0f, 1.0f);
 
 	for (int i = 0; i < 2; i++) {
 		Regions[i].Valid = false; D3DXMatrixIdentity(&Regions[i].BakedViewProj); Regions[i].AnchorPos = D3DXVECTOR3(0.0f, 0.0f, 0.0f); Regions[i].BakedSunDir = D3DXVECTOR4(0.0f, 0.0f, 0.0f, 0.0f);
@@ -418,6 +487,7 @@ ShadowManager::ShadowManager() {
 		PointSlots[i].BakedLightPos = D3DXVECTOR3(0.0f, 0.0f, 0.0f);
 		PointSlots[i].Checksum = 0;
 		PointSlots[i].Valid = false;
+		PointSlots[i].ViewCulled = false;
 		PointSlots[i].Intensity = 0.0f;
 		PointSlots[i].LastFarPlane = 0.0f;
 		PointSlots[i].LastLuminance = 0.0f;
@@ -731,7 +801,9 @@ void ShadowManager::Render(NiGeometry* Geo, D3DXVECTOR4* ShadowData, const D3DMA
 			if (TreeWindPass && *(void**)LProp == VFTSpeedTreeBranchShaderProperty) SetupSpeedTreeBranchShader(Geo, ShadowData);
 			if (AlphaEnabled) SetupAlphaTexture(Geo, LProp, ShadowData);
 		}
+		LONGLONG PackStart = ProfileStamp();
 		TheRenderManager->PackGeometryBuffer(GeoData, ModelData, SkinInstance, ShaderDeclaration);
+		ProfileSplit(Phase_RigidPack, PackStart);
 		SetupGeoStreams(GeoData);
 		CurrentVertex->SetCT();
 		CurrentPixel->SetCT();
@@ -793,6 +865,7 @@ void ShadowManager::SetupCachedRegionMatrices(ShadowMapTypeEnum ShadowMapType, S
 	Regions[r].BakedSunDir   = *SunDir;
 	Regions[r].Valid         = true;
 	Regions[r].FingerprintStale = true;
+	TreeCompositeDirty[r]    = true;
 }
 
 D3DXMATRIX ShadowManager::ApplyRegionProjection(ShadowMapTypeEnum ShadowMapType, SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors, D3DXVECTOR4* SunDir, const D3DXVECTOR3& Anchor) {
@@ -978,6 +1051,7 @@ void ShadowManager::DrawStaticRegion(ShadowMapTypeEnum ShadowMapType, SettingsSh
 // with its own sample matrix (TESR_ShadowCameraToLightTransformSkin) min-combined with the near term in
 // the apply shader.
 void ShadowManager::RenderActorOverlay(SettingsShadowStruct::ExteriorsStruct* S, D3DXVECTOR4* SunDir) {
+	FrameProfiler::GpuScope OverlayGpu(FrameProfiler::Gpu_ActorOverlay);
 	// Projected exactly like the near region (same anchor and baked sun), only camera-relative. The apply
 	// consults this overlay only inside the near box; centred anywhere else, part of the near box would
 	// fall outside it and lose its shadows, which shows up as a lit strip along the cascade boundary.
@@ -986,12 +1060,106 @@ void ShadowManager::RenderActorOverlay(SettingsShadowStruct::ExteriorsStruct* S,
 	D3DXVECTOR3 At = Center - D3DXVECTOR3(TheRenderManager->CameraPosition.x, TheRenderManager->CameraPosition.y, TheRenderManager->CameraPosition.z);
 	D3DXVECTOR4* OverlaySunDir = NearBaked ? &Regions[0].BakedSunDir : SunDir;
 	SetupShadowMapMatrices(MapSkin, S, &At, OverlaySunDir);
+	SetupOverlayViewCull(S, OverlaySunDir);
 	// CollectSkinnedOnly drops rigid non-actor statics during the walk, leaving
 	// only the camera-relative skinned and actor casters.
 	CollectSkinnedOnly = true;
 	BuildExteriorGeoItems(S, MapSkin);
 	CollectSkinnedOnly = false;
+	OverlayViewCull = false;
+	FrameProfiler::Count(FrameProfiler::Cnt_ActorItems, ShadowGeoCount);
+	PublishSkinBounds(S);
 	RenderShadowMap(MapSkin, S, &At, OverlaySunDir, &TheShaderManager->ShaderConst.Shadow.Data, /*SkipTerrain=*/true);
+}
+
+// The overlay is read only where the camera looks (the apply and the main-pass shaders) and at the
+// player (the sun-shadow probe). A caster's shadow leaves it along the sun ray, so the region it can
+// darken is its bound swept away from the sun across the map. Camera-relative planes through the eye,
+// built from the same camera and frustum as SetupSceneCamera's projection.
+// Camera-relative planes through the eye bounding what the camera sees: in front, left, right and
+// bottom. No top plane: water reflections show what lies above the view. False without a camera.
+static bool BuildViewCullPlanes(D3DXPLANE* Planes) {
+	NiCamera* Camera = WorldSceneGraph ? WorldSceneGraph->camera : NULL;
+	if (!Camera || Camera->Frustum.Ortho) return false;
+	NiMatrix33* R = &Camera->m_worldTransform.rot;
+	D3DXVECTOR3 Forward(R->data[0][0], R->data[1][0], R->data[2][0]);
+	D3DXVECTOR3 Up(R->data[0][1], R->data[1][1], R->data[2][1]);
+	D3DXVECTOR3 Right(R->data[0][2], R->data[1][2], R->data[2][2]);
+	NiFrustum* F = &Camera->Frustum;
+	D3DXVECTOR3 Normals[4] = {
+		Forward,                       // in front of the eye
+		Right - F->Left * Forward,     // x >= Left * z
+		F->Right * Forward - Right,    // x <= Right * z
+		Up - F->Bottom * Forward,      // y >= Bottom * z
+	};
+	for (int i = 0; i < 4; i++) {
+		D3DXVec3Normalize(&Normals[i], &Normals[i]);
+		Planes[i] = D3DXPLANE(Normals[i].x, Normals[i].y, Normals[i].z, 0.0f);
+	}
+	return true;
+}
+
+void ShadowManager::SetupOverlayViewCull(SettingsShadowStruct::ExteriorsStruct* S, const D3DXVECTOR4* SunDir) {
+	static const float kKeepLift = 64.0f;    // keep sphere centre above the player's feet
+	static const float kKeepRadius = 192.0f; // covers the probe points, all within ~130 units of the feet
+	OverlayViewCull = false;
+	if (!S->SkinViewCull || !BuildViewCullPlanes(OverlayViewPlanes)) return;
+	float Reach = 2.0f * S->ShadowMapRadius[MapSkin];
+	OverlaySweep = D3DXVECTOR3(-SunDir->x, -SunDir->y, -SunDir->z) * Reach;
+	const D3DXVECTOR4& Cam = TheRenderManager->CameraPosition;
+	OverlayKeepCenter = D3DXVECTOR3(Player->pos.x - Cam.x, Player->pos.y - Cam.y, Player->pos.z + kKeepLift - Cam.z);
+	OverlayKeepRadius = kKeepRadius * Player->scale;
+	OverlayViewCull = true;
+}
+
+bool ShadowManager::OverlayCasterMatters(const D3DXVECTOR3& Center, float Radius) const {
+	static const float kCasterPadding = 64.0f; // skinned bounds trail the animated pose
+	float R = Radius + kCasterPadding;
+	D3DXVECTOR3 End = Center + OverlaySweep;
+	bool InView = true;
+	for (int i = 0; i < 4 && InView; i++)
+		if (D3DXPlaneDotCoord(&OverlayViewPlanes[i], &Center) < -R && D3DXPlaneDotCoord(&OverlayViewPlanes[i], &End) < -R) InView = false;
+	if (InView) return true;
+	D3DXVECTOR3 ToKeep = OverlayKeepCenter - Center;
+	float SweepLenSq = D3DXVec3LengthSq(&OverlaySweep);
+	float t = SweepLenSq > 0.0f ? D3DXVec3Dot(&ToKeep, &OverlaySweep) / SweepLenSq : 0.0f;
+	t = max(0.0f, min(1.0f, t));
+	D3DXVECTOR3 Gap = ToKeep - OverlaySweep * t;
+	float Reach = R + OverlayKeepRadius;
+	return D3DXVec3LengthSq(&Gap) <= Reach * Reach;
+}
+
+// Publishes ShadowSkinBounds: the union of the overlay casters' footprints in the skin map's UV space,
+// widened by the apply's PCF reach. The map is cleared to the far depth and holds nothing else, so
+// a receiver outside this rectangle reads only cleared texels and is exactly lit by the overlay.
+// Skinned bounds can trail the animated pose, hence the generous per-caster padding.
+void ShadowManager::PublishSkinBounds(SettingsShadowStruct::ExteriorsStruct* S) {
+	static const float kCasterPadding = 64.0f;  // world units added to each caster's bound radius
+	static const float kKernelReachTexels = 3.0f; // the apply's 5x5 kernel reads 2 texels out, +1 for the bilinear tap
+
+	const D3DXMATRIX& M = TheShaderManager->ShaderConst.ShadowMap.ShadowViewProj;
+	// Orthographic, so a sphere's clip extent is its radius times each output row's length.
+	float ScaleX = sqrtf(M._11 * M._11 + M._21 * M._21 + M._31 * M._31);
+	float ScaleY = sqrtf(M._12 * M._12 + M._22 * M._22 + M._32 * M._32);
+	float MinU = FLT_MAX, MinV = FLT_MAX, MaxU = -FLT_MAX, MaxV = -FLT_MAX;
+	for (int i = 0; i < ShadowGeoCount; i++) {
+		const ShadowGeoItem& Item = ShadowGeoPool[i];
+		const D3DXVECTOR3& C = Item.Center;
+		float ClipX = C.x * M._11 + C.y * M._21 + C.z * M._31 + M._41;
+		float ClipY = C.x * M._12 + C.y * M._22 + C.z * M._32 + M._42;
+		float R = Item.Radius + kCasterPadding;
+		MinU = min(MinU, (ClipX - R * ScaleX) * 0.5f + 0.5f);
+		MaxU = max(MaxU, (ClipX + R * ScaleX) * 0.5f + 0.5f);
+		MinV = min(MinV, (ClipY + R * ScaleY) * -0.5f + 0.5f);
+		MaxV = max(MaxV, (ClipY - R * ScaleY) * -0.5f + 0.5f);
+	}
+	D3DXVECTOR4& Bounds = TheShaderManager->ShaderConst.ShadowMap.ShadowSkinBounds;
+	if (!ShadowGeoCount) {
+		Bounds = D3DXVECTOR4(2.0f, 2.0f, -1.0f, -1.0f);
+		return;
+	}
+	float Reach = kKernelReachTexels / (float)S->ShadowMapSize[MapNear];
+	Bounds = D3DXVECTOR4(MinU - Reach, MinV - Reach, MaxU + Reach, MaxV + Reach);
 }
 
 // Latches which regions draw their trees per frame. A region whose mode changed is invalidated, because
@@ -1004,6 +1172,7 @@ void ShadowManager::UpdateDynamicTreeRegions(SettingsShadowStruct::ExteriorsStru
 		if (Dynamic != TreesDynamic[r]) {
 			TreesDynamic[r] = Dynamic;
 			Regions[r].Valid = false;
+			TreeCompositeDirty[r] = true;
 		}
 	}
 }
@@ -1013,16 +1182,49 @@ void ShadowManager::UpdateDynamicTreeRegions(SettingsShadowStruct::ExteriorsStru
 // so they line up with the statics. MIN blending keeps the depth nearer the light, so no depth buffer
 // is needed. The live map is what every consumer samples: the apply, the crossfade copies, the sun
 // shadow probe and volumetric light.
+// FrameProfiler: how far instancing could collapse a composite's tree draws. Branches group by
+// vertex buffer; leaves also by their leaf table, which the leaf path uploads per draw.
+static void CountTreeInstanceGroups(const std::vector<ShadowManager::ShadowGeoItem>& Pool, int Count, int Region) {
+	static std::unordered_set<const void*> Branches;
+	static std::set<std::pair<const void*, const void*>> Leaves;
+	Branches.clear();
+	Leaves.clear();
+	unsigned int BranchItems = 0, LeafItems = 0;
+	for (int i = 0; i < Count; i++) {
+		NiGeometry* Geo = Pool[i].Geo;
+		if (!Pool[i].GeoData) continue;
+		if (Geo->m_parent && Geo->m_parent->m_pcName && !memcmp(Geo->m_parent->m_pcName, "Leaves", 6)) {
+			SpeedTreeLeafShaderProperty* Prop = (SpeedTreeLeafShaderProperty*)Geo->GetProperty(NiProperty::PropertyType::kType_Lighting);
+			Leaves.insert({ Pool[i].GeoData, Prop ? (const void*)Prop->leafData : NULL });
+			LeafItems++;
+		} else {
+			Branches.insert(Pool[i].GeoData);
+			BranchItems++;
+		}
+	}
+	int Base = Region == 0 ? FrameProfiler::Cnt_TreeBranchesNear : FrameProfiler::Cnt_TreeBranchesFar;
+	FrameProfiler::Count(Base + 0, BranchItems);
+	FrameProfiler::Count(Base + 1, (unsigned int)Branches.size());
+	FrameProfiler::Count(Base + 2, LeafItems);
+	FrameProfiler::Count(Base + 3, (unsigned int)Leaves.size());
+}
+
 void ShadowManager::CompositeDynamicTrees(ShadowMapTypeEnum ShadowMapType, SettingsShadowStruct::ExteriorsStruct* S) {
 	ScopeTimer profile(Phase_TreeComposite);
 	int r = ShadowMapType - MapNear;
+	FrameProfiler::GpuScope TreesGpu(r == 0 ? FrameProfiler::Gpu_TreesNear : FrameProfiler::Gpu_TreesFar);
 	if (!ShadowMapSurface[ShadowMapType]) return;
-	if (FAILED(TheRenderManager->device->StretchRect(StaticMapSurface[r], NULL, ShadowMapSurface[ShadowMapType], NULL, D3DTEXF_NONE))) return;
+	{
+		FrameProfiler::GpuScope CopyGpu(r == 0 ? FrameProfiler::Gpu_TreesCopyNear : FrameProfiler::Gpu_TreesCopyFar);
+		if (FAILED(TheRenderManager->device->StretchRect(StaticMapSurface[r], NULL, ShadowMapSurface[ShadowMapType], NULL, D3DTEXF_NONE))) return;
+	}
 	ApplyRegionProjection(ShadowMapType, S, &Regions[r].BakedSunDir, Regions[r].AnchorPos);
 	CollectWorldSpace = true;
 	CollectTreesOnly = true;
 	BuildExteriorGeoItems(S, ShadowMapType);
 	CollectTreesOnly = false;
+	FrameProfiler::Count(r == 0 ? FrameProfiler::Cnt_TreeItemsNear : FrameProfiler::Cnt_TreeItemsFar, ShadowGeoCount);
+	if (FrameProfiler::Active) CountTreeInstanceGroups(ShadowGeoPool, ShadowGeoCount, r);
 	TreeWindPass = true;
 	RenderShadowMap(ShadowMapType, S, &LookAtPosition, &Regions[r].BakedSunDir, &TheShaderManager->ShaderConst.Shadow.Data, /*SkipTerrain=*/true, ShadowMapSurface[ShadowMapType], /*MinBlend=*/true);
 	TreeWindPass = false;
@@ -1128,6 +1330,11 @@ void ShadowManager::CollectCellGeo(TESObjectCELL* Cell, SettingsShadowStruct::Fo
 		if (CollectWorldSpace) { RootCenter.x = RootBound->Center.x - CollectAnchor.x; RootCenter.y = RootBound->Center.y - CollectAnchor.y; RootCenter.z = RootBound->Center.z - CollectAnchor.z; }
 		else { RootCenter.x = RootBound->Center.x - TheRenderManager->CameraPosition.x; RootCenter.y = RootBound->Center.y - TheRenderManager->CameraPosition.y; RootCenter.z = RootBound->Center.z - TheRenderManager->CameraPosition.z; }
 		if (!SphereInShadowFrustum(ShadowMapType, RootCenter, RootBound->Radius)) continue; // whole-subtree cull
+		if (OverlayViewCull) {
+			bool Matters = OverlayCasterMatters(RootCenter, RootBound->Radius);
+			ProfileCount(Matters ? Cnt_OverlayRefsKept : Cnt_OverlayRefsCulled);
+			if (!Matters) continue;
+		}
 		bool IsActorRef = (TypeID >= TESForm::FormType::kFormType_NPC && TypeID <= TESForm::FormType::kFormType_LeveledCreature);
 		bool IsTreeRef = (TypeID == TESForm::FormType::kFormType_Tree);
 		CollectExteriorGeo(Node, HasWater, ShadowMapType, IsActorRef, IsTreeRef);
@@ -1222,6 +1429,13 @@ void ShadowManager::CollectExteriorGeo(NiAVObject* Object, bool HasWater, Shadow
 		// SpeedTree leaves draw via SetupSpeedTreeLeafShader and are never instanced.
 	}
 
+	// Overlay pieces under a texel or two (eyes, teeth, rings) cast nothing the apply can resolve.
+	if (ShadowMapType == MapSkin) {
+		float R = Bound->Radius;
+		static const float kSizeBuckets[4] = { 2.0f, 4.0f, 8.0f, 16.0f };
+		for (int b = 0; b < 4; b++) if (R < kSizeBuckets[b]) ProfileCount((ShadowCounter)(Cnt_SkinRadius2 + b));
+		if (R < TheSettingManager->SettingsShadows.Exteriors.SkinMinRadius) { ProfileCount(Cnt_SkinSmallSkipped); return; }
+	}
 	if (ShadowGeoCount == (int)ShadowGeoPool.size()) ShadowGeoPool.emplace_back();
 	ShadowGeoItem& Item = ShadowGeoPool[ShadowGeoCount++];
 	Item.Geo = Geo;
@@ -1300,7 +1514,7 @@ bool ShadowManager::EnsureInstanceVB(UINT InstanceCount) {
 	return true;
 }
 
-void ShadowManager::DrawInstancedGroup(NiGeometryBufferData* GeoData, std::vector<int>& ItemIdx, IDirect3DVertexDeclaration9* Decl) {
+void ShadowManager::DrawInstancedGroup(NiGeometryBufferData* GeoData, const std::vector<int>& ItemIdx, IDirect3DVertexDeclaration9* Decl, const D3DMATRIX* WorldBase, size_t WorldStride) {
 	IDirect3DDevice9* Device = TheRenderManager->device;
 	NiDX9RenderState* RenderState = TheRenderManager->renderState;
 	UINT Count = (UINT)ItemIdx.size();
@@ -1311,7 +1525,7 @@ void ShadowManager::DrawInstancedGroup(NiGeometryBufferData* GeoData, std::vecto
 	float* Data = NULL;
 	if (FAILED(InstanceVB->Lock(0, Count * ShadowInstanceStride, (void**)&Data, D3DLOCK_DISCARD))) return;
 	for (UINT i = 0; i < Count; i++) {
-		const D3DMATRIX& m = ShadowGeoPool[ItemIdx[i]].World;
+		const D3DMATRIX& m = *(const D3DMATRIX*)((const char*)WorldBase + ItemIdx[i] * WorldStride);
 		float* d = Data + i * 12;
 		d[0] = m._11; d[1] = m._21; d[2]  = m._31; d[3]  = m._41;
 		d[4] = m._12; d[5] = m._22; d[6]  = m._32; d[7]  = m._42;
@@ -1363,7 +1577,7 @@ void ShadowManager::FlushInstanceGroups(D3DXVECTOR4* ShadowData) {
 				ShadowMapPixel->SetCT();
 				InstancedSet = true;
 			}
-			DrawInstancedGroup(Group.GeoData, Group.ItemIdx, Group.Decl);
+			DrawInstancedGroup(Group.GeoData, Group.ItemIdx, Group.Decl, &ShadowGeoPool[0].World, sizeof(ShadowGeoItem));
 			ProfileCount(Cnt_DirInstancedItems, (UInt32)Group.ItemIdx.size());
 		}
 	}
@@ -1380,6 +1594,91 @@ void ShadowManager::FlushInstanceGroups(D3DXVECTOR4* ShadowData) {
 		ProfileCount(Cnt_DirFallbackItems, (UInt32)Group.ItemIdx.size());
 		for (int idx : Group.ItemIdx) Render(ShadowGeoPool[idx].Geo, ShadowData, &ShadowGeoPool[idx].World);
 	}
+}
+
+// Queues a dynamic-tree composite item into its mesh's batch. False means it must draw on its own:
+// not SpeedTree leaf or branch geometry, bent by tree collision this frame (a per-tree constant the
+// batch cannot carry), or no vertex declaration to extend with the instance stream.
+bool ShadowManager::AddTreeInstance(int ItemIndex) {
+	ShadowGeoItem& Item = ShadowGeoPool[ItemIndex];
+	NiGeometry* Geo = Item.Geo;
+	if (!Item.GeoData || !Geo->m_parent) return false;
+	if (Geo->m_pcName && !memcmp(Geo->m_pcName, "Torch", 5)) return false;
+
+	std::array<const void*, 3> Key = { Item.GeoData, NULL, NULL };
+	bool Leaf = Geo->m_parent->m_pcName && !memcmp(Geo->m_parent->m_pcName, "Leaves", 6);
+	if (Leaf) {
+		SpeedTreeLeafShaderProperty* STProp = (SpeedTreeLeafShaderProperty*)Geo->GetProperty(NiProperty::PropertyType::kType_Lighting);
+		BSTreeNode* Node = (BSTreeNode*)Geo->m_parent->m_parent;
+		if (!STProp || !STProp->leafData || !Node || !Node->TreeModel || !Node->TreeModel->LeavesTexture) return false;
+		Key[1] = STProp->leafData;
+		Key[2] = Node->TreeModel->LeavesTexture->rendererData;
+	} else {
+		BSShaderProperty* LProp = (BSShaderProperty*)Geo->GetProperty(NiProperty::PropertyType::kType_Lighting);
+		if (!LProp || *(void**)LProp != VFTSpeedTreeBranchShaderProperty) return false;
+	}
+#if defined(OBLIVION)
+	if (TreeCollisionReaches(Geo, &Geo->m_worldTransform)) return false;
+#endif
+
+	auto it = TreeInstanceGroupIndex.find(Key);
+	int idx;
+	if (it == TreeInstanceGroupIndex.end()) {
+		IDirect3DVertexDeclaration9* Decl = GetInstancedDeclaration(Item.GeoData);
+		if (!Decl) return false;
+		idx = TreeInstanceGroupCount++;
+		if ((size_t)idx == TreeInstancePool.size()) TreeInstancePool.emplace_back();
+		TreeInstanceGroup& Group = TreeInstancePool[idx];
+		Group.First = Geo;
+		Group.GeoData = Item.GeoData;
+		Group.Leaf = Leaf;
+		Group.Decl = Decl;
+		Group.ItemIdx.clear();
+		TreeInstanceGroupIndex.emplace(Key, idx);
+	} else {
+		idx = it->second;
+	}
+	TreeInstancePool[idx].ItemIdx.emplace_back(ItemIndex);
+	return true;
+}
+
+// Draws the queued tree batches. A mesh seen only once gains nothing from instancing, so those draw
+// first through the regular path while its shader is still bound; the rest share the instanced
+// shader, each group taking its leaf or branch constants from its first tree.
+void ShadowManager::FlushTreeInstanceGroups(D3DXVECTOR4* ShadowData) {
+	NiDX9RenderState* RenderState = TheRenderManager->renderState;
+	const size_t MinGroup = 2;
+
+	UINT MaxGroup = 0;
+	for (int i = 0; i < TreeInstanceGroupCount; i++)
+		if (TreeInstancePool[i].ItemIdx.size() >= MinGroup) MaxGroup = max(MaxGroup, (UINT)TreeInstancePool[i].ItemIdx.size());
+	bool CanInstance = MaxGroup > 0 && EnsureInstanceVB(MaxGroup);
+
+	CurrentVertex = ShadowMapVertex;
+	CurrentPixel = ShadowMapPixel;
+	for (int i = 0; i < TreeInstanceGroupCount; i++) {
+		TreeInstanceGroup& Group = TreeInstancePool[i];
+		if (CanInstance && Group.ItemIdx.size() >= MinGroup) continue;
+		for (int idx : Group.ItemIdx) Render(ShadowGeoPool[idx].Geo, ShadowData, &ShadowGeoPool[idx].World);
+	}
+	if (!CanInstance) return;
+
+	RenderState->SetVertexShader(ShadowMapTreeInstancedVertexShader, false);
+	RenderState->SetPixelShader(ShadowMapPixelShader, false);
+	for (int i = 0; i < TreeInstanceGroupCount; i++) {
+		TreeInstanceGroup& Group = TreeInstancePool[i];
+		if (Group.ItemIdx.size() < MinGroup) continue;
+		ShadowData->y = 0.0f;
+		if (Group.Leaf) SetupSpeedTreeLeafShader(Group.First, ShadowData);
+		else SetupSpeedTreeBranchShader(Group.First, ShadowData);
+		ShadowMapTreeInstancedVertex->SetCT();
+		ShadowMapPixel->SetCT();
+		TheRenderManager->PackGeometryBuffer(Group.GeoData, Group.First->geomData, NULL, Group.First->shader->ShaderDeclaration);
+		DrawInstancedGroup(Group.GeoData, Group.ItemIdx, Group.Decl, &ShadowGeoPool[0].World, sizeof(ShadowGeoItem));
+		FrameProfiler::Count(FrameProfiler::Cnt_TreeInstancedDraws);
+		FrameProfiler::Count(FrameProfiler::Cnt_TreeInstancedPieces, (unsigned int)Group.ItemIdx.size());
+	}
+	RenderState->SetVertexShader(ShadowMapVertexShader, false);
 }
 
 void ShadowManager::RenderShadowMap(ShadowMapTypeEnum ShadowMapType, SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors, D3DXVECTOR3* At, D3DXVECTOR4* ShadowLightDir, D3DXVECTOR4* ShadowData, bool SkipTerrain, IDirect3DSurface9* Target, bool MinBlend) {
@@ -1418,10 +1717,15 @@ void ShadowManager::RenderShadowMap(ShadowMapTypeEnum ShadowMapType, SettingsSha
 	}
 	bool UseInstancing = ShadowsExteriors->UseInstancing && ShadowMapInstancedVertexShader;
 	if (UseInstancing) { InstanceGroupIndex.clear(); InstanceGroupCount = 0; }
+	// Dynamic-tree composites batch repeated tree meshes through their own instanced shader.
+	bool TreeInstancing = MinBlend && TreeWindPass && ShadowsExteriors->UseInstancing && ShadowMapTreeInstancedVertexShader &&
+		TheSettingManager->SettingsShadows.Exteriors.InstanceDynamicTrees;
+	if (TreeInstancing) { TreeInstanceGroupIndex.clear(); TreeInstanceGroupCount = 0; }
 
 	// Batch instanceable opaque statics; draw everything else immediately.
 	for (int i = 0; i < ShadowGeoCount; i++) {
 		ShadowGeoItem& Item = ShadowGeoPool[i];
+		if (TreeInstancing && AddTreeInstance(i)) continue;
 		if (UseInstancing && Item.BaseInstanceable && !(AlphaEnabled && Item.HasAlphaMask)) {
 			AddInstance(Item.GeoData, i);
 			ProfileCount(Cnt_DirItemsInstanced);
@@ -1432,6 +1736,7 @@ void ShadowManager::RenderShadowMap(ShadowMapTypeEnum ShadowMapType, SettingsSha
 		}
 	}
 	if (UseInstancing) FlushInstanceGroups(ShadowData);
+	if (TreeInstancing) FlushTreeInstanceGroups(ShadowData);
 	Device->EndScene();
 	if (MinBlend) {
 		RenderState->SetRenderState(D3DRS_BLENDOP, D3DBLENDOP_ADD, RenderStateArgs);
@@ -1586,8 +1891,16 @@ void ShadowManager::RenderExteriorShadows() {
 		}
 
 		// After every bake and redraw, so each live map starts from this frame's static depth.
-		for (int r = 0; r < 2; r++)
-			if (TreesDynamic[r]) CompositeDynamicTrees((ShadowMapTypeEnum)(MapNear + r), ShadowsExteriors);
+		// The far map's trees may refresh every Nth frame: between composites its live map keeps the
+		// last one, which stays valid until a bake, redraw or mode change marks it dirty.
+		int FarInterval = TheSettingManager->SettingsShadows.Exteriors.DynamicTreesFarInterval;
+		for (int r = 0; r < 2; r++) {
+			if (!TreesDynamic[r]) continue;
+			if (r == 1 && !TreeCompositeDirty[r] && ++FarTreeFramesSinceComposite < FarInterval) continue;
+			CompositeDynamicTrees((ShadowMapTypeEnum)(MapNear + r), ShadowsExteriors);
+			TreeCompositeDirty[r] = false;
+			if (r == 1) FarTreeFramesSinceComposite = 0;
+		}
 
 		RenderActorOverlay(ShadowsExteriors, SunDir);
 
@@ -1878,28 +2191,31 @@ void ShadowManager::ClearCubeMapNodeLists() {
 
 ShadowManager::RefLightInfo ShadowManager::BuildRefLightInfo(TESObjectREFR* Ref) {
 	RefLightInfo Info;
+	Info.Ref = Ref;
 	Info.Node = Ref->GetNode();
 	UInt8 TypeID = Ref->baseForm->formType;
 	Info.IsActorType = (TypeID >= TESForm::FormType::kFormType_NPC && TypeID <= TESForm::FormType::kFormType_LeveledCreature);
 	Info.BoundRadius = Info.Node->GetWorldBoundRadius();
-	if (Info.IsActorType) {
-		// Bound centre to whole units only: an idle NPC's breathing jitters it,
-		// and its root pose would rebake every cube every frame.
-		NiBound* B = Ref->niNode->GetWorldBound();
-		Info.PoseHash = MixHash(MixHash(MixHash(MixHash(0, (UInt64)(uintptr_t)Info.Node),
-			(UInt32)(SInt32)floorf(B->Center.x)), (UInt32)(SInt32)floorf(B->Center.y)), (UInt32)(SInt32)floorf(B->Center.z));
-	}
-	else {
-		Info.PoseHash = RefPoseHash(Info.Node);
-	}
+	Info.PoseHash = 0;
+	Info.Hashed = false;
 	Info.IsPlayer = (Ref->refID == Player->refID);
 	return Info;
+}
+
+// The ref's contribution to a cube's rebake checksum.
+static UInt64 RefLightPoseHash(const ShadowManager::RefLightInfo& Info) {
+	if (!Info.IsActorType) return RefPoseHash(Info.Node);
+	// Bound centre to whole units only: an idle NPC's breathing jitters it,
+	// and its root pose would rebake every cube every frame.
+	NiBound* B = Info.Ref->niNode->GetWorldBound();
+	return MixHash(MixHash(MixHash(MixHash(0, (UInt64)(uintptr_t)Info.Node),
+		(UInt32)(SInt32)floorf(B->Center.x)), (UInt32)(SInt32)floorf(B->Center.y)), (UInt32)(SInt32)floorf(B->Center.z));
 }
 
 // Tests one ref against one slot's light and files it under statics or actors. Actors (and any
 // carried light) get a wider radius because they move: a caster just outside the strict radius
 // can step inside it before the next rebake.
-void ShadowManager::ClassifyRefForPointSlot(const RefLightInfo& Info, int Slot, UInt64* Checksums) {
+void ShadowManager::ClassifyRefForPointSlot(RefLightInfo& Info, int Slot, UInt64* Checksums) {
 	NiPointLight* Light = PointSlots[Slot].Light;
 	NiPoint3* LightPos = &Light->m_worldTransform.pos;
 	float FarPlane = TheShaderManager->ShaderConst.ShadowMap.ShadowCastLightPosition[Slot].w;
@@ -1914,6 +2230,7 @@ void ShadowManager::ClassifyRefForPointSlot(const RefLightInfo& Info, int Slot, 
 	else {
 		CubeMapRefMap[Slot].emplace_back(Info.Node);
 	}
+	if (!Info.Hashed) { Info.PoseHash = RefLightPoseHash(Info); Info.Hashed = true; }
 	Checksums[Slot] += Info.PoseHash;
 }
 
@@ -1957,10 +2274,144 @@ void ShadowManager::SetupCubeMapRenderState() {
 	RenderState->SetPixelShader(ShadowCubeMapPixelShader, false);
 }
 
+// Whether Render() would draw Geo as a plain opaque static, so the instanced cube shader (position
+// and instance matrix only) reproduces it exactly.
+bool ShadowManager::CubeGeoInstanceable(NiGeometry* Geo) {
+	NiGeometryBufferData* GeoData = Geo->geomData ? Geo->geomData->BuffData : NULL;
+	if (!GeoData || !GeoData->VertexDeclaration || Geo->skinInstance || !Geo->shader) return false;
+	if (Geo->m_pcName && !memcmp(Geo->m_pcName, "Torch", 5)) return false;
+	if (!Geo->m_parent || (Geo->m_parent->m_pcName && !memcmp(Geo->m_parent->m_pcName, "Leaves", 6))) return false;
+	BSShaderProperty* LProp = (BSShaderProperty*)Geo->GetProperty(NiProperty::PropertyType::kType_Lighting);
+	if (!LProp || !LProp->IsLightingProperty()) return false;
+	if (AlphaEnabled) {
+		NiAlphaProperty* AProp = (NiAlphaProperty*)Geo->GetProperty(NiProperty::PropertyType::kType_Alpha);
+		if (AProp && (AProp->flags & (NiAlphaProperty::AlphaFlags::ALPHA_BLEND_MASK | NiAlphaProperty::AlphaFlags::TEST_ENABLE_MASK))) return false;
+	}
+	return true;
+}
+
+// Groups CubeMapGeoList's repeated instanceable meshes. A mesh with one copy in the list stays
+// ungrouped: no face could batch it.
+void ShadowManager::BuildCubeInstanceGroups() {
+	CubeGroupIndex.clear();
+	CubeGroupCount = 0;
+	CubeGeoGroup.assign(CubeMapGeoList.size(), -1);
+	for (size_t g = 0; g < CubeMapGeoList.size(); g++) {
+		NiGeometry* Geo = CubeMapGeoList[g];
+		if (!CubeGeoInstanceable(Geo)) continue;
+		NiGeometryBufferData* GeoData = Geo->geomData->BuffData;
+		auto it = CubeGroupIndex.find(GeoData);
+		int idx;
+		if (it == CubeGroupIndex.end()) {
+			IDirect3DVertexDeclaration9* Decl = GetInstancedDeclaration(GeoData);
+			if (!Decl) continue;
+			idx = CubeGroupCount++;
+			if ((size_t)idx == CubeGroupPool.size()) CubeGroupPool.emplace_back();
+			CubeInstanceGroup& Group = CubeGroupPool[idx];
+			Group.GeoData = GeoData;
+			Group.First = Geo;
+			Group.Decl = Decl;
+			Group.Total = 0;
+			CubeGroupIndex.emplace(GeoData, idx);
+		}
+		else idx = it->second;
+		CubeGroupPool[idx].Total++;
+		CubeGeoGroup[g] = idx;
+	}
+	for (size_t g = 0; g < CubeGeoGroup.size(); g++)
+		if (CubeGeoGroup[g] >= 0 && CubeGroupPool[CubeGeoGroup[g]].Total < 2) CubeGeoGroup[g] = -1;
+}
+
+void ShadowManager::DrawCubeFace(D3DXPLANE* Frustum, D3DXVECTOR4* BakeData, bool Instancing) {
+	if (!Instancing) {
+		for (size_t g = 0; g < CubeMapGeoList.size(); g++)
+			if (InFrustum(Frustum, CubeMapGeoList[g])) Render(CubeMapGeoList[g], BakeData, &CubeMapGeoWorld[g]);
+		return;
+	}
+
+	for (int i = 0; i < CubeGroupCount; i++) CubeGroupPool[i].Visible.clear();
+	for (size_t g = 0; g < CubeMapGeoList.size(); g++) {
+		if (!InFrustum(Frustum, CubeMapGeoList[g])) continue;
+		if (CubeGeoGroup[g] >= 0) CubeGroupPool[CubeGeoGroup[g]].Visible.push_back((int)g);
+		else Render(CubeMapGeoList[g], BakeData, &CubeMapGeoWorld[g]);
+	}
+	UINT MaxGroup = 0;
+	for (int i = 0; i < CubeGroupCount; i++) {
+		std::vector<int>& Visible = CubeGroupPool[i].Visible;
+		if (Visible.size() == 1) Render(CubeMapGeoList[Visible[0]], BakeData, &CubeMapGeoWorld[Visible[0]]);
+		else MaxGroup = max(MaxGroup, (UINT)Visible.size());
+	}
+	if (MaxGroup < 2 || !EnsureInstanceVB(MaxGroup)) {
+		for (int i = 0; i < CubeGroupCount; i++) {
+			std::vector<int>& Visible = CubeGroupPool[i].Visible;
+			if (Visible.size() < 2) continue;
+			for (int g : Visible) Render(CubeMapGeoList[g], BakeData, &CubeMapGeoWorld[g]);
+		}
+		return;
+	}
+
+	NiDX9RenderState* RenderState = TheRenderManager->renderState;
+	BakeData->x = 0.0f;
+	BakeData->y = 0.0f;
+	RenderState->SetVertexShader(ShadowCubeMapInstancedVertexShader, false);
+	RenderState->SetPixelShader(ShadowCubeMapPixelShader, false);
+	ShadowCubeMapInstancedVertex->SetCT();
+	ShadowCubeMapPixel->SetCT();
+	for (int i = 0; i < CubeGroupCount; i++) {
+		CubeInstanceGroup& Group = CubeGroupPool[i];
+		if (Group.Visible.size() < 2) continue;
+		TheRenderManager->PackGeometryBuffer(Group.GeoData, Group.First->geomData, NULL, Group.First->shader->ShaderDeclaration);
+		DrawInstancedGroup(Group.GeoData, Group.Visible, Group.Decl, CubeMapGeoWorld.data(), sizeof(D3DMATRIX));
+		ProfileCount(Cnt_CubeInstancedDraws);
+		ProfileCount(Cnt_CubeInstancedItems, (UInt32)Group.Visible.size());
+	}
+	RenderState->SetVertexShader(ShadowCubeMapVertexShader, false);
+}
+
+// A caster's shadow fills the cone from the light through its bound, out to the far plane. That cone
+// lies inside the hull of a sphere at the caster and one at the far end, each the cone's width there
+// plus the caster's radius, so it misses the view if both spheres lie outside one view plane.
+bool ShadowManager::CullCubeCastersToView(const D3DXVECTOR3& LightPos, float FarPlane) {
+	static const float kSkinnedPadding = 64.0f; // skinned bounds trail the animated pose
+	static const float kRigidPadding = 4.0f;
+	D3DXPLANE Planes[4];
+	if (!BuildViewCullPlanes(Planes)) return false;
+	const D3DXVECTOR4& Cam = TheRenderManager->CameraPosition;
+	size_t Kept = 0;
+	for (size_t g = 0; g < CubeMapGeoList.size(); g++) {
+		NiGeometry* Geo = CubeMapGeoList[g];
+		NiBound* Bound = Geo->GetWorldBound();
+		bool Reaches = true;
+		if (Bound) {
+			D3DXVECTOR3 C(Bound->Center.x - Cam.x, Bound->Center.y - Cam.y, Bound->Center.z - Cam.z);
+			float R = Bound->Radius + (Geo->skinInstance ? kSkinnedPadding : kRigidPadding);
+			D3DXVECTOR3 Ray = C - LightPos;
+			float DistSq = D3DXVec3LengthSq(&Ray);
+			if (DistSq > R * R * 1.1f) {
+				float Dist = sqrtf(DistSq);
+				float Slope = R / sqrtf(DistSq - R * R); // cone half-width per unit along the ray
+				float Far = max(FarPlane, Dist);
+				D3DXVECTOR3 End = LightPos + Ray * (Far / Dist);
+				float NearWidth = R + Slope * Dist;
+				float FarWidth = R + Slope * Far;
+				for (int i = 0; i < 4 && Reaches; i++)
+					if (D3DXPlaneDotCoord(&Planes[i], &C) < -NearWidth && D3DXPlaneDotCoord(&Planes[i], &End) < -FarWidth) Reaches = false;
+			}
+		}
+		if (Reaches) CubeMapGeoList[Kept++] = Geo;
+	}
+	ProfileCount(Cnt_CubeCastersKept, (UInt32)Kept);
+	ProfileCount(Cnt_CubeCastersCulled, (UInt32)(CubeMapGeoList.size() - Kept));
+	bool Culled = Kept < CubeMapGeoList.size();
+	CubeMapGeoList.resize(Kept);
+	return Culled;
+}
+
 // A slot's cached cube is reused unless something it depends on changed.
 bool ShadowManager::PointSlotNeedsRebake(int Slot, UInt64 Checksum) {
 	PointLightSlot& Slot_ = PointSlots[Slot];
 	if (!Slot_.Valid) return true;          // never baked, or reassigned to a different light
+	if (Slot_.ViewCulled) return true;      // baked for last frame's view only
 	if (!EnableStaticMaps) return true;     // post-cell-change warmup: havok still settling
 	NiPoint3* P = &Slot_.Light->m_worldTransform.pos;
 	D3DXVECTOR3 Pos(P->x, P->y, P->z);
@@ -1992,9 +2443,14 @@ void ShadowManager::BakePointCube(int Slot) {
 	CubeMapGeoList.clear();
 	for (NiNode* RefNode : CubeMapRefMap[Slot]) CollectCubeMapGeometry(RefNode, CubeMapGeoList);
 	for (NiNode* RefNode : CubeMapActorMap[Slot]) CollectCubeMapGeometry(RefNode, CubeMapGeoList);
+	// A carried light rebakes every frame anyway, so its cube can be cut to this frame's view.
+	PointSlots[Slot].ViewCulled = TheSettingManager->SettingsShadows.Point.ViewCull && PointSlots[Slot].Light->CanCarry
+		&& CullCubeCastersToView(D3DXVECTOR3(LightPos->x, LightPos->y, LightPos->z), LightPos->w);
 	CubeMapGeoWorld.resize(CubeMapGeoList.size());
 	for (size_t g = 0; g < CubeMapGeoList.size(); g++)
 		CreateD3DMatrix(&CubeMapGeoWorld[g], &CubeMapGeoList[g]->m_worldTransform);
+	bool Instancing = TheSettingManager->SettingsShadows.Point.UseInstancing && ShadowCubeMapInstancedVertexShader;
+	if (Instancing) BuildCubeInstanceGroups();
 
 	D3DXMATRIX Proj, View;
 	D3DXMatrixPerspectiveFovRH(&Proj, D3DXToRadian(90.0f), 1.0f, 1.0f, LightPos->w);
@@ -2015,8 +2471,7 @@ void ShadowManager::BakePointCube(int Slot) {
 		GetFrustumPlanes(Frustum, &TheShaderManager->ShaderConst.ShadowMap.ShadowViewProj);
 		Device->BeginScene();
 		SetupCubeMapRenderState();
-		for (size_t g = 0; g < CubeMapGeoList.size(); g++)
-			if (InFrustum(Frustum, CubeMapGeoList[g])) Render(CubeMapGeoList[g], BakeData, &CubeMapGeoWorld[g]);
+		DrawCubeFace(Frustum, BakeData, Instancing);
 		Device->EndScene();
 	}
 
@@ -2104,6 +2559,7 @@ void ShadowManager::RenderShadowMaps() {
 	Global->RenderShadowMaps(); //Window reflections seem to be rendered here
 
 	FrameProfiler::Scope ProfileScope(FrameProfiler::Buck_ShadowMaps);
+	AdvanceStitchedStrips();
 
 	IDirect3DDevice9* Device = TheRenderManager->device;
 	IDirect3DSurface9* DepthSurface = NULL;
@@ -2125,7 +2581,12 @@ void ShadowManager::RenderShadowMaps() {
 	TheRenderManager->SetupSceneCamera();
 	{
 		ScopeTimer profile(Phase_FrameTotal);
-		RenderExteriorShadows();
+		FrameProfiler::GpuScope ShadowMapsGpu(FrameProfiler::Gpu_ShadowMaps);
+		{
+			FrameProfiler::GpuScope ExtGpu(FrameProfiler::Gpu_ShadowExt);
+			RenderExteriorShadows();
+		}
+		FrameProfiler::GpuScope PointGpu(FrameProfiler::Gpu_ShadowPoint);
 		RenderPointShadows(); // interiors and exteriors
 	}
 	Device->SetDepthStencilSurface(DepthSurface);
@@ -2155,18 +2616,122 @@ void ShadowManager::SetupGeoStreams(NiGeometryBufferData* GeoData) {
 		RenderState->SetVertexDeclaration(GeoData->VertexDeclaration, false);
 }
 
+static inline void CountShadowDraw() {
+	ProfileCount(Cnt_DrawCalls);
+	if (gCubeBucket) ProfileCount(Cnt_DrawCallsCube);
+	if (gCubeActorBucket) ProfileCount(Cnt_DrawCallsCubeActor);
+	if (gTerrainBucket) ProfileCount(Cnt_DirTerrainDraws);
+}
+
 void ShadowManager::DrawGeoArrays(NiGeometryBufferData* GeoData, D3DPRIMITIVETYPE PrimitiveType, UINT VertCount) {
 	IDirect3DDevice9* Device = TheRenderManager->device;
+	if (GeoData->NumArrays > 1 && PrimitiveType == D3DPT_TRIANGLESTRIP && TheSettingManager->SettingsShadows.Exteriors.StitchStrips) {
+		if (const StitchedStrip* Stitched = GetStitchedStrip(GeoData, VertCount)) {
+			Device->SetIndices(Stitched->IB);
+			Device->DrawIndexedPrimitive(D3DPT_TRIANGLESTRIP, GeoData->BaseVertexIndex, 0, VertCount, 0, Stitched->PrimCount);
+			CountShadowDraw();
+			ProfileCount(Cnt_StitchedDraws);
+			ProfileCount(Cnt_StitchedStrips, GeoData->NumArrays);
+			return;
+		}
+		ProfileCount(Cnt_StitchFallbacks);
+	}
 	int StartIndex = 0;
 	for (UInt32 i = 0; i < GeoData->NumArrays; i++) {
 		int PrimitiveCount = GeoData->ArrayLengths ? (int)GeoData->ArrayLengths[i] - 2 : GeoData->TriCount;
 		Device->DrawIndexedPrimitive(PrimitiveType, GeoData->BaseVertexIndex, 0, VertCount, StartIndex, PrimitiveCount);
 		StartIndex += PrimitiveCount + 2;
-		ProfileCount(Cnt_DrawCalls);
-		if (gCubeBucket) ProfileCount(Cnt_DrawCallsCube);
-		if (gCubeActorBucket) ProfileCount(Cnt_DrawCallsCubeActor);
-		if (gTerrainBucket) ProfileCount(Cnt_DirTerrainDraws);
+		CountShadowDraw();
 	}
+}
+
+namespace {
+	const int    StitchBuildsPerFrame = 64;
+	const UInt32 StitchEvictFrames    = 600;
+	const UInt32 StitchSweepInterval  = 256;
+}
+
+// Identity of a mesh's index data, cheap enough to check on every draw: strip count, total length
+// and a handful of sampled indices.
+static UInt32 StitchSourceKey(const NiGeometryBufferData* GeoData, UInt32 Total) {
+	const UInt16* Indices = GeoData->IndexArray;
+	UInt32 Hash = (GeoData->NumArrays * 2654435761u) ^ Total;
+	for (UInt32 k = 0; k < 8; k++) Hash = (Hash ^ Indices[(UInt64)Total * k / 8]) * 16777619u;
+	return Hash ^ Indices[Total - 1];
+}
+
+void ShadowManager::AdvanceStitchedStrips() {
+	StitchFrame++;
+	StitchBuildsLeft = StitchBuildsPerFrame;
+	if (StitchFrame % StitchSweepInterval) return;
+	for (auto it = StitchedStrips.begin(); it != StitchedStrips.end();) {
+		if (StitchFrame - it->second.LastUsedFrame > StitchEvictFrames) {
+			if (it->second.IB) it->second.IB->Release();
+			it = StitchedStrips.erase(it);
+		}
+		else ++it;
+	}
+}
+
+const ShadowManager::StitchedStrip* ShadowManager::GetStitchedStrip(NiGeometryBufferData* GeoData, UINT VertCount) {
+	const UInt16* Lengths = GeoData->ArrayLengths;
+	const UInt16* Indices = GeoData->IndexArray;
+	if (!Lengths || !Indices) return NULL;
+	UInt32 Total = 0;
+	for (UInt32 i = 0; i < GeoData->NumArrays; i++) Total += Lengths[i];
+	if (Total < 3) return NULL;
+	UInt32 Key = StitchSourceKey(GeoData, Total);
+
+	auto it = StitchedStrips.find(GeoData);
+	if (it != StitchedStrips.end()) {
+		StitchedStrip& Cached = it->second;
+		if (Cached.SourceIB == GeoData->IB && Cached.SourceIndices == Indices && Cached.SourceKey == Key) {
+			Cached.LastUsedFrame = StitchFrame;
+			return Cached.IB ? &Cached : NULL;
+		}
+		if (Cached.IB) Cached.IB->Release();
+		StitchedStrips.erase(it);
+	}
+	if (StitchBuildsLeft <= 0) return NULL;
+	StitchBuildsLeft--;
+	ProfileCount(Cnt_StitchBuilds);
+
+	// Each join repeats the previous strip's last index and the next strip's first, giving four
+	// degenerate triangles the GPU discards. An out-of-range index means the CPU copy does not match
+	// what the per-strip draws read, so such a mesh is never stitched.
+	StitchedStrip Built = { NULL, GeoData->IB, Indices, Key, 0, StitchFrame };
+	std::vector<UInt16>& Out = StitchScratch;
+	Out.clear();
+	bool Valid = true;
+	UInt32 Offset = 0;
+	for (UInt32 i = 0; i < GeoData->NumArrays && Valid; i++) {
+		const UInt16* Strip = Indices + Offset;
+		UInt32 Length = Lengths[i];
+		Offset += Length;
+		if (Length < 3) continue;
+		if (!Out.empty()) { Out.push_back(Out.back()); Out.push_back(Strip[0]); }
+		for (UInt32 k = 0; k < Length; k++) {
+			if (Strip[k] >= VertCount) { Valid = false; break; }
+			Out.push_back(Strip[k]);
+		}
+	}
+	if (Valid && Out.size() >= 3) {
+		IDirect3DIndexBuffer9* IB = NULL;
+		UINT Bytes = (UINT)(Out.size() * sizeof(UInt16));
+		if (SUCCEEDED(TheRenderManager->device->CreateIndexBuffer(Bytes, D3DUSAGE_WRITEONLY, D3DFMT_INDEX16, D3DPOOL_MANAGED, &IB, NULL))) {
+			void* Data = NULL;
+			if (SUCCEEDED(IB->Lock(0, Bytes, &Data, 0))) {
+				memcpy(Data, Out.data(), Bytes);
+				IB->Unlock();
+				Built.IB = IB;
+				Built.PrimCount = (UInt32)Out.size() - 2;
+			}
+			else IB->Release();
+		}
+	}
+	StitchedStrip& Stored = StitchedStrips[GeoData];
+	Stored = Built;
+	return Stored.IB ? &Stored : NULL;
 }
 
 // Look-at target and up vector for each cube face. The sampling convention in the apply shader
@@ -2240,6 +2805,29 @@ void ShadowManager::SetupAlphaTexture(NiGeometry* Geo, BSShaderProperty* LProp, 
 	}
 }
 
+// Uploads a skin partition's bone palette from c9, 3 registers per bone, in one call: the partition
+// picks its bones out of the skin's full palette, so they are gathered first. A partition too big for
+// the gather buffer falls back to one call per bone.
+static void UploadPartitionBones(IDirect3DDevice9* Device, NiSkinInstance* SkinInstance, NiSkinPartition::Partition* Partition) {
+	const int MaxGathered = 64;
+	const float* Palette = (const float*)SkinInstance->BoneMatrixes;
+	int Bones = Partition->Bones;
+	if (Bones <= 0) return;
+	if (Bones > MaxGathered) {
+		for (int i = 0; i < Bones; i++) {
+			UInt16 Index = Partition->pBones ? Partition->pBones[i] : (UInt16)i;
+			Device->SetVertexShaderConstantF(9 + i * 3, Palette + Index * 12, 3);
+		}
+		return;
+	}
+	float Gathered[MaxGathered * 12];
+	for (int i = 0; i < Bones; i++) {
+		UInt16 Index = Partition->pBones ? Partition->pBones[i] : (UInt16)i;
+		memcpy(Gathered + i * 12, Palette + Index * 12, 12 * sizeof(float));
+	}
+	Device->SetVertexShaderConstantF(9, Gathered, Bones * 3);
+}
+
 void ShadowManager::RenderSkinnedGeo(NiGeometry* Geo, D3DXVECTOR4* ShadowData) {
 	IDirect3DDevice9* Device = TheRenderManager->device;
 	NiGeometryData* ModelData = Geo->geomData;
@@ -2248,22 +2836,23 @@ void ShadowManager::RenderSkinnedGeo(NiGeometry* Geo, D3DXVECTOR4* ShadowData) {
 	NiSkinPartition* SkinPartition = SkinInstance->SkinPartition;
 	D3DPRIMITIVETYPE PrimitiveType = (SkinPartition->Partitions[0].Strips == 0) ? D3DPT_TRIANGLELIST : D3DPT_TRIANGLESTRIP;
 	ShadowData->x = 1.0f;
+	LONGLONG Split = ProfileStamp();
 	TheRenderManager->CalculateBoneMatrixes(SkinInstance, &Geo->m_worldTransform);
 	if (SkinInstance->SkinToWorldWorldToSkin) memcpy(&TheShaderManager->ShaderConst.ShadowMap.ShadowWorld, SkinInstance->SkinToWorldWorldToSkin, 0x40);
+	Split = ProfileSplit(Phase_SkinBones, Split);
 	for (UInt32 p = 0; p < SkinPartition->PartitionsCount; p++) {
-		int StartRegister = 9;
 		NiSkinPartition::Partition* Partition = &SkinPartition->Partitions[p];
-		for (int i = 0; i < Partition->Bones; i++) {
-			UInt16 NewIndex = (Partition->pBones == NULL) ? i : Partition->pBones[i];
-			Device->SetVertexShaderConstantF(StartRegister, ((float*)SkinInstance->BoneMatrixes) + (NewIndex * 3 * 4), 3);
-			StartRegister += 3;
-		}
+		UploadPartitionBones(Device, SkinInstance, Partition);
 		NiGeometryBufferData* GeoData = Partition->BuffData;
+		Split = ProfileSplit(Phase_SkinSetup, Split);
 		TheRenderManager->PackSkinnedGeometryBuffer(GeoData, ModelData, SkinInstance, Partition, ShaderDeclaration);
+		Split = ProfileSplit(Phase_SkinPack, Split);
 		SetupGeoStreams(GeoData);
 		CurrentVertex->SetCT();
 		CurrentPixel->SetCT();
+		Split = ProfileSplit(Phase_SkinSetup, Split);
 		DrawGeoArrays(GeoData, PrimitiveType, Partition->Vertices);
+		Split = ProfileSplit(Phase_SkinDraw, Split);
 	}
 	// CalculateBoneMatrixes stamped FrameID; invalidate it so the later water
 	// reflection pass recomputes rather than reusing shadow-pass bones.

@@ -18,11 +18,8 @@ static const float GrassCollisionMaxBend = 0.8;
 // kGrassCollisionActorTag in ShaderManager.cpp.
 static const float GrassCollisionActorTag = 2.0;
 
-// BladeXY     : world XY of the grass instance
-// TipWeight   : bend weight of this vertex (0 at the root, 1 at the tip)
-// BladeHeight : scaled model-space height of this vertex above the root
-// Returns the model-space displacement to add to the vertex position.
-float3 GrassCollisionDisplacement(float2 BladeXY, float TipWeight, float BladeHeight) {
+// The body of GrassCollisionDisplacement, for a batch with at least one live source.
+float3 GrassCollisionDisplacementLive(float2 BladeXY, float TipWeight, float BladeHeight) {
     float playerRadius = TESR_GrassCollisionParams.x;
     float pushStr = TESR_GrassCollisionParams.y;
     float flatStr = TESR_GrassCollisionParams.z;
@@ -64,5 +61,20 @@ float3 GrassCollisionDisplacement(float2 BladeXY, float TipWeight, float BladeHe
     // The tip travels on an arc around the root, so leaning also lowers it.
     float arcDrop = h - sqrt(max(h * h - leanSq * leanScale * leanScale, 0.0));
     collisionDisp.z = max(min(collisionDisp.z, -arcDrop), -maxBend);
+    return collisionDisp;
+}
+
+// BladeXY     : world XY of the grass instance
+// TipWeight   : bend weight of this vertex (0 at the root, 1 at the tip)
+// BladeHeight : scaled model-space height of this vertex above the root
+// Returns the model-space displacement to add to the vertex position.
+//
+// A batch no source reaches gets c253.w = 0, but the unrolled loop pays every slot regardless, so a
+// real branch on that per-batch count (uniform across the draw) skips the whole body.
+float3 GrassCollisionDisplacement(float2 BladeXY, float TipWeight, float BladeHeight) {
+    float3 collisionDisp = 0;
+    [branch]
+    if (TESR_GrassCollisionParams.w > 0.5)
+        collisionDisp = GrassCollisionDisplacementLive(BladeXY, TipWeight, BladeHeight);
     return collisionDisp;
 }

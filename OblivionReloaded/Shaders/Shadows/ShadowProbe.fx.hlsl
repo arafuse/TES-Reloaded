@@ -10,6 +10,8 @@ float4x4 TESR_ShadowCameraToLightTransformNearPrev;
 float4x4 TESR_ShadowCameraToLightTransformFarPrev;
 float4 TESR_ShadowData;
 float4 TESR_ShadowBiasDeferred; // zw = near/far depth bias (normalized)
+float4 TESR_ShadowBiasSkin; // x = actor (skin map) depth bias (normalized)
+float4 TESR_ShadowSkinBounds; // skin map UV rect holding every caster (xy min, zw max)
 float4 TESR_ShadowFadeData;
 
 // World-space probe points, uploaded by SunShadowStealth.cpp with SetVectorArray. No TESR_ prefix,
@@ -17,11 +19,11 @@ float4 TESR_ShadowFadeData;
 float4 SunShadowProbePoints[8];
 
 // Bound by ordinal (see ShadowsExteriors.fx.hlsl), so the registers stay contiguous from s0.
-sampler2D TESR_ShadowMapBufferNear : register(s0) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
-sampler2D TESR_ShadowMapBufferFar : register(s1) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
-sampler2D TESR_ShadowMapBufferSkin : register(s2) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
-sampler2D TESR_ShadowMapBufferNearPrev : register(s3) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
-sampler2D TESR_ShadowMapBufferFarPrev : register(s4) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
+sampler2D TESR_ShadowMapBufferNear : register(s0) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = POINT; MINFILTER = POINT; MIPFILTER = NONE; };
+sampler2D TESR_ShadowMapBufferFar : register(s1) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = POINT; MINFILTER = POINT; MIPFILTER = NONE; };
+sampler2D TESR_ShadowMapBufferSkin : register(s2) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = POINT; MINFILTER = POINT; MIPFILTER = NONE; };
+sampler2D TESR_ShadowMapBufferNearPrev : register(s3) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = POINT; MINFILTER = POINT; MIPFILTER = NONE; };
+sampler2D TESR_ShadowMapBufferFarPrev : register(s4) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = POINT; MINFILTER = POINT; MIPFILTER = NONE; };
 
 // The lookup returns darkness for an occluded tap and clamp(TESR_ShadowLightDir.w, darkness, 1) for
 // a lit one; pinning those to 0 and 1 makes it return raw visibility.
@@ -61,14 +63,15 @@ float4 Probe(float2 vpos : VPOS) : COLOR0 {
 	float4 ShadowSkin = mul(pos, TESR_ShadowCameraToLightTransformSkin);
 	float biasNear = TESR_ShadowBiasDeferred.z;
 	float biasFar = TESR_ShadowBiasDeferred.w;
+	float biasSkin = TESR_ShadowBiasSkin.x;
 
 	float visibility = StaticTerm(TESR_ShadowMapBufferNear, TESR_ShadowMapBufferFar,
 	                              TESR_ShadowCameraToLightTransformNear, TESR_ShadowCameraToLightTransformFar,
-	                              pos, pos, ShadowSkin, biasNear, biasFar, 1.0f);
+	                              pos, pos, ShadowSkin, biasNear, biasFar, biasSkin, 1.0f);
 	if (TESR_ShadowFadeData.x < 1.0f) {
 		float prevVisibility = StaticTerm(TESR_ShadowMapBufferNearPrev, TESR_ShadowMapBufferFarPrev,
 		                                  TESR_ShadowCameraToLightTransformNearPrev, TESR_ShadowCameraToLightTransformFarPrev,
-		                                  pos, pos, ShadowSkin, biasNear, biasFar, 1.0f);
+		                                  pos, pos, ShadowSkin, biasNear, biasFar, biasSkin, 1.0f);
 		visibility = lerp(prevVisibility, visibility, TESR_ShadowFadeData.x);
 	}
 	return float4(saturate(visibility), 0.0f, 0.0f, 1.0f);

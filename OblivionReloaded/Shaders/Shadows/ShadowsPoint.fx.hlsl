@@ -8,6 +8,12 @@
 // shader reconstructs camera-relative positions too, so sampling needs no matrix at all - which is
 // what lets a cached cube stay valid while the camera moves.
 
+// Output is the shadow FACTOR, not the shadowed colour: RenderShadowsMidScene multiplies it into the
+// scene with DESTCOLOR blending, so the pass never reads the scene and needs no copy of it first.
+// The CPU looks this parameter up and keeps the old read-and-copy path when it is missing (a stale
+// compiled effect that still outputs colour), so keep it declared.
+bool ShadowOutputsFactor = true;
+
 float4x4 TESR_ViewTransform;
 float4x4 TESR_ProjectionTransform;
 float4 TESR_ShadowPointData;      // x = shadow strength scale, z = 1 / cube map size, w = depth bias
@@ -17,12 +23,14 @@ float4 TESR_ShadowLightPosition2;
 float4 TESR_ShadowLightPosition3;
 float4 TESR_ShadowLightLuminance; // one component per slot (x=0..w=3): luma(Diff) * Dimmer
 
+// Not sampled any more (the pass outputs a factor), but kept: effect textures bind by ordinal, so
+// removing the first sampler would shift every other one. See ShadowsExteriors.fx.hlsl.
 sampler2D TESR_RenderedBuffer : register(s0) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
 sampler2D TESR_DepthBufferPreWater : register(s1) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
-samplerCUBE TESR_ShadowCubeMapBuffer0 : register(s2) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; ADDRESSW = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = NONE; };
-samplerCUBE TESR_ShadowCubeMapBuffer1 : register(s3) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; ADDRESSW = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = NONE; };
-samplerCUBE TESR_ShadowCubeMapBuffer2 : register(s4) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; ADDRESSW = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = NONE; };
-samplerCUBE TESR_ShadowCubeMapBuffer3 : register(s5) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; ADDRESSW = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = NONE; };
+samplerCUBE TESR_ShadowCubeMapBuffer0 : register(s2) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; ADDRESSW = CLAMP; MAGFILTER = POINT; MINFILTER = POINT; MIPFILTER = NONE; };
+samplerCUBE TESR_ShadowCubeMapBuffer1 : register(s3) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; ADDRESSW = CLAMP; MAGFILTER = POINT; MINFILTER = POINT; MIPFILTER = NONE; };
+samplerCUBE TESR_ShadowCubeMapBuffer2 : register(s4) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; ADDRESSW = CLAMP; MAGFILTER = POINT; MINFILTER = POINT; MIPFILTER = NONE; };
+samplerCUBE TESR_ShadowCubeMapBuffer3 : register(s5) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; ADDRESSW = CLAMP; MAGFILTER = POINT; MINFILTER = POINT; MIPFILTER = NONE; };
 sampler2D TESR_POMDepthBuffer : register(s6) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = POINT; MINFILTER = POINT; MIPFILTER = NONE; };
 
 static const float nearZ = TESR_ProjectionTransform._43 / TESR_ProjectionTransform._33;
@@ -32,14 +40,8 @@ static const float Zdiff = farZ - nearZ;
 static const float texelSize = TESR_ShadowPointData.z;
 static const float bias = TESR_ShadowPointData.w;
 
-// 4x4 grid minus its corners: the corners contribute least and cost the same as the rest.
-static const int SAMPLE_COUNT = 12;
-static const float2 PoissonDisk[12] = {
-	float2(-0.5f, -1.5f), float2( 0.5f, -1.5f),
-	float2(-1.5f, -0.5f), float2(-0.5f, -0.5f), float2( 0.5f, -0.5f), float2( 1.5f, -0.5f),
-	float2(-1.5f,  0.5f), float2(-0.5f,  0.5f), float2( 0.5f,  0.5f), float2( 1.5f,  0.5f),
-	float2(-0.5f,  1.5f), float2( 0.5f,  1.5f),
-};
+// Half the PCF kernel width in texels: a 4x4 kernel, read as a 5x5 texel grid.
+static const int PCF_HALF_WIDTH = 2;
 
 struct VSOUT
 {
@@ -86,6 +88,53 @@ float reliefDepth(in float2 coord, in float depth)
 	return (abs(pom.x - depth) < depth * 0.001f) ? pom.y : depth;
 }
 
+// Weight of a texel `d` texels from the kernel centre in a PCF kernel of `2 * halfWidth` taps spaced
+// one texel apart, each tap's compare bilinearly interpolated between its two nearest texels. The
+// overlapping tents sum to 1 across the kernel and fall to 0 over its last texel.
+float PCFWeight(float d, float halfWidth)
+{
+	return saturate(halfWidth + 0.5f - abs(d));
+}
+
+// Fraction of a bilinearly weighted 4x4 PCF kernel around `lookup` that passes the depth compare, so
+// the shadow edge moves continuously instead of in texel steps. The kernel is laid out on the texel
+// grid of the cube face `lookup` lands on, and each tap is a direction through a texel centre of that
+// face. Taps that spill past the face edge land on the neighbouring face, just off its texel centres,
+// which only blurs the seams slightly. The cube must be POINT-sampled: the weights do the filtering.
+float CubeLitFraction(samplerCUBE cubeMap, float3 lookup, float receiverDist)
+{
+	float3 a = abs(lookup);
+	float3 major;
+	float3 axisU;
+	float3 axisV;
+	if (a.x >= a.y && a.x >= a.z) {
+		major = float3(sign(lookup.x), 0.0f, 0.0f); axisU = float3(0.0f, 1.0f, 0.0f); axisV = float3(0.0f, 0.0f, 1.0f);
+	}
+	else if (a.y >= a.z) {
+		major = float3(0.0f, sign(lookup.y), 0.0f); axisU = float3(1.0f, 0.0f, 0.0f); axisV = float3(0.0f, 0.0f, 1.0f);
+	}
+	else {
+		major = float3(0.0f, 0.0f, sign(lookup.z)); axisU = float3(1.0f, 0.0f, 0.0f); axisV = float3(0.0f, 1.0f, 0.0f);
+	}
+
+	float2 face = float2(dot(lookup, axisU), dot(lookup, axisV)) / dot(a, abs(major));
+	float2 p = (face * 0.5f + 0.5f) / texelSize;
+	float2 centre = floor(p);
+	float2 offset = p - centre - 0.5f;
+	float2 centreFace = (centre + 0.5f) * (2.0f * texelSize) - 1.0f;
+
+	float lit = 0.0f;
+	[unroll] for (int y = -PCF_HALF_WIDTH; y <= PCF_HALF_WIDTH; y++) {
+		float wy = PCFWeight(y - offset.y, PCF_HALF_WIDTH);
+		[unroll] for (int x = -PCF_HALF_WIDTH; x <= PCF_HALF_WIDTH; x++) {
+			float2 f = centreFace + float2(x, y) * (2.0f * texelSize);
+			float occluder = texCUBElod(cubeMap, float4(major + axisU * f.x + axisV * f.y, 0.0f)).r;
+			lit += (occluder < receiverDist - bias) ? 0.0f : PCFWeight(x - offset.x, PCF_HALF_WIDTH) * wy;
+		}
+	}
+	return lit / (4.0f * PCF_HALF_WIDTH * PCF_HALF_WIDTH);
+}
+
 // One light's contribution. Returns the factor to multiply scene color by: 1 = unshadowed.
 // Brightness only -- the shadow darkens all three channels equally and never tints them. This is an
 // approximation, not a true light subtraction: the result multiplies the already-composited scene
@@ -100,27 +149,13 @@ float GetPointShadow(samplerCUBE cubeMap, float4 lightPos, float lum, float3 pix
 	float3 dir = pixelPos - lightPos.xyz;
 	float len = length(dir);
 	float dist = len / radius;
-	// Out of reach, or so close that the PCF basis below would be NaN.
+	// Out of reach, or so close that the cube face lookup below would divide by zero.
 	if (dist >= 1.0f || len < 0.001f) return 1.0f;
 
 	// Negate Z to match GetCubeFaceAtUp's swapped Z faces; change both together.
 	float3 lookup = float3(dir.x, dir.y, -dir.z);
 
-	// PCF offsets are perpendicular to the lookup, else the kernel collapses where
-	// Z dominates. One texel of a 90-degree face spans ~len * (pi/2) * texelSize.
-	float3 n = lookup / len;
-	float3 up = abs(n.z) < 0.999f ? float3(0.0f, 0.0f, 1.0f) : float3(1.0f, 0.0f, 0.0f);
-	float3 tangent = normalize(cross(up, n));
-	float3 bitangent = cross(n, tangent);
-	float spread = len * 1.6f * texelSize;
-
-	float lit = 0.0f;
-	for (int i = 0; i < SAMPLE_COUNT; i++) {
-		float3 offset = (tangent * PoissonDisk[i].x + bitangent * PoissonDisk[i].y) * spread;
-		float occluder = texCUBE(cubeMap, lookup + offset).r;
-		lit += (occluder < dist - bias) ? 0.0f : 1.0f;
-	}
-	lit /= SAMPLE_COUNT;
+	float lit = CubeLitFraction(cubeMap, lookup, dist);
 
 	// The engine's own quadratic falloff. dist is normalized by the cube far plane:
 	// the authored radius, except for carried torches (fixed 257), whose shadow
@@ -133,7 +168,7 @@ float GetPointShadow(samplerCUBE cubeMap, float4 lightPos, float lum, float3 pix
 }
 
 float4 Shadow(VSOUT IN) : COLOR0{
-	float3 color = tex2D(TESR_RenderedBuffer, IN.UVCoord).rgb;
+	float3 color = 1.0f;
 
 	// Sky guard on depth, not brightness, so sun glare on receivers is shadowed.
 	float rawDepth = tex2D(TESR_DepthBufferPreWater, IN.UVCoord).x;

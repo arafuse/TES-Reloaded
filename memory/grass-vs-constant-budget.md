@@ -1,18 +1,20 @@
 ---
 name: grass-vs-constant-budget
-description: The grass vertex shaders have NO constant register free in all three variants; c3 is free in 2028/2030 but taken in 2034
+description: Grass VS constant map; since 2026-11-07 c249-c252 are free in ALL three variants (dead shadow matrix removed), c3 and c16-c19 only in 2028/2030 (2034 uses them for point lights)
 metadata:
   type: project
 ---
 
-The grass VS constant space (vs_3_0, 256 float4) is completely allocated:
-c0-c19 engine, `InstanceData[228]` = c20-c247, c248-c255 ours (`TESR_GrassScale` c248,
-`TESR_ShadowCameraToLightTransformNear` c249-252, `TESR_GrassCollisionParams` c253,
-`TESR_GrassCollisionXY0/1` c254-255).
+The grass VS constant space (vs_3_0, 256 float4): c0-c15 engine, `InstanceData[228]` = c20-c247,
+ours `TESR_GrassScale` c248, `TESR_GrassCollisionParams` c253, `TESR_GrassCollisionXY0/1` c254-255.
+InstanceData can't be shrunk (the engine batches to 228).
 
-c3 is free in GRASS2028/2030 but holds `LightPosition` in GRASS2034 (the point-lit
-variant). So **there is no register free in all three**, and InstanceData can't be
-shrunk (the engine batches to 228).
+**Free since 2026-11-07** (commit d6d0bd2 dropped the near/far shadow coordinates the VS still computed
+for the old in-shader grass shadows; no grass PS read them):
+- **c249-c252 in all three** (was `TESR_ShadowCameraToLightTransformNear`).
+- c16-c19 in GRASS2028/2030 only (was `...TransformFar`); GRASS2034 holds
+  `TESR_PointLightPosition[2]` c16-17 and `TESR_PointLightColor[2]` c18-19 there.
+- c3 in GRASS2028/2030 only; GRASS2034 holds `LightPosition`.
 
 Current packing: up to 3 collision sources PER BATCH; their XY positions fill c254.xyzw + c255.xy.
 The CPU keeps one prioritised list per frame (`ShaderManager::GrassCollisionSources`, up to 20:
@@ -33,7 +35,8 @@ Per-draw data for the grass PIXEL shaders goes through PS constants instead (ple
 groundcover press uses PS c32-c34 (`TESR_GroundcoverPress*`). The VS hands the PS its
 batch-relative XY in the spare `TEXCOORD0.zw` (TEXCOORD0 was float2) and the vertex's model-space
 height in `TEXCOORD4.w` (the PS only read ambient .rgb; 2034's ambient alpha was dropped), which
-avoids a new interpolator — GRASS2034 already uses 11 of the 12 vs_3_0 outputs. PS c32.w is the
+avoids a new interpolator — GRASS2034 used 11 of the 12 vs_3_0 outputs before the shadow outputs
+went; it now uses 9. PS c32.w is the
 drawn model's height, the press's clip line for the squashed texture.
 
 **Why:** any new per-frame grass VS data has to displace something already packed here.

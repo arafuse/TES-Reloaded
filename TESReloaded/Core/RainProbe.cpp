@@ -16,9 +16,11 @@ static const float	kExitMargin			= 10.0f;
 static const UInt32	kMovementSneak		= 0x400;
 static const int	kReadbackTimeoutFrames	= 30;
 
-/// One in-flight probe: its render target, the event query issued after it was drawn, and the NPCs it tested.
+/// One in-flight probe: its render target, the system-memory copy it is read back through, the event
+/// query issued after that copy, and the NPCs it tested.
 struct RainProbeSlot {
 	IDirect3DSurface9*	Target;
+	IDirect3DSurface9*	Readback;
 	IDirect3DQuery9*	Done;
 	bool				Pending;
 	int					ActorCount;
@@ -43,6 +45,7 @@ static void ReleaseProbeResources() {
 
 	for (int i = 0; i < kProbeRingSize; i++) {
 		if (Ring[i].Target) Ring[i].Target->Release();
+		if (Ring[i].Readback) Ring[i].Readback->Release();
 		if (Ring[i].Done) Ring[i].Done->Release();
 		Ring[i] = {};
 	}
@@ -68,7 +71,8 @@ static bool CreateProbeResources(IDirect3DDevice9* Device) {
 	D3DXPARAMETER_DESC Desc;
 	if (FAILED(ProbeEffect->Effect->GetParameterDesc(ProbePointsHandle, &Desc)) || Desc.Elements != (UINT)kMaxPointCount) return false;
 	for (int i = 0; i < kProbeRingSize; i++) {
-		if (FAILED(Device->CreateRenderTarget(kMaxPointCount, 1, D3DFMT_R32F, D3DMULTISAMPLE_NONE, 0, TRUE, &Ring[i].Target, NULL))) return false;
+		if (FAILED(Device->CreateRenderTarget(kMaxPointCount, 1, D3DFMT_R32F, D3DMULTISAMPLE_NONE, 0, FALSE, &Ring[i].Target, NULL))) return false;
+		if (FAILED(Device->CreateOffscreenPlainSurface(kMaxPointCount, 1, D3DFMT_R32F, D3DPOOL_SYSTEMMEM, &Ring[i].Readback, NULL))) return false;
 		if (FAILED(Device->CreateQuery(D3DQUERYTYPE_EVENT, &Ring[i].Done))) return false;
 	}
 	return true;
@@ -187,8 +191,8 @@ static void ProbeFailure() {
 
 }
 
-// Oldest first; a slot is read only once its event query reports the GPU is done with it. Each target
-// is Lockable, so this reads it directly with no GetRenderTargetData stall.
+// Oldest first; a slot is read only once its event query reports that its GetRenderTargetData copy
+// has landed. Never lock the render target itself: that drains the whole queued frame (~6 ms measured).
 static void ReadFinishedProbes() {
 
 	for (int k = 0; k < kProbeRingSize; k++) {
@@ -196,13 +200,13 @@ static void ReadFinishedProbes() {
 		if (!Slot.Pending) continue;
 		if (Slot.Done->GetData(NULL, 0, 0) != S_OK) return;
 		D3DLOCKED_RECT Locked;
-		HRESULT hr = Slot.Target->LockRect(&Locked, NULL, D3DLOCK_READONLY | D3DLOCK_DONOTWAIT);
+		HRESULT hr = Slot.Readback->LockRect(&Locked, NULL, D3DLOCK_READONLY | D3DLOCK_DONOTWAIT);
 		if (hr == D3DERR_WASSTILLDRAWING) return;
 		Slot.Pending = false;
 		if (FAILED(hr)) { ProbeFailure(); continue; }
 		float Exposure[kMaxPointCount];
 		memcpy(Exposure, Locked.pBits, sizeof(Exposure));
-		Slot.Target->UnlockRect();
+		Slot.Readback->UnlockRect();
 		FramesSinceReadback = 0;
 		LONG Hit = 0;
 		for (int i = 0; i < kPlayerPointCount; i++)
@@ -271,7 +275,7 @@ void RenderRainProbe(IDirect3DDevice9* Device) {
 		ProbeFailure();
 		return;
 	}
-	if (FAILED(Slot.Done->Issue(D3DISSUE_END))) {
+	if (FAILED(Device->GetRenderTargetData(Slot.Target, Slot.Readback)) || FAILED(Slot.Done->Issue(D3DISSUE_END))) {
 		ProbeFailure();
 		return;
 	}

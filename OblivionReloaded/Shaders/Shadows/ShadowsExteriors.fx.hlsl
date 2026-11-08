@@ -1,5 +1,11 @@
 // Image space shadows shader for Oblivion Reloaded
 
+// Output is the shadow FACTOR, not the shadowed colour: RenderShadowsMidScene multiplies it into the
+// scene with DESTCOLOR blending, so the pass never reads the scene and needs no copy of it first.
+// The CPU looks this parameter up and keeps the old read-and-copy path when it is missing (a stale
+// compiled effect that still outputs colour), so keep it declared.
+bool ShadowOutputsFactor = true;
+
 float4x4 TESR_WorldViewProjectionTransform;
 float4x4 TESR_ViewTransform;
 float4x4 TESR_ProjectionTransform;
@@ -19,28 +25,30 @@ float4 TESR_ShadowBiasDeferred; // adaptive: xy = near/far normal offset (world)
 // below uses it to switch itself off when the maps are frozen. If nothing ever publishes it, 0 makes
 // the ramp disable itself -- the safe failure mode.
 float4 TESR_ShadowBiasAdaptive; // x = terminator width, y = max slope clamp, z = adaptive enable, w = sun active (0/1)
+float4 TESR_ShadowBiasSkin; // x = actor (skin map) depth bias (normalized), adaptive path only
+float4 TESR_ShadowSkinBounds; // skin map UV rect holding every caster (xy min, zw max)
 // x = static-map crossfade progress: 0 = fully on the previous bake, 1 = fully on the current one.
 // 1 is the steady state and the value this shader branches on to skip the previous map set entirely.
 float4 TESR_ShadowFadeData;
 float4 TESR_FogData;
 
-// TESR_DepthBuffer (s1) and TESR_SourceBuffer (s4) are NOT sampled by this effect any more -- the
-// sky guard reads TESR_DepthBufferPreWater instead. They stay declared regardless, because for an
+// TESR_RenderedBuffer (s0), TESR_DepthBuffer (s1) and TESR_SourceBuffer (s4) are NOT sampled by this
+// effect any more -- it outputs a factor, and the sky guard reads TESR_DepthBufferPreWater instead. They stay declared regardless, because for an
 // EFFECT the runtime binds textures by ORDINAL, not by the declared register: EffectRecord::CreateCT
 // passes the Nth TESR_ sampler parameter's index to TextureManager::LoadTexture, which then matches
 // it against the register(sN) it parses out of this source. Deleting a sampler from the middle
 // renumbers every ordinal after it while the registers here stay put, and every later sampler binds
-// the wrong texture. Removing these two means renumbering the whole block contiguously; until that
-// is done and tested they cost two SetTexture calls a frame and nothing else.
+// the wrong texture. Removing these three means renumbering the whole block contiguously; until that
+// is done and tested they cost three SetTexture calls a frame and nothing else.
 sampler2D TESR_RenderedBuffer : register(s0) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
 sampler2D TESR_DepthBuffer : register(s1) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
-sampler2D TESR_ShadowMapBufferNear : register(s2) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
-sampler2D TESR_ShadowMapBufferFar : register(s3) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
+sampler2D TESR_ShadowMapBufferNear : register(s2) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = POINT; MINFILTER = POINT; MIPFILTER = NONE; };
+sampler2D TESR_ShadowMapBufferFar : register(s3) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = POINT; MINFILTER = POINT; MIPFILTER = NONE; };
 sampler2D TESR_SourceBuffer : register(s4) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
 sampler2D TESR_DepthBufferPreWater : register(s5) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
-sampler2D TESR_ShadowMapBufferSkin : register(s6) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
-sampler2D TESR_ShadowMapBufferNearPrev : register(s7) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
-sampler2D TESR_ShadowMapBufferFarPrev : register(s8) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
+sampler2D TESR_ShadowMapBufferSkin : register(s6) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = POINT; MINFILTER = POINT; MIPFILTER = NONE; };
+sampler2D TESR_ShadowMapBufferNearPrev : register(s7) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = POINT; MINFILTER = POINT; MIPFILTER = NONE; };
+sampler2D TESR_ShadowMapBufferFarPrev : register(s8) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = POINT; MINFILTER = POINT; MIPFILTER = NONE; };
 sampler2D TESR_POMDepthBuffer : register(s9) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = POINT; MINFILTER = POINT; MIPFILTER = NONE; };
 
 static const float nearZ = TESR_ProjectionTransform._43 / TESR_ProjectionTransform._33;
@@ -95,27 +103,33 @@ float reliefDepth(in float2 coord, in float depth)
 	return (abs(pom.x - depth) < depth * 0.001f) ? pom.y : depth;
 }
 
-float3 getPosition(in float2 tex, in float depth)
-{
-	return (TESR_CameraPosition.xyz + toWorld(tex) * depth);
-}
+// toWorld is affine in the UV, so the view ray one texel over is this pixel's ray plus a constant
+// step. Preshaders: evaluated once per draw, not per pixel.
+static const float3 rayStepX = (2.0f * TESR_ReciprocalResolution.x / TESR_ProjectionTransform[0][0]) *
+	float3(TESR_ViewTransform[0][0], TESR_ViewTransform[1][0], TESR_ViewTransform[2][0]);
+static const float3 rayStepY = (-2.0f * TESR_ReciprocalResolution.y / TESR_ProjectionTransform[1][1]) *
+	float3(TESR_ViewTransform[0][1], TESR_ViewTransform[1][1], TESR_ViewTransform[2][1]);
 
 // Screen-space normal reconstruction: the world-space cross of the depth derivatives. The SIGN is
 // deliberately left unresolved -- the cross product's orientation depends on tap winding, and the two
 // bias paths disambiguate it differently (the adaptive path flips toward the camera, the legacy path
 // mirrors z and encodes). Both derive from this single result so the depth taps happen only once.
+// Positions are camera-relative: only their differences matter, and absolute coordinates would spend
+// float precision on the worldspace offset.
 float3 getRawNormal(float2 UVCoord)
 {
-	float depth = readDepth(UVCoord);
-	float3 pos = getPosition(UVCoord, depth);
+	float2 texelX = float2(TESR_ReciprocalResolution.x, 0.0f);
+	float2 texelY = float2(0.0f, TESR_ReciprocalResolution.y);
+	float3 ray = toWorld(UVCoord);
+	float3 pos = ray * readDepth(UVCoord);
 
-	float3 left = pos - getPosition(UVCoord + TESR_ReciprocalResolution.xy * float2(-1, 0), readDepth(UVCoord + TESR_ReciprocalResolution.xy * float2(-1, 0)));
-	float3 right = getPosition(UVCoord + TESR_ReciprocalResolution.xy * float2(1, 0), readDepth(UVCoord + TESR_ReciprocalResolution.xy * float2(1, 0))) - pos;
-	float3 up = pos - getPosition(UVCoord + TESR_ReciprocalResolution.xy * float2(0, -1), readDepth(UVCoord + TESR_ReciprocalResolution.xy * float2(0, -1)));
-	float3 down = getPosition(UVCoord + TESR_ReciprocalResolution.xy * float2(0, 1), readDepth(UVCoord + TESR_ReciprocalResolution.xy * float2(0, 1))) - pos;
+	float3 left = pos - (ray - rayStepX) * readDepth(UVCoord - texelX);
+	float3 right = (ray + rayStepX) * readDepth(UVCoord + texelX) - pos;
+	float3 up = pos - (ray - rayStepY) * readDepth(UVCoord - texelY);
+	float3 down = (ray + rayStepY) * readDepth(UVCoord + texelY) - pos;
 	// Shorter derivative wins: at a silhouette the far side spans a depth jump.
-	float3 dx = length(left) < length(right) ? left : right;
-	float3 dy = length(up) < length(down) ? up : down;
+	float3 dx = dot(left, left) < dot(right, right) ? left : right;
+	float3 dy = dot(up, up) < dot(down, down) ? up : down;
 
 	return normalize(cross(dx, dy));
 }
@@ -133,7 +147,7 @@ float AddProximityLight(float4 WorldPos, float4 ExternalLightPos) {
 #include "ShadowsExteriorsLookup.hlsl"
 
 float4 Shadow(VSOUT IN) : COLOR0{
-	float3 color = tex2D(TESR_RenderedBuffer, IN.UVCoord).rgb;
+	float3 color = 1.0f;
 
 	// Sky guard on depth, not brightness, so sun glare on receivers is shadowed.
 	float rawDepth = tex2D(TESR_DepthBufferPreWater, IN.UVCoord).x;
@@ -159,6 +173,7 @@ float4 Shadow(VSOUT IN) : COLOR0{
 		float4 posFar;
 		float biasNear;
 		float biasFar;
+		float biasSkin;
 		float facing;
 
 		if (TESR_ShadowBiasAdaptive.z > 0.5f) {
@@ -182,6 +197,7 @@ float4 Shadow(VSOUT IN) : COLOR0{
 			float slope = min(sqrt(saturate(1.0f - ndlSafe * ndlSafe)) / ndlSafe, TESR_ShadowBiasAdaptive.y);
 			biasNear = TESR_ShadowBiasDeferred.z * (1.0f + slope);
 			biasFar = TESR_ShadowBiasDeferred.w * (1.0f + slope);
+			biasSkin = TESR_ShadowBiasSkin.x * (1.0f + slope);
 
 			// World-space normal offset, growing with tilt, applied before the transforms.
 			// TESR_ShadowBiasDeferred.xy arrive pre-scaled to world units per cascade.
@@ -200,6 +216,7 @@ float4 Shadow(VSOUT IN) : COLOR0{
 			float cosTheta = clamp(dot(n, l), 0, 1);
 			biasNear = TESR_ShadowBiasDeferred.z * tan(acos(cosTheta));
 			biasFar = TESR_ShadowBiasDeferred.w;
+			biasSkin = biasNear;
 
 			float4 pos = mul(world_pos, TESR_WorldViewProjectionTransform);
 			posNear = pos;
@@ -213,14 +230,14 @@ float4 Shadow(VSOUT IN) : COLOR0{
 
 		float Shadow = StaticTerm(TESR_ShadowMapBufferNear, TESR_ShadowMapBufferFar,
 		                          TESR_ShadowCameraToLightTransformNear, TESR_ShadowCameraToLightTransformFar,
-		                          posNear, posFar, ShadowSkin, biasNear, biasFar, facing);
+		                          posNear, posFar, ShadowSkin, biasNear, biasFar, biasSkin, facing);
 
 		// Crossfade from the previous static bake while a rebake fades in over
 		// [Exteriors] FadeTime; in steady state .x is 1 and the branch is skipped.
 		if (TESR_ShadowFadeData.x < 1.0f) {
 			float prevShadow = StaticTerm(TESR_ShadowMapBufferNearPrev, TESR_ShadowMapBufferFarPrev,
 			                              TESR_ShadowCameraToLightTransformNearPrev, TESR_ShadowCameraToLightTransformFarPrev,
-			                              posNear, posFar, ShadowSkin, biasNear, biasFar, facing);
+			                              posNear, posFar, ShadowSkin, biasNear, biasFar, biasSkin, facing);
 			Shadow = lerp(prevShadow, Shadow, TESR_ShadowFadeData.x);
 		}
 

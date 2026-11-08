@@ -114,7 +114,7 @@ Game-specific code uses `#if defined(OBLIVION)` / `#elif defined(NEWVEGAS)` / `#
 
 ### Debugging
 
-Set `#define WaitForDebugger 1` in `Main.cpp` to spin until a debugger attaches. `Develop.LogShaders` (a key code) installs the D3D9 device logging hooks and, when pressed, logs one frame's shader passes. `Develop.ProfileFrame` and `Develop.ProfileSampler` enable the two profilers (see memory `sampling-profiler`). Output goes to `OblivionReloaded.log` in the game folder.
+Set `#define WaitForDebugger 1` in `Main.cpp` to spin until a debugger attaches. `Develop.LogShaders` (a key code) installs the D3D9 device logging hooks and, when pressed, logs one frame's shader passes. `Develop.ProfileFrame` and `Develop.ProfileSampler` enable the two profilers (see memory `sampling-profiler`); `ProfileFrame = 2` adds a per-pixel-shader GPU breakdown of the main pass (see memory `gpu-frame-breakdown`). Output goes to `OblivionReloaded.log` in the game folder.
 
 ### Coding style
 

@@ -19,6 +19,12 @@ On a floor beside a sun-side wall of thickness t at sun elevation e the lit band
 `value * (1 + min(tan(acos|ndl|), BiasMaxSlope))` — `abs(ndl)`, because sun-away faces otherwise hit
 the peak and leak tree shadows through thin walls.
 
+**Actors have their own bias** (`deferredSkinConstBias`, skin-map texels, shipped 8 = ~16 units; missing key
+falls back to `deferredConstBias`) → `TESR_ShadowBiasSkin.x`, used only by the skin-map lookup. Actors are
+only in MapSkin (static bakes skip them). With the 1-texel near bias, bodies a dozen texels wide
+self-shadow along triangle edges near the shadow line, faceting their smooth shading (the regression
+after fe8c4e6; play-test confirmed 8 texels fixes it). Don't fold it back into the near bias.
+
 There is deliberately no MapFar "fully inside near frustum" exclusion: it tested far-anchor-relative
 centers against near-anchor-relative planes, and the two cached maps re-anchor independently, so far
 bakes lost casters that receivers later needed. Culling is a single `SphereInShadowFrustum`; far bakes

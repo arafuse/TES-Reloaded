@@ -77,6 +77,13 @@ struct ShaderConstants {
 		// every exterior frame by ShadowManager::RenderExteriorShadows (NOT by PublishShadowBiasConstants,
 		// which only runs on sun frames); the apply shader disables its terminator ramp when it is 0.
 		D3DXVECTOR4		ShadowBiasAdaptive;
+		// x = actor (skin map) depth bias, normalized like ShadowBiasDeferred.z. Kept apart from the near
+		// bias because actors need a larger one: a tight bias self-shadows bodies along triangle edges.
+		D3DXVECTOR4		ShadowBiasSkin;
+		// Skin (actor overlay) map UV rectangle outside which its PCF kernel reads only the cleared
+		// value: xy = min, zw = max, already widened by the kernel reach. Empty (min > max) when no
+		// caster was drawn. Published by ShadowManager::RenderActorOverlay.
+		D3DXVECTOR4		ShadowSkinBounds;
 		// Camera->light sample matrices for the PREVIOUS static bake, built exactly like
 		// ShadowCameraToLight[MapNear]/[MapFar] but from the region's Prev* fields. [0] = Near,
 		// [1] = Far. Only published, and only read by the apply shader, while ShadowFadeData.x < 1.
@@ -397,7 +404,11 @@ public:
 	bool						LoadEffect(const char* Name);
 	void						CreateCT();
 	void						SetCT();
-	void						Render(IDirect3DDevice9* Device, IDirect3DSurface9* RenderTarget, IDirect3DSurface9* RenderedSurface, bool ClearRenderTarget);
+	/// CopyRegion limits the single-pass copy back into RenderedSurface to the pixels the pass could
+	/// change; NULL copies the whole surface. CopyToRendered = false skips that copy, for a pass that
+	/// blends into RenderTarget and never reads RenderedSurface. Both are ignored by the multi-pass
+	/// ping-pong path.
+	void						Render(IDirect3DDevice9* Device, IDirect3DSurface9* RenderTarget, IDirect3DSurface9* RenderedSurface, bool ClearRenderTarget, const RECT* CopyRegion = NULL, bool CopyToRendered = true);
 	// Chain-rotation variant of Render (Main.EffectChainPingPong). Reads the chain's current
 	// buffer and writes into the two scratch buffers, leaving the result in one of them; the caller
 	// then adopts it as the new current. Issues NO StretchRect at all.

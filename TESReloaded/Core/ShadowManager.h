@@ -1,4 +1,5 @@
 #pragma once
+#include <array>
 #include <list>
 #include <vector>
 #include <map>
@@ -29,13 +30,16 @@ public:
 	};
 
 	// Per-ref data needed when classifying a ref against each point light. Computed once per
-	// ref (independent of the light) so the per-light loop only does the distance test.
+	// ref (independent of the light) so the per-light loop only does the distance test. The pose
+	// hash is filled on the first light the ref reaches: most loaded refs reach none.
 	struct RefLightInfo {
+		TESObjectREFR*	Ref;
 		NiNode*	Node;
 		UInt64	PoseHash;	// RefPoseHash for statics; floored bound centre for actors
 		float	BoundRadius;
 		bool	IsActorType;
 		bool	IsPlayer;
+		bool	Hashed;		// PoseHash is valid
 	};
 
 	void					CreateD3DMatrix(D3DMATRIX* Matrix, NiTransform* Transform);
@@ -51,7 +55,9 @@ public:
 	void					AddInstance(NiGeometryBufferData* GeoData, int ItemIndex);
 	IDirect3DVertexDeclaration9* GetInstancedDeclaration(NiGeometryBufferData* GeoData);
 	bool					EnsureInstanceVB(UINT InstanceCount);
-	void					DrawInstancedGroup(NiGeometryBufferData* GeoData, std::vector<int>& ItemIdx, IDirect3DVertexDeclaration9* Decl);
+	/// Draws ItemIdx's copies of GeoData in one instanced call. Item i's world matrix is read from
+	/// WorldBase + ItemIdx[i] * WorldStride bytes, so any array of items carrying a D3DMATRIX works.
+	void					DrawInstancedGroup(NiGeometryBufferData* GeoData, const std::vector<int>& ItemIdx, IDirect3DVertexDeclaration9* Decl, const D3DMATRIX* WorldBase, size_t WorldStride);
 	void					FlushInstanceGroups(D3DXVECTOR4* ShadowData);
 	void					CollectCellGeo(TESObjectCELL* Cell, SettingsShadowStruct::FormsStruct* Forms, SettingsShadowStruct::ExcludedFormsList* ExcludedForms, bool HasWater, ShadowMapTypeEnum ShadowMapType);
 	void					CollectCubeMapGeometry(NiAVObject* Object, std::vector<NiGeometry*>& Out);
@@ -73,7 +79,7 @@ public:
 	void					PublishPointLightConstants();
 	void					BuildPointGeoLists(UInt64* Checksums);
 	void					ClassifyCellForPointSlots(TESObjectCELL* Cell, UInt64* Checksums);
-	void					ClassifyRefForPointSlot(const RefLightInfo& Info, int Slot, UInt64* Checksums);
+	void					ClassifyRefForPointSlot(RefLightInfo& Info, int Slot, UInt64* Checksums);
 	bool					PointSlotNeedsRebake(int Slot, UInt64 Checksum);
 	void					BakePointCube(int Slot);
 	void					RenderShadowMaps();
@@ -107,6 +113,12 @@ public:
 	void					ComputeStaticFingerprints(SettingsShadowStruct::ExteriorsStruct* S, UInt64* Out);
 	void					RedrawMovedStaticRegions(SettingsShadowStruct::ExteriorsStruct* S);
 	void					RenderActorOverlay(SettingsShadowStruct::ExteriorsStruct* S, D3DXVECTOR4* SunDir);
+	void					PublishSkinBounds(SettingsShadowStruct::ExteriorsStruct* S);
+	/// Sets up the overlay's camera-side caster cull for this frame (see OverlayCasterMatters).
+	void					SetupOverlayViewCull(SettingsShadowStruct::ExteriorsStruct* S, const D3DXVECTOR4* SunDir);
+	/// Whether a camera-relative caster sphere's shadow can land on anything the overlay is read for:
+	/// the camera's view, or the player (the sun-shadow probe).
+	bool					OverlayCasterMatters(const D3DXVECTOR3& Center, float Radius) const;
 	void					RenderShadowMapCellTerrain(TESObjectCELL* Cell, ShadowMapTypeEnum ShadowMapType, D3DXVECTOR4* ShadowData);
 	void					BuildExteriorGeoItems(SettingsShadowStruct::ExteriorsStruct* ShadowsExteriors, ShadowMapTypeEnum ShadowMapType);
 	void					CollectExteriorGeo(NiAVObject* Object, bool HasWater, ShadowMapTypeEnum ShadowMapType, bool IsActorRef, bool IsTreeRef);
@@ -164,6 +176,8 @@ public:
 	// Hardware instancing for repeated opaque statics in the exterior directional passes.
 	ShaderRecord*			ShadowMapInstancedVertex;
 	IDirect3DVertexShader9* ShadowMapInstancedVertexShader;
+	ShaderRecord*			ShadowMapTreeInstancedVertex;		// dynamic-tree composites; NULL handle = per-tree draws
+	IDirect3DVertexShader9* ShadowMapTreeInstancedVertexShader;
 	IDirect3DVertexBuffer9* InstanceVB;			// dynamic per-instance world-matrix stream
 	UINT					InstanceVBCapacity;	// capacity in instances
 	std::unordered_map<IDirect3DVertexDeclaration9*, IDirect3DVertexDeclaration9*> InstancedDeclCache;
@@ -177,6 +191,35 @@ public:
 	std::vector<InstanceGroup> InstancePool;
 	std::unordered_map<NiGeometryBufferData*, int> InstanceGroupIndex;
 	int						InstanceGroupCount;
+	// Dynamic-tree composite batches: one per tree mesh, plus its leaf table and texture for leaves,
+	// since those are what the leaf path uploads per draw. First is the item whose properties set up
+	// the group's constants.
+	struct TreeInstanceGroup { NiGeometry* First; NiGeometryBufferData* GeoData; bool Leaf; IDirect3DVertexDeclaration9* Decl; std::vector<int> ItemIdx; };
+	std::vector<TreeInstanceGroup> TreeInstancePool;
+	std::map<std::array<const void*, 3>, int> TreeInstanceGroupIndex;
+	int						TreeInstanceGroupCount;
+	bool					AddTreeInstance(int ItemIndex);
+	void					FlushTreeInstanceGroups(D3DXVECTOR4* ShadowData);
+	// A multi-strip mesh's strips joined into one by degenerate triangles, so a shadow pass draws it
+	// in one call instead of one per strip. Every shadow pass draws with culling off, so the joins'
+	// winding flips are harmless. IB = NULL marks a mesh that cannot be stitched.
+	struct StitchedStrip {
+		IDirect3DIndexBuffer9*	IB;
+		IDirect3DIndexBuffer9*	SourceIB;		// SourceIB, SourceIndices and SourceKey catch a freed
+		const UInt16*			SourceIndices;	// mesh whose buffer address is reused by another
+		UInt32					SourceKey;
+		UInt32					PrimCount;
+		UInt32					LastUsedFrame;
+	};
+	std::unordered_map<NiGeometryBufferData*, StitchedStrip> StitchedStrips;
+	std::vector<UInt16>		StitchScratch;
+	UInt32					StitchFrame;
+	int						StitchBuildsLeft;	// builds allowed this frame, so a new area cannot hitch
+	/// The stitched strip for GeoData's strips, building it from the buffer's CPU index copy on
+	/// first use. NULL means draw strip by strip: unstitchable, or this frame's build budget is spent.
+	const StitchedStrip*	GetStitchedStrip(NiGeometryBufferData* GeoData, UINT VertCount);
+	/// Once per frame: resets the build budget and periodically frees strips no pass has drawn lately.
+	void					AdvanceStitchedStrips();
 	D3DVIEWPORT9			ShadowMapViewPort[4];
 	D3DXPLANE				ShadowMapFrustum[4][6];
 	NiVector4				BillboardRight;
@@ -213,6 +256,10 @@ public:
 	// Latched once per sun frame by UpdateDynamicTreeRegions; a change invalidates the region, because
 	// its existing bake was drawn with the other tree mode.
 	bool					TreesDynamic[2];
+	// The live map's last composite no longer matches its bake or projection, so the next frame must
+	// composite even when DynamicTreesFarInterval would skip it. Set by every bake, redraw and mode change.
+	bool					TreeCompositeDirty[2];
+	int						FarTreeFramesSinceComposite;
 
 	//-------SHADOW CUBE MAP--------
 
@@ -225,6 +272,7 @@ public:
 		D3DXVECTOR3		BakedLightPos;	// world-space light position at last bake
 		UInt64			Checksum;		// sum of in-radius refs' RefLightInfo::PoseHash at last bake
 		bool			Valid;			// false => cube must be (re)baked
+		bool			ViewCulled;		// last bake left out casters the camera could not see: valid for that frame only
 		// --- Fade ([Point] FadeTime) ---
 		// Weight the published luminance is scaled by, 0..1. Ramps to 1 while the slot holds a light
 		// and to 0 once it loses one; the shader's darkness term is proportional to luminance, so this
@@ -272,6 +320,31 @@ public:
 	ShaderRecord*			ShadowCubeMapPixel;
 	IDirect3DVertexShader9* ShadowCubeMapVertexShader;
 	IDirect3DPixelShader9*	ShadowCubeMapPixelShader;
+	ShaderRecord*			ShadowCubeMapInstancedVertex;		// optional; NULL shader = no cube instancing
+	IDirect3DVertexShader9* ShadowCubeMapInstancedVertexShader;
+
+	// Cube-face instancing. Groups are built once per cube bake over CubeMapGeoList (repeated opaque
+	// meshes, keyed by buffer); CubeGeoGroup maps each list entry to its group or -1. Each face then
+	// fills Visible with the copies its frustum keeps.
+	struct CubeInstanceGroup {
+		NiGeometryBufferData*			GeoData;
+		NiGeometry*						First;		// packs the shared buffer before the instanced draw
+		IDirect3DVertexDeclaration9*	Decl;
+		UInt32							Total;		// copies in the whole cube list
+		std::vector<int>				Visible;	// CubeMapGeoList indices drawn in this face
+	};
+	std::vector<CubeInstanceGroup> CubeGroupPool;
+	std::unordered_map<NiGeometryBufferData*, int> CubeGroupIndex;
+	int						CubeGroupCount;
+	std::vector<int>		CubeGeoGroup;
+	bool					CubeGeoInstanceable(NiGeometry* Geo);
+	void					BuildCubeInstanceGroups();
+	/// Draws one cube face: everything ungrouped (and groups with one visible copy) through Render(),
+	/// then each group with two or more visible copies in one instanced call.
+	void					DrawCubeFace(D3DXPLANE* Frustum, D3DXVECTOR4* BakeData, bool Instancing);
+	/// Drops CubeMapGeoList entries whose shadow, cast outward from the camera-relative light out to
+	/// FarPlane, cannot reach the view. Returns whether anything was dropped.
+	bool					CullCubeCastersToView(const D3DXVECTOR3& LightPos, float FarPlane);
 
 	//MISC
 	D3DVIEWPORT9			ShadowCubeMapViewPort;
@@ -329,6 +402,14 @@ public:
 	// When true (the per-frame actor overlay), CollectExteriorGeo skips rigid non-actor geometry during
 	// collection so the walk doesn't build+store matrices for statics that the overlay would only discard.
 	bool                        CollectSkinnedOnly;
+	// The overlay's camera-side caster cull, camera-relative: a caster is dropped when the capsule its
+	// shadow sweeps (its bound, moved along OverlaySweep) lies wholly outside one of the view planes and
+	// misses the player's keep sphere. No top plane: water reflections show what lies above the view.
+	bool                        OverlayViewCull;
+	D3DXPLANE                   OverlayViewPlanes[4];
+	D3DXVECTOR3                 OverlaySweep;
+	D3DXVECTOR3                 OverlayKeepCenter;
+	float                       OverlayKeepRadius;
 	// When true (CompositeDynamicTrees), collection takes Tree-form refs only and never instances them,
 	// since ShadowMapInstanced.vso cannot apply the branch wind transform.
 	bool                        CollectTreesOnly;

@@ -11,3 +11,8 @@ void CreateTreeCollisionHook();
 /// uploads: a tree that shouldn't bend gets zeros, since constants persist from the last tree.
 /// Active is false for callers that must not bend this draw (cached shadow bakes).
 void SetTreeCollisionConstants(NiGeometry* Geometry, const NiTransform* WorldTransform, bool Active);
+
+/// True if a collision source would bend this tree geometry right now, i.e. SetTreeCollisionConstants
+/// with Active = true would upload a non-zero source count. Batched tree draws cannot bend per tree,
+/// so such trees draw on their own.
+bool TreeCollisionReaches(NiGeometry* Geometry, const NiTransform* WorldTransform);
