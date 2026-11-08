@@ -39,10 +39,25 @@ drops more frames. Normalize FPS comparisons per simulated second, not per frame
 entering the exclusive top-40 only when clones are present - the shadow actor overlay draws actors
 that cannot be seen.
 
-**Unresolved:** (1) linear vs quadratic — `placeatme` piles clones together, which is exactly what
-the O(n²) prune feeds on; a 50-clone run discriminates (linear ~310 ms/s, quadratic ~200). (2) render
-half CPU vs GPU — 17.6% of render samples sit on one d3d9.dll address that looks like a GPU
-spin-wait; `ProfileFrame=1` GPU timestamps would settle it.
+**Unresolved:** linear vs quadratic. `placeatme` piles clones together, which is exactly what the O(n²)
+prune feeds on. A 50-clone run discriminates (linear ~310 ms/s, quadratic ~200).
+
+**Resolved (2026-11-07):** the "GPU spin-wait" d3d9.dll address (`Direct3DCreate9On12Ex+0x145535`) is
+CPU time: DXVK's per-call device lock, see [[game-runs-on-dxvk]].
+
+**Natural combat is different (market district, 2026-11-07, 73.8 FPS):**
+- **CPU-bound:** 13.55 ms frame, with no Present wait. Update 5.3 ms, render 8.2 ms, GPU 11.4 ms.
+- **The Havok band barely registers.** Its only top-40 site is `sub_8E1200` at 0.012 ms. The update
+  phase is flat: 5900 distinct sites, none above 0.13 ms. Piled clones are what make Havok expensive.
+- **Our shadows are 3.0 ms of main-thread CPU:** `Pass:Skin` 1.89 ms (545 actor items) and a point
+  cube rebaked every frame at 0.96 ms. They issue **33,300 DrawIndexedPrimitive calls per frame**:
+  `DrawGeoArrays` makes one draw per strip, about 43 per actor item and 16 per cube geometry.
+  `RenderSkinnedGeo` adds one `SetVertexShaderConstantF` per bone and two full `SetCT` calls per
+  partition. Every one of those calls also pays DXVK's device lock.
+- **Engine CPU vertex packing, ~1.1 ms:** a loop in `sub_76E610` (+0x192..+0x1D0) under
+  `sub_76F590` ← `sub_76FE20`, plus `sub_776D80`, which memcpys into a locked VB, unlocks it (vtable
+  `+0x30`) and leaves a critical section. Deeper callers are unreliable, so it is unknown whether our
+  `PackSkinnedGeometryBuffer` calls trigger repacks. An A/B with actor shadows off would settle it.
 
 **How to apply:** optimize per-actor physics stepping and our shadow overlay culling, not AI.
 Havok is statically linked, so the engine-side lever is hooking the per-actor character-proxy step to
