@@ -32,7 +32,8 @@ namespace SampleProfiler {
 		const int    ChainWords     = ChainDepth + 1;       // the leaf EIP, then the chain, innermost first
 		const int    ChainLeaves    = 12;                   // top exclusive sites given a caller breakdown
 		const int    ChainsPerLeaf  = 6;
-		const int    GameChainDepth = 2;                    // game-module return addresses kept per game chain
+		const int    GameChainsPerLeaf = 10;             // deeper keys split into more distinct rows
+		const int    GameChainDepth = 6;                    // game-module return addresses kept per game chain
 		const int    GameChainWords = GameChainDepth + 1;
 
 		struct ModuleEntry {
@@ -476,9 +477,9 @@ namespace SampleProfiler {
 		}
 
 		// One line per distinct chain, ranked; shares are of the leaf's own sample count.
-		void LogChainRows(const ChainTable& T, std::vector<ChainRow>& Rows, UInt32 LeafCount, double MsPerCount, const char* Empty) {
+		void LogChainRows(const ChainTable& T, std::vector<ChainRow>& Rows, UInt32 LeafCount, double MsPerCount, int MaxRows, const char* Empty) {
 			std::sort(Rows.begin(), Rows.end(), ChainRowGreater);
-			for (size_t c = 0; c < Rows.size() && c < (size_t)ChainsPerLeaf; c++) {
+			for (size_t c = 0; c < Rows.size() && c < (size_t)MaxRows; c++) {
 				const UInt32* K = &T.Key[Rows[c].Slot * T.Words];
 				char Line[1024];
 				int Len = 0;
@@ -520,12 +521,12 @@ namespace SampleProfiler {
 				char Name[512];
 				Describe(Leaves[l].Addr, Name, sizeof(Name), NULL);
 				Logger::Log("[Sampler]     %8.4f ms/frame  %7u  %s", Leaves[l].Count * MsPerCount, Leaves[l].Count, Name);
-				LogChainRows(gChains, ByLeaf[Leaves[l].Addr], Leaves[l].Count, MsPerCount, "(no return address found)");
+				LogChainRows(gChains, ByLeaf[Leaves[l].Addr], Leaves[l].Count, MsPerCount, ChainsPerLeaf, "(no return address found)");
 
 				LeafChains::iterator Game = GameByLeaf.find(Leaves[l].Addr);
 				if (Game == GameByLeaf.end()) continue;
-				Logger::Log("[Sampler]        game frames (call site <- its caller):");
-				LogChainRows(gGameChains, Game->second, Leaves[l].Count, MsPerCount, "(no game frame found)");
+				Logger::Log("[Sampler]        game frames (call site <- its callers, up to %d):", GameChainDepth);
+				LogChainRows(gGameChains, Game->second, Leaves[l].Count, MsPerCount, GameChainsPerLeaf, "(no game frame found)");
 			}
 		}
 
