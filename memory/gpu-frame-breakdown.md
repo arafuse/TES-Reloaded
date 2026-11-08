@@ -12,7 +12,11 @@ dense grass), after the probe-readback fix ([[d3d9-gpu-readback-stall]]). CPU ~4
 GPU frame ~11.0 ms:
 - **Main pass ~5.9 ms**, by pixel shader:
   - **Grass (GRASS2004 + GRASS2030) ~2.7-3.0 ms**, ~50% of the main pass.
-  - Mid-scene shadow apply 0.98 ms: sun 0.63, point 0.02, plus ~0.3 ms of full-screen copies.
+  - Mid-scene shadow apply 0.92 ms since commit a466bad: sun 0.43, point ~0.01, plus the pre-water
+    depth resolve, the probe and ONE full-screen copy. The applies output a shadow FACTOR that the GPU
+    multiplies into the scene (DESTCOLOR blend), so the seed copy and the between-pass copy are gone; the
+    last copy stays because near water refracts TESR_RenderedBuffer. A compiled effect without the
+    `ShadowOutputsFactor` marker falls back to the old read-and-copy path per pass.
   - STLEAF 0.4, near water 0.25-0.4, SLS2000 0.3, land SLS2048/2049 ~0.2 each, SpeedTree
     branches 0.2.
 - Effect chain ~2.1 ms. VolumetricLight and AO were optimized in earlier rounds; the user asked
@@ -66,5 +70,6 @@ GPU frame ~11.0 ms:
 **How to apply:** start the next GPU round from these numbers. Open candidates:
 - near grass overdraw (the 12 nearest batches), which needs a visual trade-off or a cheaper
   near-grass pixel path. Ask about MSAA / driver transparency AA first; it multiplies exactly this cost;
-- the remaining sun PCF (0.63-0.75 ms);
-- merging the mid-scene copies.
+- the remaining sun PCF (~0.43 ms after the copy merge).
+- `Mid:ProbeRead` averages 0.03-0.1 ms but its worst frame reaches 2.4-3.0 ms in every run. That's an
+  occasional stall in the sun probe readback, worth a look if stutter is ever reported.

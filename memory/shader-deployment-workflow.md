@@ -18,6 +18,10 @@ event copies only `OblivionReloaded.dll` + `.pdb` to `Data\OBSE\Plugins\`. The m
 - When Adam tunes a value in "his game folder's `Shadows.ini`", he is editing the **tracked repo file**.
   Expect it to show up in `git status`, and check its current value rather than assuming it matches the
   last commit.
+- **Before committing a shader INI, diff it and check every value against what the commit intends.**
+  An A/B run leaves the INI on whichever side was tested last: f72bc97 shipped
+  `InstanceDynamicTrees = 0` from the A/B's "off" run while its message said 1 (fixed in 80edc4c).
+  Stage INI edits on purpose, never through a blanket `git add -A` of the shader folder.
 - After changing a `.hlsl`, say plainly that `[Develop] CompileShaders = 1` is required (code default
   0), or the stale compiled shader is used and an in-game test silently exercises the old code.
 - Compiled shaders (`*.vso`, `*.pso`, `*.fxo`) are **gitignored** — the game writes them next to the
