@@ -6,7 +6,7 @@ metadata:
 ---
 
 Shader-only edits can be fully verified without MSBuild. Two fxc copies are installed:
-`C:\Program Files (x86)\Windows Kits\10\bin\10.0.26100.0\x86\fxc.exe` and
+`C:\Program Files (x86)\Windows Kits\10\bin\10.0.22621.0\x86\fxc.exe` and
 `C:\Development\Microsoft\DirectX SDK (June 2010)\Utilities\bin\x86\fxc.exe` (also `x64`).
 
 - Effects (`.fx.hlsl`, have `technique{}`): `/T fx_2_0`

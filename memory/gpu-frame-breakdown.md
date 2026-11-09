@@ -86,6 +86,5 @@ GPU frame ~11.0 ms:
   fold the clip->light chain into one CPU matrix: it passes through the TAA-jittered
   InvViewProjMatrix while WorldViewProj is unjittered, so merging would drop that offset and
   change the result.
-- `Mid:ProbeRead` averages 0.03-0.1 ms but its worst frame reaches 2.4-3.0 ms in every run. It is
-  DXVK blocking inside the sun probe's sysmem `LockRect` ([[d3d9-gpu-readback-stall]]); worth a look
-  if stutter is ever reported.
+- `Mid:ProbeRead` is solved: its 2.4-3.0 ms worst frame was DXVK blocking in the sun probe's sysmem
+  `LockRect`. Occlusion queries brought it to 0.002 ms avg, 0.004 max ([[d3d9-gpu-readback-stall]]).

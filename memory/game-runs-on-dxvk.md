@@ -43,7 +43,8 @@ What it changes (checked 2026-11-07 with the sampler's CALLERS section, see [[sa
     per-bone constants). Fewer calls is the only lever: dropping `D3DCREATE_MULTITHREADED` is not an
     option, because the loader thread creates textures ([[dxvk-combat-cpu-headroom]]).
 - 3.1.1 wait sites, both `call [SleepConditionVariableSRW]`: `+0x3D3DB` is the Present wait under
-  `sub_7D7210`, and `+0x1595A3` is the sun probe's `LockRect` ([[d3d9-gpu-readback-stall]]).
+  `sub_7D7210`, and `+0x1595A3` was the sun probe's `LockRect`, gone since the probes moved to
+  occlusion queries ([[d3d9-gpu-readback-stall]]). DXVK's lock ignores `DONOTWAIT`.
 - `floatEmulation = Strict` is DXVK's most expensive float mode. Untested GPU lever: A/B it against
   `True`, and watch for black or NaN pixels, which may be why it was set.
 
