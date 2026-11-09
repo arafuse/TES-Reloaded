@@ -4,6 +4,7 @@
 static const int	kPlayerPointCount	= 8;
 static const int	kActorPointCount	= 2;
 static const int	kMaxPointCount		= kPlayerPointCount + kActorPointCount * RainProbeMaxActors;
+static const int	kBodyCount			= 1 + RainProbeMaxActors;	// the player, then each NPC
 static const int	kProbeRingSize		= 3;
 static const int	kPlayerHeightCount	= 4;
 static const float	kPlayerHeights[kPlayerHeightCount] = { 0.2f, 0.45f, 0.7f, 0.95f }; // fractions of body height
@@ -16,12 +17,11 @@ static const float	kExitMargin			= 10.0f;
 static const UInt32	kMovementSneak		= 0x400;
 static const int	kReadbackTimeoutFrames	= 30;
 
-/// One in-flight probe: its render target, the system-memory copy it is read back through, the event
-/// query issued after that copy, and the NPCs it tested.
+/// One in-flight probe: its render target, one occlusion query per body (the player, then each NPC)
+/// counting that body's exposed points, and the NPCs it tested.
 struct RainProbeSlot {
 	IDirect3DSurface9*	Target;
-	IDirect3DSurface9*	Readback;
-	IDirect3DQuery9*	Done;
+	IDirect3DQuery9*	Exposed[kBodyCount];
 	bool				Pending;
 	int					ActorCount;
 	UInt32				ActorRefIDs[RainProbeMaxActors];
@@ -45,8 +45,8 @@ static void ReleaseProbeResources() {
 
 	for (int i = 0; i < kProbeRingSize; i++) {
 		if (Ring[i].Target) Ring[i].Target->Release();
-		if (Ring[i].Readback) Ring[i].Readback->Release();
-		if (Ring[i].Done) Ring[i].Done->Release();
+		for (int b = 0; b < kBodyCount; b++)
+			if (Ring[i].Exposed[b]) Ring[i].Exposed[b]->Release();
 		Ring[i] = {};
 	}
 	if (ProbeEffect) TheShaderManager->DisposeEffect(ProbeEffect);
@@ -72,8 +72,8 @@ static bool CreateProbeResources(IDirect3DDevice9* Device) {
 	if (FAILED(ProbeEffect->Effect->GetParameterDesc(ProbePointsHandle, &Desc)) || Desc.Elements != (UINT)kMaxPointCount) return false;
 	for (int i = 0; i < kProbeRingSize; i++) {
 		if (FAILED(Device->CreateRenderTarget(kMaxPointCount, 1, D3DFMT_R32F, D3DMULTISAMPLE_NONE, 0, FALSE, &Ring[i].Target, NULL))) return false;
-		if (FAILED(Device->CreateOffscreenPlainSurface(kMaxPointCount, 1, D3DFMT_R32F, D3DPOOL_SYSTEMMEM, &Ring[i].Readback, NULL))) return false;
-		if (FAILED(Device->CreateQuery(D3DQUERYTYPE_EVENT, &Ring[i].Done))) return false;
+		for (int b = 0; b < kBodyCount; b++)
+			if (FAILED(Device->CreateQuery(D3DQUERYTYPE_OCCLUSION, &Ring[i].Exposed[b]))) return false;
 	}
 	return true;
 
@@ -191,34 +191,40 @@ static void ProbeFailure() {
 
 }
 
-// Oldest first; a slot is read only once its event query reports that its GetRenderTargetData copy
-// has landed. Never lock the render target itself: that drains the whole queued frame (~6 ms measured).
+// Oldest first; a slot is read once the queries of every body it tested have answered. Results come
+// from query counts, never a surface lock: DXVK's LockRect ignores DONOTWAIT and can block until the
+// whole command list holding a GetRenderTargetData copy retires.
 static void ReadFinishedProbes() {
 
 	for (int k = 0; k < kProbeRingSize; k++) {
 		RainProbeSlot& Slot = Ring[(NextSlot + k) % kProbeRingSize];
 		if (!Slot.Pending) continue;
-		if (Slot.Done->GetData(NULL, 0, 0) != S_OK) return;
-		D3DLOCKED_RECT Locked;
-		HRESULT hr = Slot.Readback->LockRect(&Locked, NULL, D3DLOCK_READONLY | D3DLOCK_DONOTWAIT);
-		if (hr == D3DERR_WASSTILLDRAWING) return;
+		DWORD ExposedPoints[kBodyCount];
+		bool Failed = false;
+		for (int b = 0; b < 1 + Slot.ActorCount; b++) {
+			HRESULT hr = Slot.Exposed[b]->GetData(&ExposedPoints[b], sizeof(DWORD), 0);
+			if (hr == S_FALSE) return;
+			if (FAILED(hr)) Failed = true;
+		}
 		Slot.Pending = false;
-		if (FAILED(hr)) { ProbeFailure(); continue; }
-		float Exposure[kMaxPointCount];
-		memcpy(Exposure, Locked.pBits, sizeof(Exposure));
-		Slot.Readback->UnlockRect();
+		if (Failed) { ProbeFailure(); continue; }
 		FramesSinceReadback = 0;
-		LONG Hit = 0;
-		for (int i = 0; i < kPlayerPointCount; i++)
-			if (Exposure[i] > 0.5f) Hit = 1;
-		RainHitting = Hit;
+		RainHitting = ExposedPoints[0] > 0 ? 1 : 0;
 		ProbeAnswered = true;
 		ActorExposure.clear();
-		for (int a = 0; a < Slot.ActorCount; a++) {
-			const float* Points = Exposure + kPlayerPointCount + a * kActorPointCount;
-			ActorExposure[Slot.ActorRefIDs[a]] = Points[0] > 0.5f || Points[1] > 0.5f;
-		}
+		for (int a = 0; a < Slot.ActorCount; a++)
+			ActorExposure[Slot.ActorRefIDs[a]] = ExposedPoints[1 + a] > 0;
 	}
+
+}
+
+// Draws one body's run of probe pixels inside its occlusion query.
+static bool DrawBodyProbe(IDirect3DDevice9* Device, IDirect3DQuery9* Query, int FirstPoint, int PointCount) {
+
+	D3DVIEWPORT9 Viewport = { (DWORD)FirstPoint, 0, (DWORD)PointCount, 1, 0.0f, 1.0f };
+	if (FAILED(Device->SetViewport(&Viewport)) || FAILED(Query->Issue(D3DISSUE_BEGIN))) return false;
+	bool Ok = SUCCEEDED(Device->DrawPrimitive(D3DPT_TRIANGLESTRIP, 0, 2));
+	return SUCCEEDED(Query->Issue(D3DISSUE_END)) && Ok;
 
 }
 
@@ -257,7 +263,9 @@ void RenderRainProbe(IDirect3DDevice9* Device) {
 			Ok = false;
 		} else {
 			if (SUCCEEDED(ProbeEffect->Effect->BeginPass(0))) {
-				if (FAILED(Device->DrawPrimitive(D3DPT_TRIANGLESTRIP, 0, 2))) Ok = false;
+				Ok = DrawBodyProbe(Device, Slot.Exposed[0], 0, kPlayerPointCount);
+				for (int a = 0; a < ActorCount && Ok; a++)
+					Ok = DrawBodyProbe(Device, Slot.Exposed[1 + a], kPlayerPointCount + a * kActorPointCount, kActorPointCount);
 				ProbeEffect->Effect->EndPass();
 			} else {
 				Ok = false;
@@ -272,10 +280,6 @@ void RenderRainProbe(IDirect3DDevice9* Device) {
 	Previous->Release();
 
 	if (!Ok) {
-		ProbeFailure();
-		return;
-	}
-	if (FAILED(Device->GetRenderTargetData(Slot.Target, Slot.Readback)) || FAILED(Slot.Done->Issue(D3DISSUE_END))) {
 		ProbeFailure();
 		return;
 	}

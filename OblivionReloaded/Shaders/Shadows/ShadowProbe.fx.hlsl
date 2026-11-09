@@ -1,6 +1,8 @@
 // Sun shadow probe for Oblivion Reloaded: samples the exterior sun shadow maps at the player probe
-// points built by SunShadowStealth.cpp, writing one raw visibility (0 = occluded, 1 = lit) per pixel
-// of an 8x1 target.
+// points built by SunShadowStealth.cpp. Each point owns a run of ProbeThresholds pixels in a 128x1
+// target, and pixel j of the run survives only if the point's raw visibility (0 = occluded, 1 = lit)
+// exceeds (j + 0.5) / ProbeThresholds. An occlusion query per point counts the survivors, so
+// count / ProbeThresholds is the visibility, with no surface readback.
 
 float4x4 TESR_WorldViewProjectionTransform;
 float4x4 TESR_ShadowCameraToLightTransformNear;
@@ -52,11 +54,16 @@ VSOUT FrameVS(VSIN IN)
 	return OUT;
 }
 
+// Pixels per probe point; must match kThresholdsPerPoint in SunShadowStealth.cpp.
+static const float ProbeThresholds = 16.0f;
+
 float4 Probe(float2 vpos : VPOS) : COLOR0 {
+	float pixel = floor(vpos.x + 0.25f);
 	float4 probePoint = SunShadowProbePoints[0];
 	[unroll] for (int i = 1; i < 8; i++) {
-		if (vpos.x > i - 0.5f) probePoint = SunShadowProbePoints[i];
+		if (pixel >= i * ProbeThresholds) probePoint = SunShadowProbePoints[i];
 	}
+	float threshold = (pixel - floor(pixel / ProbeThresholds) * ProbeThresholds + 0.5f) / ProbeThresholds;
 
 	// Points have no surface normal: depth bias only, no normal offset or terminator ramp.
 	float4 pos = mul(float4(probePoint.xyz, 1.0f), TESR_WorldViewProjectionTransform);
@@ -74,7 +81,9 @@ float4 Probe(float2 vpos : VPOS) : COLOR0 {
 		                                  pos, pos, ShadowSkin, biasNear, biasFar, biasSkin, 1.0f);
 		visibility = lerp(prevVisibility, visibility, TESR_ShadowFadeData.x);
 	}
-	return float4(saturate(visibility), 0.0f, 0.0f, 1.0f);
+	visibility = saturate(visibility);
+	clip(visibility - threshold);
+	return float4(visibility, 0.0f, 0.0f, 1.0f);
 }
 
 technique {
