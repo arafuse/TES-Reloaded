@@ -19,6 +19,14 @@ The pattern that measured stall-free (`SunShadowStealth.cpp`, `RainProbe.cpp`):
 4. frames later, once `GetData` returns S_OK, `LockRect` the SYSTEMMEM surface (READONLY | DONOTWAIT).
 Keep a ring (3 slots) so a slot is never reused while pending.
 
+**Residual stall, pinned 2026-11-08 on DXVK 3.1.1:** `Mid:ProbeRead` still averages ~0.03-0.09 ms
+but has a ~2.5 ms worst frame in every run. The sampler puts it in step 4's `LockRect`:
+`ReadFinishedProbes+0x6D` (`SunShadowStealth.cpp`, the return from vtable `+0x34`), after `GetData`
+already returned S_OK. Below it is DXVK's `SleepConditionVariableSRW` at d3d9 `+0x1595A3`, i.e. a
+main-thread sync inside DXVK, so `DONOTWAIT` does not stop it blocking. Which sync it is (CS worker
+drain or resource wait) is unverified. It is worth a fix only if stutter is reported; the rain probe
+uses the same lock.
+
 **Why:** a stall like this does not show up as GPU time. It reads as a huge CPU bucket in
 FrameProfiler and serializes CPU and GPU. The tell is a ~one-call-per-frame bucket costing
 milliseconds while issuing trivial work.

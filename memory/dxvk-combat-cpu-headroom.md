@@ -11,7 +11,8 @@ ProtoPlugin `memory/oblivion-cpu-levers-combat.md`.
 **Headroom (PresentMon 2.6, DXVK, market-district combat with `placeatme` goblins, medians):**
 14.71 ms between presents (~66 FPS), CPU busy 14.63, MsInPresentAPI 0.08, GPU busy 10.99 (75%),
 GPU wait 3.59. CPU-bound, unlike native D3D9 ([[native-d3d9-skinned-index-stall]]), so up to ~3.6 ms
-of main-thread savings would show as FPS. Only 427 steady frames were captured.
+of main-thread savings would show as FPS. Only 427 steady frames were captured. All numbers here
+are DXVK 2.7.1; combat has not been re-measured on 3.1.1 ([[game-runs-on-dxvk]]).
 
 **DXVK device lock (1.22 ms/frame, [[game-runs-on-dxvk]]): the flag that enables it cannot go.**
 `CreateDevice` is called at 0x76A545 (IDirect3D9 at `[0xB42154]`, vtable `+0x40`). `D3DCREATE_MULTITHREADED`
