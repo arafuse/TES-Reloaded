@@ -2,7 +2,10 @@
 name: grass-drawn-after-water
 description: "Oblivion main-pass order: opaque -> LOD water (WATER012+) -> sky -> LOD terrain -> grass -> NEAR water (WATER000-011); discriminate near water by PS number, not alpha flags"
 metadata:
+  node_type: memory
   type: reference
+  originSessionId: ffe84fbd-fb2a-4713-be61-82503f171389
+  modified: 2026-11-09T01:55:05.830Z
 ---
 
 **Engine fact (measured with the `[GrassOrderDbg]` per-pass log + position logging):**
@@ -24,7 +27,8 @@ so a blend-bit predicate silently stops matching. The code uses `PixelShader->is
 renders the darkening quad at the first NEAR water draw. At that instant the depth holds every
 shadow receiver — land, grass, submerged floor — with no near-water surface, so
 `ShadowsExteriors.fx.hlsl::readDepth` samples that single snapshot. See
-[[water-reflection-pass-detection]] for why `InMainScenePass` is required.
+[[water-reflection-pass-detection]] for why `InMainScenePass` is required, and
+[[mid-draw-renderer-matrices]] for why it must restore the renderer matrices.
 
 Grass DOES write depth (it lands in the main depth buffer), which is why DoF/AO/god-rays respect it.
 Raw game shaders that declare `TESR_RenderedBuffer` get the scene StretchRect'd into it at their first
