@@ -2,11 +2,16 @@
 name: game-runs-on-dxvk
 description: "The game folder's d3d9.dll is DXVK (D3D9 on Vulkan): the main thread's idle wait is DXVK syncing in Present, d3d9.dll samples are DXVK internals, and dxvk.conf sets floatEmulation = Strict"
 metadata:
+  node_type: memory
   type: project
+  originSessionId: 021854aa-fcf7-4d1b-8c67-7ee9a679ad40
+  modified: 2026-11-09T02:23:16.877Z
 ---
 
-`C:\Games\Steam\steamapps\common\Oblivion\d3d9.dll` (4.28 MB, product "DXVK") replaces the Windows
-runtime. Active `dxvk.conf` lines: `dxgi.hideNvidiaGpu = False` and `d3d9.floatEmulation = Strict`.
+`C:\Games\Steam\steamapps\common\Oblivion\d3d9.dll` (DXVK 2.7.1 since 2026-11-08; 2.5.3 kept as
+`d3d9.dll.dxvk-2.5.3`) replaces the Windows runtime. Active `dxvk.conf` lines: `dxgi.hideNvidiaGpu =
+False`, `d3d9.floatEmulation = Strict`, and `d3d9.hideNvidiaGpu = True`, which 2.7.1 needs for OR's
+depth copy ([[dxvk-resz-vendor-gate]]).
 No frame cap is set there (Special K is also loaded and could cap; unchecked).
 
 What it changes (checked 2026-11-07 with the sampler's CALLERS section, see [[sampling-profiler]]):
