@@ -21,6 +21,8 @@ depth consumer goes through it: water, the pre-water copy, the near-shell mask.
 - **Fix (confirmed 2026-11-08):** `d3d9.hideNvidiaGpu = True` in the game's `dxvk.conf` (reports an
   AMD RX 6700 XT). `dxgi.hideNvidiaGpu` does NOT affect d3d9. OR uses no other vendor hack (ATOC,
   NVDB, FETCH4, INST), so only RESZ changes.
+- **DXVK 3.1.1 (2026-11-08):** same `dxvk.conf`, and the log shows "AMD/Intel detected: RESZ
+  supported." Not tested whether 3.1.1 still gates RESZ on vendor, so keep the spoof.
 - **Not a code fix:** DXVK's `StretchRect` does accept depth→depth copies (INTZ and D24S8 are both
   `VK_FORMAT_D24_UNORM_S8_UINT`), but returns `D3DERR_INVALIDCALL` while `InScene`, and OR resolves
   mid-scene. Native D3D9 refuses INTZ texture targets anyway.

@@ -1,6 +1,7 @@
 // Rain probe for Oblivion Reloaded: tests the precipitation occlusion map at the player probe points
-// built by RainProbe.cpp, writing one exposure (1 = open to the rain, 0 = sheltered) per pixel of a
-// 56x1 target (8 player points, then 2 per probed NPC). Uses the same compare as Rain.fx.hlsl, so it agrees with the rain that is drawn.
+// built by RainProbe.cpp, one pixel per point of a 56x1 target (8 player points, then 2 per probed
+// NPC). A sheltered point's pixel is discarded, so an occlusion query over a body's pixels counts its
+// exposed points. Uses the same compare as Rain.fx.hlsl, so it agrees with the rain that is drawn.
 
 float4x4 TESR_WorldViewProjectionTransform;
 float4x4 TESR_ShadowCameraToLightTransformOrtho;
@@ -52,7 +53,9 @@ float4 Probe(float2 vpos : VPOS) : COLOR0 {
 	[unroll] for (int i = 1; i < 56; i++) {
 		if (vpos.x > i - 0.5f) probePoint = RainProbePoints[i];
 	}
-	return float4(GetExposure(mul(float4(probePoint.xyz, 1.0f), OrthoCombined)), 0.0f, 0.0f, 1.0f);
+	float exposure = GetExposure(mul(float4(probePoint.xyz, 1.0f), OrthoCombined));
+	clip(exposure - 0.5f);
+	return float4(exposure, 0.0f, 0.0f, 1.0f);
 }
 
 technique {

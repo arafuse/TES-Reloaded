@@ -9,6 +9,14 @@ Measured 2026-11-07 in the user's usual exterior test scene (one shadowed point 
 dense grass), after the probe-readback fix ([[d3d9-gpu-readback-stall]]). CPU ~4.7 ms vs GPU ~11 ms:
 **the frame is GPU-bound**, so CPU-only wins do not move FPS here.
 
+**Re-measured 2026-11-08 on DXVK 3.1.1, same scene** (ProfileFrame = 1, so no per-shader rows): the
+counters match (29,379 grass instances, 160 batches, tree pieces 107 near / 688 far). The user
+reported better performance after the upgrade. GPU frame 11.0 → **9.2 ms**, main pass 5.9 → **4.96**,
+GPU:MidSun 0.27 (it was 0.43 before commit 196b760, so not all of that drop is DXVK). GPU:ShadowExt
+0.73 (TreesNear 0.51, TreesFar 0.57 on the frames that run it), CPU envelope 4.7 → 3.6 ms. The
+sampler run showed 96 FPS / 10.41 ms with a 4.03 ms Present wait: still GPU-bound. The per-shader
+numbers below are from 2.7.1, so re-run ProfileFrame = 2 before trusting them.
+
 GPU frame ~11.0 ms:
 - **Main pass ~5.9 ms**, by pixel shader:
   - **Grass (GRASS2004 + GRASS2030) ~2.7-3.0 ms**, ~50% of the main pass.
@@ -78,5 +86,5 @@ GPU frame ~11.0 ms:
   fold the clip->light chain into one CPU matrix: it passes through the TAA-jittered
   InvViewProjMatrix while WorldViewProj is unjittered, so merging would drop that offset and
   change the result.
-- `Mid:ProbeRead` averages 0.03-0.1 ms but its worst frame reaches 2.4-3.0 ms in every run. That's an
-  occasional stall in the sun probe readback, worth a look if stutter is ever reported.
+- `Mid:ProbeRead` is solved: its 2.4-3.0 ms worst frame was DXVK blocking in the sun probe's sysmem
+  `LockRect`. Occlusion queries brought it to 0.002 ms avg, 0.004 max ([[d3d9-gpu-readback-stall]]).

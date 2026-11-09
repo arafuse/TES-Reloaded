@@ -9,6 +9,7 @@ static volatile LONG PlayerInSunShadow = 0;
 
 static const UInt32	kShadowSceneNode	= 0x00B42F54;
 static const int	kProbePointCount	= 8;
+static const int	kThresholdsPerPoint	= 16;	// pixels per point; must match ProbeThresholds in ShadowProbe.fx.hlsl
 static const int	kProbeRingSize		= 3;
 static const int	kProbeHeightCount	= 4;
 static const float	kProbeHeights[kProbeHeightCount] = { 0.2f, 0.45f, 0.7f, 0.95f }; // fractions of body height
@@ -22,12 +23,11 @@ static const DWORD	kLogIntervalMs		= 1000;
 static const int	kReadbackTimeoutFrames	= 30;
 static const float	kInShadowThreshold	= 1.0f; // shadowed fraction of the probe points
 
-/// One in-flight probe: its render target, the system-memory copy it is read back through, and the
-/// event query issued after that copy.
+/// One in-flight probe: its render target and one occlusion query per point, which counts the
+/// point's lit threshold pixels.
 struct ProbeSlot {
 	IDirect3DSurface9*	Target;
-	IDirect3DSurface9*	Readback;
-	IDirect3DQuery9*	Done;
+	IDirect3DQuery9*	Lit[kProbePointCount];
 	bool				Pending;
 };
 
@@ -48,8 +48,8 @@ static void ReleaseProbeResources() {
 
 	for (int i = 0; i < kProbeRingSize; i++) {
 		if (Ring[i].Target) Ring[i].Target->Release();
-		if (Ring[i].Readback) Ring[i].Readback->Release();
-		if (Ring[i].Done) Ring[i].Done->Release();
+		for (int p = 0; p < kProbePointCount; p++)
+			if (Ring[i].Lit[p]) Ring[i].Lit[p]->Release();
 		Ring[i] = {};
 	}
 	if (ProbeEffect) TheShaderManager->DisposeEffect(ProbeEffect);
@@ -72,9 +72,9 @@ static bool CreateProbeResources(IDirect3DDevice9* Device) {
 	ProbePointsHandle = ProbeEffect->Effect->GetParameterByName(NULL, "SunShadowProbePoints");
 	if (!ProbePointsHandle) return false;
 	for (int i = 0; i < kProbeRingSize; i++) {
-		if (FAILED(Device->CreateRenderTarget(kProbePointCount, 1, D3DFMT_R32F, D3DMULTISAMPLE_NONE, 0, FALSE, &Ring[i].Target, NULL))) return false;
-		if (FAILED(Device->CreateOffscreenPlainSurface(kProbePointCount, 1, D3DFMT_R32F, D3DPOOL_SYSTEMMEM, &Ring[i].Readback, NULL))) return false;
-		if (FAILED(Device->CreateQuery(D3DQUERYTYPE_EVENT, &Ring[i].Done))) return false;
+		if (FAILED(Device->CreateRenderTarget(kProbePointCount * kThresholdsPerPoint, 1, D3DFMT_R32F, D3DMULTISAMPLE_NONE, 0, FALSE, &Ring[i].Target, NULL))) return false;
+		for (int p = 0; p < kProbePointCount; p++)
+			if (FAILED(Device->CreateQuery(D3DQUERYTYPE_OCCLUSION, &Ring[i].Lit[p]))) return false;
 	}
 	return true;
 
@@ -191,21 +191,25 @@ static void ProbeFailure() {
 
 }
 
-// Oldest first; a slot is read only once its event query reports that its GetRenderTargetData copy
-// has landed. Never lock the render target itself: that drains the whole queued frame (~6 ms measured).
-static void ReadFinishedProbes(IDirect3DDevice9* Device) {
+// Oldest first; a slot is read once all its occlusion queries have answered. Results come from query
+// counts, never a surface lock: DXVK's LockRect ignores DONOTWAIT and can block until the whole
+// command list holding a GetRenderTargetData copy retires (~2.5 ms worst frame measured).
+static void ReadFinishedProbes() {
 
 	for (int k = 0; k < kProbeRingSize; k++) {
 		ProbeSlot& Slot = Ring[(NextSlot + k) % kProbeRingSize];
 		if (!Slot.Pending) continue;
-		if (Slot.Done->GetData(NULL, 0, 0) != S_OK) return;
-		D3DLOCKED_RECT Locked;
-		HRESULT hr = Slot.Readback->LockRect(&Locked, NULL, D3DLOCK_READONLY | D3DLOCK_DONOTWAIT);
-		if (hr == D3DERR_WASSTILLDRAWING) return;
+		DWORD LitPixels[kProbePointCount];
+		bool Failed = false;
+		for (int p = 0; p < kProbePointCount; p++) {
+			HRESULT hr = Slot.Lit[p]->GetData(&LitPixels[p], sizeof(DWORD), 0);
+			if (hr == S_FALSE) return;
+			if (FAILED(hr)) Failed = true;
+		}
 		Slot.Pending = false;
-		if (FAILED(hr)) { ProbeFailure(); continue; }
-		memcpy(Visibility, Locked.pBits, sizeof(Visibility));
-		Slot.Readback->UnlockRect();
+		if (Failed) { ProbeFailure(); continue; }
+		for (int p = 0; p < kProbePointCount; p++)
+			Visibility[p] = min(LitPixels[p], (DWORD)kThresholdsPerPoint) / (float)kThresholdsPerPoint;
 		FramesSinceReadback = 0;
 		PublishProbeResult();
 	}
@@ -241,7 +245,7 @@ void RenderSunShadowProbe(IDirect3DDevice9* Device) {
 	if (!ProbeArmed || !ProbeEffect || TheShaderManager->ShaderConst.ShadowMap.ShadowBiasAdaptive.w < 0.5f) return;
 	{
 		FrameProfiler::Scope ReadScope(FrameProfiler::Buck_MidProbeRead);
-		ReadFinishedProbes(Device);
+		ReadFinishedProbes();
 	}
 	LogProbe();
 	ProbeSlot& Slot = Ring[NextSlot];
@@ -275,7 +279,12 @@ void RenderSunShadowProbe(IDirect3DDevice9* Device) {
 			Ok = false;
 		} else {
 			if (SUCCEEDED(ProbeEffect->Effect->BeginPass(0))) {
-				if (FAILED(Device->DrawPrimitive(D3DPT_TRIANGLESTRIP, 0, 2))) Ok = false;
+				for (int p = 0; p < kProbePointCount && Ok; p++) {
+					D3DVIEWPORT9 Viewport = { (DWORD)(p * kThresholdsPerPoint), 0, (DWORD)kThresholdsPerPoint, 1, 0.0f, 1.0f };
+					if (FAILED(Device->SetViewport(&Viewport)) || FAILED(Slot.Lit[p]->Issue(D3DISSUE_BEGIN))) { Ok = false; break; }
+					if (FAILED(Device->DrawPrimitive(D3DPT_TRIANGLESTRIP, 0, 2))) Ok = false;
+					if (FAILED(Slot.Lit[p]->Issue(D3DISSUE_END))) Ok = false;
+				}
 				ProbeEffect->Effect->EndPass();
 			} else {
 				Ok = false;
@@ -290,10 +299,6 @@ void RenderSunShadowProbe(IDirect3DDevice9* Device) {
 	Previous->Release();
 
 	if (!Ok) {
-		ProbeFailure();
-		return;
-	}
-	if (FAILED(Device->GetRenderTargetData(Slot.Target, Slot.Readback)) || FAILED(Slot.Done->Issue(D3DISSUE_END))) {
 		ProbeFailure();
 		return;
 	}
