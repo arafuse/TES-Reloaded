@@ -3760,6 +3760,12 @@ void ShaderManager::RenderShadowsMidScene() {
 	}
 	if (!CaptureDeviceState()) { SceneRT->Release(); return; }
 
+	// This runs inside the near-water draw's setup: the engine builds that draw's transform constants
+	// from these renderer matrices right after, so SetupSceneCamera's image-space rewrite must not leak.
+	D3DXMATRIXA16 EngineWorld = TheRenderManager->worldMatrix;
+	D3DMATRIX EngineView = TheRenderManager->viewMatrix;
+	D3DMATRIX EngineProj = TheRenderManager->projMatrix;
+	D3DMATRIX EngineInvView = TheRenderManager->invViewMatrix;
 	TheRenderManager->SetupSceneCamera(); // CPU-side matrices only; refreshes WorldViewProj/InvViewProj for SetCT
 	Device->SetRenderState(D3DRS_ZENABLE, FALSE);
 	Device->SetRenderState(D3DRS_ZWRITEENABLE, FALSE);
@@ -3825,6 +3831,10 @@ void ShaderManager::RenderShadowsMidScene() {
 
 	FrameProfiler::Scope RestoreScope(FrameProfiler::Buck_MidRestore);
 	CachedStateBlock->Apply();
+	TheRenderManager->worldMatrix = EngineWorld;
+	TheRenderManager->viewMatrix = EngineView;
+	TheRenderManager->projMatrix = EngineProj;
+	TheRenderManager->invViewMatrix = EngineInvView;
 	SceneRT->Release();
 
 }
