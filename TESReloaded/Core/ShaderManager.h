@@ -415,6 +415,9 @@ public:
 	// buffer and writes into the two scratch buffers, leaving the result in one of them; the caller
 	// then adopts it as the new current. Issues NO StretchRect at all.
 	void						RenderChained(IDirect3DDevice9* Device, bool ClearRenderTarget);
+	/// Draws one pass of the current technique into Target and leaves Target bound. The caller selects
+	/// the technique, calls SetCT, and binds any sampler the pass reads that SetCT does not bind.
+	void						RenderPass(IDirect3DDevice9* Device, UINT Pass, IDirect3DSurface9* Target);
 
 	bool						Enabled;
 	// True when the effect declares TESR_SourceBuffer, i.e. it actually reads the pre-chain image.
@@ -512,6 +515,12 @@ public:
 	void					ChainBegin();							// adopt RenderedTexture as current
 	void					ChainEnd(IDirect3DSurface9* RenderTarget);	// materialise into the render target
 	void					RunEffect(EffectRecord* Effect, IDirect3DDevice9* Device, IDirect3DSurface9* RenderTarget, bool BlitSource, bool ClearRenderTarget);
+	/// Runs the temporal ambient occlusion (AmbientOcclusionTemporal.fx) in place of AmbientOcclusion.fx.
+	/// Returns false when it cannot run (effect not loaded, targets or techniques unavailable); the
+	/// caller then runs the legacy effect.
+	bool					RenderAmbientOcclusionTemporal(IDirect3DDevice9* Device, IDirect3DSurface9* RenderTarget);
+	/// Creates the temporal AO render targets; on failure releases any it made and returns false.
+	bool					CreateAOTemporalTargets();
 	void					SwitchShaderStatus(const char* Name);
 	void					SetCustomConstant(const char* Name, D3DXVECTOR4 Value);
 	void					SetExtraEffectEnabled(const char* Name, bool Value);
@@ -554,6 +563,15 @@ public:
 	IDirect3DSurface9*		EffectSurface;
 	IDirect3DTexture9*		TAATexture;
 	IDirect3DSurface9*		TAASurface;
+	/// Temporal AO render targets, indexed by AOTemporalTarget. NULL until the first temporal frame.
+	enum					AOTemporalTarget { AOTarget_Raw, AOTarget_Blur, AOTarget_History0, AOTarget_History1, AOTarget_Count };
+	IDirect3DTexture9*		AOTemporalTexture[AOTarget_Count];
+	IDirect3DSurface9*		AOTemporalSurface[AOTarget_Count];
+	bool					AOTemporalFailed;		///< Targets or techniques unavailable; the legacy AO runs for the session
+	bool					AOTemporalHasRun;		///< A temporal frame has rendered since the targets were created
+	int						AOTemporalHistory;		///< 0 or 1: which History target holds the newest accumulation
+	UInt32					AOTemporalLastFrame;	///< Engine frame of the last temporal run
+	D3DXVECTOR3				AOTemporalLastCamera;	///< Camera position at the last temporal run
 	IDirect3DTexture9*		PingTexture;   // multi-pass ping-pong scratch (avoids per-pass blits)
 	IDirect3DSurface9*		PingSurface;
 	IDirect3DTexture9*		POMDepthTexture;	///< TESR_POMDepthBuffer: G32R32F (geometric, relief) view depth from PAR and near-land passes; NULL if POM and Terrain are off
@@ -625,6 +643,7 @@ public:
 	EffectRecord*			SecundaRaysEffect;
 	EffectRecord*			DepthOfFieldEffect;
 	EffectRecord*			AmbientOcclusionEffect;
+	EffectRecord*			AmbientOcclusionTemporalEffect;
 	EffectRecord*			ColoringEffect;
 	EffectRecord*			CinemaEffect;
 	EffectRecord*			BloomEffect;

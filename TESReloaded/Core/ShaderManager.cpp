@@ -1104,6 +1104,20 @@ void EffectRecord::RenderChained(IDirect3DDevice9* Device, bool ClearRenderTarge
 
 }
 
+void EffectRecord::RenderPass(IDirect3DDevice9* Device, UINT Pass, IDirect3DSurface9* Target) {
+
+	UINT Passes;
+
+	Device->SetRenderTarget(0, Target);
+	Effect->Begin(&Passes, NULL);
+	Effect->BeginPass(Pass);
+	Device->DrawPrimitive(D3DPT_TRIANGLESTRIP, 0, 2);
+	Effect->EndPass();
+	Effect->End();
+	EffCountPass();
+
+}
+
 // Adopt RenderedTexture as the live buffer. The callers of RenderEffects already blit the scene into
 // RenderedSurface before the chain runs, so the rotation starts with no copy of its own.
 void ShaderManager::ChainBegin() {
@@ -1206,6 +1220,13 @@ ShaderManager::ShaderManager() {
 	SecundaRaysEffect = NULL;
 	DepthOfFieldEffect = NULL;
 	AmbientOcclusionEffect = NULL;
+	AmbientOcclusionTemporalEffect = NULL;
+	for (int i = 0; i < AOTarget_Count; i++) { AOTemporalTexture[i] = NULL; AOTemporalSurface[i] = NULL; }
+	AOTemporalFailed = false;
+	AOTemporalHasRun = false;
+	AOTemporalHistory = 0;
+	AOTemporalLastFrame = 0;
+	AOTemporalLastCamera = D3DXVECTOR3(0.0f, 0.0f, 0.0f);
 	ColoringEffect = NULL;
 	CinemaEffect = NULL;
 	BloomEffect = NULL;
@@ -3228,6 +3249,14 @@ void ShaderManager::CreateEffect(EffectRecordType EffectType) {
 			strcat(Filename, "AmbientOcclusion\\AmbientOcclusion.fx");
 			AmbientOcclusionEffect = new EffectRecord();
 			TheSettingManager->SettingsMain.Effects.AmbientOcclusion = LoadEffect(AmbientOcclusionEffect, Filename, NULL);
+			if (TheSettingManager->SettingsMain.Effects.AmbientOcclusion) {
+				char TemporalFilename[MAX_PATH];
+				strcpy(TemporalFilename, EffectsPath);
+				strcat(TemporalFilename, "AmbientOcclusion\\AmbientOcclusionTemporal.fx");
+				AmbientOcclusionTemporalEffect = new EffectRecord();
+				if (!LoadEffect(AmbientOcclusionTemporalEffect, TemporalFilename, NULL))
+					Logger::Log("WARNING: AmbientOcclusionTemporal.fx not loaded; the legacy ambient occlusion runs. Enable CompileShaders once to build it.");
+			}
 			break;
 		case EffectRecordType_Coloring:
 			strcat(Filename, "Coloring\\Coloring.fx");
@@ -3364,6 +3393,7 @@ bool ShaderManager::LoadEffect(EffectRecord* TheEffect, char* Filename, char* Cu
 void ShaderManager::DisposeEffect(EffectRecord* TheEffect) {
 
 	if (TheEffect == AmbientOcclusionEffect) AmbientOcclusionEffect = NULL;
+	else if (TheEffect == AmbientOcclusionTemporalEffect) AmbientOcclusionTemporalEffect = NULL;
 	else if (TheEffect == BloomEffect) BloomEffect = NULL;
 	else if (TheEffect == CinemaEffect) CinemaEffect = NULL;
 	else if (TheEffect == ColoringEffect) ColoringEffect = NULL;
@@ -3393,6 +3423,108 @@ void ShaderManager::DisposeEffect(EffectRecord* TheEffect) {
 void ShaderManager::ProfileBlitToSource(IDirect3DSurface9* RenderTarget) {
 	EffCountBlit();
 	TheRenderManager->device->StretchRect(RenderTarget, NULL, SourceSurface, NULL, D3DTEXF_NONE);
+}
+
+// A jump this large between temporal frames is a load door or fast travel (same as kGrassTeleportDist).
+static const float kAOTemporalTeleportDist = 1024.0f;
+
+// Engine display-frame counter at NiDX9VertexBufferManager + 0x3C: bumped once per frame by 0x777A40
+// from the BeginFrame path 0x762600, shared by every pass of the frame.
+static UInt32 GetEngineFrame() {
+
+	return *(UInt32*)((UInt8*)TheRenderManager->vertexBufferMgr + 0x3C);
+
+}
+
+bool ShaderManager::CreateAOTemporalTargets() {
+
+	static const D3DFORMAT Formats[AOTarget_Count] = { D3DFMT_G16R16F, D3DFMT_G16R16F, D3DFMT_A16B16G16R16F, D3DFMT_A16B16G16R16F };
+	IDirect3DDevice9* Device = TheRenderManager->device;
+
+	for (int i = 0; i < AOTarget_Count; i++) {
+		if (FAILED(Device->CreateTexture(TheRenderManager->width, TheRenderManager->height, 1, D3DUSAGE_RENDERTARGET, Formats[i], D3DPOOL_DEFAULT, &AOTemporalTexture[i], NULL)) ||
+			FAILED(AOTemporalTexture[i]->GetSurfaceLevel(0, &AOTemporalSurface[i]))) {
+			for (int j = 0; j <= i; j++) {
+				if (AOTemporalSurface[j]) { AOTemporalSurface[j]->Release(); AOTemporalSurface[j] = NULL; }
+				if (AOTemporalTexture[j]) { AOTemporalTexture[j]->Release(); AOTemporalTexture[j] = NULL; }
+			}
+			return false;
+		}
+	}
+	return true;
+
+}
+
+bool ShaderManager::RenderAmbientOcclusionTemporal(IDirect3DDevice9* Device, IDirect3DSurface9* RenderTarget) {
+
+	EffectRecord* Effect = AmbientOcclusionTemporalEffect;
+	if (!Effect || AOTemporalFailed) return false;
+
+	if (!AOTemporalSurface[AOTarget_Raw]) {
+		if (!CreateAOTemporalTargets()) {
+			AOTemporalFailed = true;
+			Logger::Log("WARNING: The temporal ambient occlusion targets could not be created; the legacy ambient occlusion runs.");
+			return false;
+		}
+		AOTemporalHasRun = false;
+	}
+	D3DXHANDLE Compute = Effect->Effect->GetTechniqueByName("Compute");
+	D3DXHANDLE Combine = Effect->Effect->GetTechniqueByName("Combine");
+	if (!Compute || !Combine) {
+		AOTemporalFailed = true;
+		Logger::Log("WARNING: AmbientOcclusionTemporal.fx lacks the Compute or Combine technique; the legacy ambient occlusion runs.");
+		return false;
+	}
+
+	UInt32 Frame = GetEngineFrame();
+	D3DXVECTOR3 Camera(TheRenderManager->CameraPosition.x, TheRenderManager->CameraPosition.y, TheRenderManager->CameraPosition.z);
+	D3DXVECTOR3 Moved = Camera - AOTemporalLastCamera;
+	bool Reset = !AOTemporalHasRun || Frame != AOTemporalLastFrame + 1 ||
+		D3DXVec3LengthSq(&Moved) > kAOTemporalTeleportDist * kAOTemporalTeleportDist;
+
+	// R2 sequence offset, cycling every 64 frames as XeGTAO's NoiseIndex does.
+	D3DXVECTOR4& Temporal = ShaderConst.AmbientOcclusion.Temporal;
+	double NoiseIndex = (double)(Frame % 64);
+	Temporal.x = (float)fmod(0.5 + NoiseIndex * 0.75487766624669276, 1.0);
+	Temporal.y = (float)fmod(0.5 + NoiseIndex * 0.56984029099805326, 1.0);
+	if (Reset) Temporal.z = 0.0f;
+
+	const int Cur = AOTemporalHistory ^ 1;
+	IDirect3DTexture9* HistoryPrev = AOTemporalTexture[AOTarget_History0 + AOTemporalHistory];
+	IDirect3DTexture9* HistoryCur = AOTemporalTexture[AOTarget_History0 + Cur];
+
+	EffCountEffect();
+	EffMark(Effect->ProfileName.c_str());
+	Effect->Effect->SetTechnique(Compute);
+	Effect->SetCT();
+	Device->SetTexture(2, NULL);
+	Device->SetTexture(3, NULL);
+	Effect->RenderPass(Device, 0, AOTemporalSurface[AOTarget_Raw]);
+	Device->SetTexture(2, AOTemporalTexture[AOTarget_Raw]);
+	Device->SetTexture(3, HistoryPrev);
+	Effect->RenderPass(Device, 1, AOTemporalSurface[AOTarget_History0 + Cur]);
+	Device->SetTexture(2, HistoryCur);
+	Device->SetTexture(3, NULL);
+	Effect->RenderPass(Device, 2, AOTemporalSurface[AOTarget_Blur]);
+	Device->SetTexture(2, AOTemporalTexture[AOTarget_Blur]);
+	Effect->RenderPass(Device, 3, AOTemporalSurface[AOTarget_Raw]);
+
+	// Combine joins the chain like any effect; SetCT inside RunEffect leaves s2/s3 alone because
+	// their texture records are empty.
+	Device->SetRenderTarget(0, RenderTarget);
+	Device->SetTexture(2, AOTemporalTexture[AOTarget_Raw]);
+	Device->SetTexture(3, HistoryCur);
+	Effect->Effect->SetTechnique(Combine);
+	RunEffect(Effect, Device, RenderTarget, true, false);
+	Device->SetTexture(2, NULL);
+	Device->SetTexture(3, NULL);
+
+	AOTemporalHistory = Cur;
+	AOTemporalLastFrame = Frame;
+	AOTemporalLastCamera = Camera;
+	AOTemporalHasRun = true;
+	return true;
+
 }
 
 void ShaderManager::RenderEffects(IDirect3DSurface9* RenderTarget) {
@@ -3442,7 +3574,8 @@ void ShaderManager::RenderEffects(IDirect3DSurface9* RenderTarget) {
 			}
 		}
 		if (Effects->AmbientOcclusion && ShaderConst.AmbientOcclusion.Enabled) {
-			RunEffect(AmbientOcclusionEffect, Device, RenderTarget, true, false);
+			if (!ShaderConst.AmbientOcclusion.TemporalEnabled || !RenderAmbientOcclusionTemporal(Device, RenderTarget))
+				RunEffect(AmbientOcclusionEffect, Device, RenderTarget, true, false);
 		}
 		if (Effects->GodRays && isExteriorLike && (ShaderConst.SunAmount.x >= 0.4 || ShaderConst.SunAmount.y > 0 || ShaderConst.SunAmount.z >= 0.3)) {
 			RunEffect(GodRaysEffect, Device, RenderTarget, true, false);
@@ -4307,6 +4440,8 @@ void ShaderManager::SwitchShaderStatus(const char* Name) {
 		Value = !Effects->AmbientOcclusion;
 		Effects->AmbientOcclusion = Value;
 		DisposeEffect(AmbientOcclusionEffect);
+		if (AmbientOcclusionTemporalEffect) DisposeEffect(AmbientOcclusionTemporalEffect);
+		AOTemporalHasRun = false;
 		if (Value) {
 			CreateEffect(EffectRecordType_AmbientOcclusion);
 		}
