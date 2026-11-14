@@ -408,6 +408,8 @@ bool ShaderProgram::SetConstantTableValue1(LPCSTR Name, UInt32 Index) {
 		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.AmbientOcclusion.AOData;
 	else if (!strcmp(Name, "TESR_AmbientOcclusionData"))
 		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.AmbientOcclusion.Data;
+	else if (!strcmp(Name, "TESR_AmbientOcclusionTemporal"))
+		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.AmbientOcclusion.Temporal;
 	else if (!strcmp(Name, "TESR_BloomData"))
 		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.Bloom.BloomData;
 	else if (!strcmp(Name, "TESR_BloomValues"))
@@ -2340,6 +2342,7 @@ void ShaderManager::UpdateKhajiitRays(ShaderConstants& ShaderConst) {
 
 void ShaderManager::UpdateAmbientOcclusion(ShaderConstants& ShaderConst, SettingsAmbientOcclusionStruct* sas) {
 	ShaderConst.AmbientOcclusion.Enabled = sas->Enabled;
+	ShaderConst.AmbientOcclusion.TemporalEnabled = sas->TemporalEnabled;
 	if (ShaderConst.AmbientOcclusion.Enabled) {
 		ShaderConst.AmbientOcclusion.AOData.x = sas->RadiusMultiplier;
 		ShaderConst.AmbientOcclusion.AOData.y = sas->StrengthMultiplier;
@@ -2349,6 +2352,8 @@ void ShaderManager::UpdateAmbientOcclusion(ShaderConstants& ShaderConst, Setting
 		ShaderConst.AmbientOcclusion.Data.y = sas->LumThreshold * ShaderConst.SunAmount.y;
 		ShaderConst.AmbientOcclusion.Data.z = sas->BlurDropThreshold;
 		ShaderConst.AmbientOcclusion.Data.w = sas->BlurRadiusMultiplier;
+		ShaderConst.AmbientOcclusion.Temporal.z = sas->TemporalBlend;
+		ShaderConst.AmbientOcclusion.Temporal.w = sas->TemporalDepthReject;
 	}
 }
 

@@ -562,6 +562,9 @@ struct SettingsAmbientOcclusionStruct {
 	float LumThreshold;
 	float BlurDropThreshold;
 	float BlurRadiusMultiplier;
+	bool TemporalEnabled;		///< Run AmbientOcclusionTemporal.fx (per-frame noise + accumulation) instead of AmbientOcclusion.fx
+	float TemporalBlend;		///< Steady-state history weight of the temporal accumulation
+	float TemporalDepthReject;	///< Relative depth mismatch above which the reprojected history is dropped
 };
 
 struct SettingsColoringStruct {

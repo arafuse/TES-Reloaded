@@ -815,6 +815,11 @@ void SettingManager::LoadSettings() {
 		SA.BlurDropThreshold = atof(value);
 		GetPrivateProfileStringA(pNextSection, "BlurRadiusMultiplier", "1.0", value, SettingStringBuffer, Filename);
 		SA.BlurRadiusMultiplier = atof(value);
+		SA.TemporalEnabled = GetPrivateProfileIntA(pNextSection, "TemporalEnabled", 0, Filename);
+		GetPrivateProfileStringA(pNextSection, "TemporalBlend", "0.9", value, SettingStringBuffer, Filename);
+		SA.TemporalBlend = atof(value);
+		GetPrivateProfileStringA(pNextSection, "TemporalDepthReject", "0.05", value, SettingStringBuffer, Filename);
+		SA.TemporalDepthReject = atof(value);
 		SettingsAmbientOcclusion[std::string(pNextSection)] = SA;
 		pNextSection = pNextSection + strlen(pNextSection) + 1;
 	}
@@ -1491,6 +1496,9 @@ void SettingManager::SaveSettings(const char* Item, const char* Definition, cons
 				WritePrivateProfileStringA(v->first.c_str(), "RadiusMultiplier", ToString(v->second.RadiusMultiplier).c_str(), Filename);
 				WritePrivateProfileStringA(v->first.c_str(), "Range", ToString(v->second.Range).c_str(), Filename);
 				WritePrivateProfileStringA(v->first.c_str(), "StrengthMultiplier", ToString(v->second.StrengthMultiplier).c_str(), Filename);
+				WritePrivateProfileStringA(v->first.c_str(), "TemporalBlend", ToString(v->second.TemporalBlend).c_str(), Filename);
+				WritePrivateProfileStringA(v->first.c_str(), "TemporalDepthReject", ToString(v->second.TemporalDepthReject).c_str(), Filename);
+				WritePrivateProfileStringA(v->first.c_str(), "TemporalEnabled", ToString(v->second.TemporalEnabled).c_str(), Filename);
 				v++;
 			}
 		}
@@ -2244,6 +2252,9 @@ SettingsList SettingManager::GetMenuSettings(const char* Item, const char* Defin
 			Settings["RadiusMultiplier"] = sas->RadiusMultiplier;
 			Settings["Range"] = sas->Range;
 			Settings["StrengthMultiplier"] = sas->StrengthMultiplier;
+			Settings["TemporalBlend"] = sas->TemporalBlend;
+			Settings["TemporalDepthReject"] = sas->TemporalDepthReject;
+			Settings["TemporalEnabled"] = sas->TemporalEnabled;
 		}
 		else if (!strcmp(Definition, "Bloom")) {
 			SettingsBloomStruct* sbs = GetSettingsBloom(Section);
@@ -2931,6 +2942,12 @@ void SettingManager::SetMenuSetting(const char* Item, const char* Definition, co
 				sas->Range = Value;
 			else if (!strcmp(Setting, "StrengthMultiplier"))
 				sas->StrengthMultiplier = Value;
+			else if (!strcmp(Setting, "TemporalBlend"))
+				sas->TemporalBlend = Value;
+			else if (!strcmp(Setting, "TemporalDepthReject"))
+				sas->TemporalDepthReject = Value;
+			else if (!strcmp(Setting, "TemporalEnabled"))
+				sas->TemporalEnabled = Value;
 		}
 		else if (!strcmp(Definition, "Bloom")) {
 			SettingsBloomStruct* sbs = GetSettingsBloom(Section);
