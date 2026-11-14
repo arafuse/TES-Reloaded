@@ -163,8 +163,10 @@ struct ShaderConstants {
 	};
 	struct AmbientOcclusionStruct {
 		bool			Enabled;
+		bool			TemporalEnabled;
 		D3DXVECTOR4		AOData;
 		D3DXVECTOR4		Data;
+		D3DXVECTOR4		Temporal;	///< TESR_AmbientOcclusionTemporal: xy R2 noise offset, z history weight (0 = reset), w depth reject
 	};
 	struct ColoringStruct {
 		D3DXVECTOR4		ColorCurve;
