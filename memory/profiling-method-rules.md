@@ -41,6 +41,11 @@ invocation count. A dead hook and a quiet session both print zero. Make capture 
 **How to apply:** before a large build, name the measurement that would make it pointless and take it
 first (one capture showed the cell-transition frame was CPU-bound and killed a streaming design).
 
+**FrameProfiler's "FrameTotal GPU" is a timestamp span, not GPU work.**
+**Why:** in CPU-bound market combat it read 11.1 ms while PresentMon showed GPU busy 4.3 ms: the
+span includes the gaps where the GPU waits for the CPU to submit.
+**How to apply:** use it (and the GPU range buckets) only in GPU-bound scenes; take GPU busy from PresentMon.
+
 **Environment traps on this machine:**
 - `C:\Games` is a symlink to `D:\Games`; the game may report either path. When two paths differ in a
   measurement, check they differ only in the thing being tested (same volume, links resolved).
