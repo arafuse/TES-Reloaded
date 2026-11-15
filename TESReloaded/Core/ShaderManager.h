@@ -570,7 +570,8 @@ public:
 	bool					AOTemporalFailed;		///< Targets or techniques unavailable; the legacy AO runs for the session
 	bool					AOTemporalHasRun;		///< A temporal frame has rendered since the targets were created
 	int						AOTemporalHistory;		///< 0 or 1: which History target holds the newest accumulation
-	UInt32					AOTemporalLastFrame;	///< Engine frame of the last temporal run
+	UInt32					AOTemporalLastFrame;	///< EffectChainFrame of the last temporal run
+	UInt32					EffectChainFrame;		///< Bumped once per RenderEffects call, i.e. once per displayed frame
 	D3DXVECTOR3				AOTemporalLastCamera;	///< Camera position at the last temporal run
 	IDirect3DTexture9*		PingTexture;   // multi-pass ping-pong scratch (avoids per-pass blits)
 	IDirect3DSurface9*		PingSurface;
