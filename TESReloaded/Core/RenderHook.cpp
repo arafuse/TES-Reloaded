@@ -403,8 +403,10 @@ namespace FrameProfiler {
 			gAccumCounters[i] += Counters[i];
 			if (Counters[i] > gMaxCounters[i]) gMaxCounters[i] = Counters[i];
 		}
+		DrawStats::FrameEnd();
 		if (++gFrames < ReportFrames) return;
 		Report();
+		DrawStats::Report(gFrames, gQpcFreq);
 		ResetWindow();
 	}
 }
@@ -1555,10 +1557,13 @@ UInt32 RenderHook::TrackSetupShaderPrograms(NiGeometry* Geometry, NiSkinInstance
 		}
 	}
 
+	int CensusSlot = FrameProfiler::Active ? DrawStats::Record(this, Geometry, SkinInstance, PropertyState, Pass, VertexShader, PixelShader) : -1;
 	UInt32 result;
 	{
 		FrameProfiler::Scope EngineScope(FrameProfiler::Buck_HookEngine);
+		LONGLONG EngineStart = CensusSlot >= 0 ? FrameProfiler::QpcNow() : 0;
 		result = (this->*SetupShaderPrograms)(Geometry, SkinInstance, SkinPartition, GeometryBufferData, PropertyState, EffectState, WorldTransform, WorldBound);
+		if (CensusSlot >= 0) DrawStats::AddEngineTicks(CensusSlot, FrameProfiler::QpcNow() - EngineStart);
 	}
 
 	return result;
