@@ -571,7 +571,8 @@ public:
 	bool					AOTemporalHasRun;		///< A temporal frame has rendered since the targets were created
 	int						AOTemporalHistory;		///< 0 or 1: which History target holds the newest accumulation
 	UInt32					AOTemporalLastFrame;	///< EffectChainFrame of the last temporal run
-	UInt32					EffectChainFrame;		///< Bumped once per RenderEffects call, i.e. once per displayed frame
+	UInt32					EffectChainFrame;		///< Bumped once per RenderEffects call: counts effect-chain runs, which pause during menus and loading screens
+	double					AOTemporalLastMs;		///< FrameRateManager::GetPerformance() at the last temporal run
 	D3DXVECTOR3				AOTemporalLastCamera;	///< Camera position at the last temporal run
 	IDirect3DTexture9*		PingTexture;   // multi-pass ping-pong scratch (avoids per-pass blits)
 	IDirect3DSurface9*		PingSurface;
