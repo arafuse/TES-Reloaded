@@ -6,7 +6,7 @@ metadata:
 ---
 
 Measured 2026-11-15 with the draw census (`DrawStats.cpp`, printed after the counters when
-`Develop.ProfileFrame` is on; commit e837265). DXVK 3.1.1. **Decision (user agreed): static-draw
+`Develop.ProfileFrame` and `Develop.ProfileDrawCensus` are on; commit e837265). DXVK 3.1.1. **Decision (user agreed): static-draw
 instancing is shelved.** Census kept as a tool.
 
 **Market combat (CPU-bound; PresentMon mean 8.09 ms, GPU busy 4.30, GPU wait 3.79):**
@@ -24,10 +24,17 @@ geometry data, 81 groups (5.4x), draws/run 1.37, 0.10 ms engine CPU. They instan
 the CPU win does not show in a GPU-bound frame. Note this run's GPU frame was 5.3 ms, not the 9.2 ms
 in [[gpu-frame-breakdown]]; the scene conditions differed.
 
-**Bigger CPU items in combat, same window:** OR's ShadowMaps 1.90 ms (538 actor overlay pieces); OR's
-own ShaderHook work 1.69 − 0.78 (engine) ≈ 0.9 ms, ~0.34 us/draw, which includes the census's own
-overhead (set inserts per draw), so measure with the census disabled before treating it as a lever.
+**Bigger CPU items in combat, same window:** OR's ShadowMaps 1.90 ms (538 actor overlay pieces).
 See [[dxvk-combat-cpu-headroom]], [[many-actors-havok-cost]].
+
+**OR's own draw-hook work is NOT a lever (measured 2026-11-15, census off, lighter combat window of
+1687 draws).** ShaderHook − Hook:Engine = 0.30 ms (0.18 us/draw), but ~0.19 ms of that is the
+profiler's own QPC pairs (nested scopes x 2 x 0.018 us). The real remainder, ~0.1-0.15 ms, is
+SetCT uploads, the mid-scene shadow apply and shell-water prep: actual work, not per-draw
+bookkeeping. With the census on the same gap was 0.34 us/draw, so the census costs ~0.2 us per
+recorded draw (~0.45 ms/frame in heavy combat). Census is behind `Develop.ProfileDrawCensus`
+(default 0) so ProfileFrame stays light; ProfileFrame alone costs ~0.25 ms/frame (the report's
+"profiler self-cost" line).
 
 **Census caveats:**
 - Light sets came out as only ~3 per class even in the lit market. If BSShaderLightingProperty::lights
