@@ -1226,6 +1226,7 @@ ShaderManager::ShaderManager() {
 	AOTemporalHasRun = false;
 	AOTemporalHistory = 0;
 	AOTemporalLastFrame = 0;
+	EffectChainFrame = 0;
 	AOTemporalLastCamera = D3DXVECTOR3(0.0f, 0.0f, 0.0f);
 	ColoringEffect = NULL;
 	CinemaEffect = NULL;
@@ -3428,14 +3429,6 @@ void ShaderManager::ProfileBlitToSource(IDirect3DSurface9* RenderTarget) {
 // A jump this large between temporal frames is a load door or fast travel (same as kGrassTeleportDist).
 static const float kAOTemporalTeleportDist = 1024.0f;
 
-// Engine display-frame counter at NiDX9VertexBufferManager + 0x3C: bumped once per frame by 0x777A40
-// from the BeginFrame path 0x762600, shared by every pass of the frame.
-static UInt32 GetEngineFrame() {
-
-	return *(UInt32*)((UInt8*)TheRenderManager->vertexBufferMgr + 0x3C);
-
-}
-
 bool ShaderManager::CreateAOTemporalTargets() {
 
 	static const D3DFORMAT Formats[AOTarget_Count] = { D3DFMT_G16R16F, D3DFMT_G16R16F, D3DFMT_A16B16G16R16F, D3DFMT_A16B16G16R16F };
@@ -3476,7 +3469,7 @@ bool ShaderManager::RenderAmbientOcclusionTemporal(IDirect3DDevice9* Device, IDi
 		return false;
 	}
 
-	UInt32 Frame = GetEngineFrame();
+	UInt32 Frame = EffectChainFrame;
 	D3DXVECTOR3 Camera(TheRenderManager->CameraPosition.x, TheRenderManager->CameraPosition.y, TheRenderManager->CameraPosition.z);
 	D3DXVECTOR3 Moved = Camera - AOTemporalLastCamera;
 	bool Reset = !AOTemporalHasRun || Frame != AOTemporalLastFrame + 1 ||
@@ -3528,6 +3521,7 @@ bool ShaderManager::RenderAmbientOcclusionTemporal(IDirect3DDevice9* Device, IDi
 }
 
 void ShaderManager::RenderEffects(IDirect3DSurface9* RenderTarget) {
+	EffectChainFrame++;
 	SettingsMainStruct::EffectsStruct* Effects = &TheSettingManager->SettingsMain.Effects;
 	IDirect3DDevice9* Device = TheRenderManager->device;
 	bool isExteriorLike = Player->IsExteriorLike();
