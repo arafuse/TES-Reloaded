@@ -29,6 +29,12 @@ W = struct.unpack_from('<I', d, 16)[0]   # 0x10
 def px(x, y): return struct.unpack_from('<4e', d, 128 + (y*W+x)*8)  # '<4e' = 4 half floats
 ```
 
+With `RenderEffectsBeforeHdr = 0` (the user's setting) the capture is 8-bit instead: fourCC 0,
+32 bpp, masks R 0xff0000 / G 0xff00 / B 0xff (BGRA bytes), so read `'<I'` per pixel at
+`128 + (y*W+x)*4` and mask out the channels. Debug views that write exact 0/1 per channel survive
+this; fractional values come back as /255 (8/255 read back as a 1/32 history count in the
+temporal AO debugging, [[temporal-ao]]).
+
 `array.array` has no `'e'` typecode - use `struct`. To *look* at it, write a PNG with `zlib` +
 `struct` (gamma 1/2.2) and open it with the Read tool; scale a crop up 6x to inspect a 1px artifact.
 Exact per-channel deltas at an edge can name a leaking buffer and its bilinear weight outright, where
