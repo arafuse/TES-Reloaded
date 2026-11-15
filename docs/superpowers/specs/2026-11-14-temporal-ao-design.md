@@ -168,3 +168,17 @@ No test framework exists; verification is build, compile, then in-game checks.
    ground smears behind walking NPCs; no stale AO after load doors or fast travel; same result
    with TAA on and off.
 6. `ProfileFrame` AO bucket, temporal vs legacy; expected +0.1–0.2 ms, measured value reported.
+
+## Amendments (execution, 2026-11-14)
+
+- **Frame index:** the engine counter at `[NiDX9Renderer + 0x8B0] + 0x3C` steps ~36 per displayed
+  frame (it bumps per BeginFrame), so using it reset the history every frame. The frame index is
+  `ShaderManager::EffectChainFrame`, bumped once per `RenderEffects` call; it drives both the gap
+  test and `frame % 64`.
+- **Menus and loading screens:** the effect chain does not run while they show, so a chain-count
+  gap cannot see them. A wall-clock gap above 250 ms since the last temporal run
+  (`FrameRateManager::GetPerformance()`) also resets the history.
+- **Reprojection:** history is also rejected for points behind the previous camera
+  (`prevClip.w <= 0`).
+- **Cost measurement:** `Develop.ProfileEffects = 1` (per-effect GPU buckets), not `ProfileFrame`.
+  Measured +0.27 ms AO / +0.22 ms chain at 3072x1728 (AO 0.665 vs 0.394 ms).
