@@ -217,7 +217,7 @@ float4 AccumulatePS(VSOUT IN) : COLOR0
 
 	bool onScreen = all(prevUV == saturate(prevUV));
 	bool depthMatches = abs(history.g - expectedDepth) <= TESR_AmbientOcclusionTemporal.w * expectedDepth;
-	bool valid = TESR_AmbientOcclusionTemporal.z > 0.0f && history.b > 0.0f && onScreen && depthMatches;
+	bool valid = TESR_AmbientOcclusionTemporal.z > 0.0f && history.b > 0.0f && prevClip.w > 0.0f && onScreen && depthMatches;
 
 	float count = valid ? min(history.b + 1.0f, MaxHistoryCount) : 1.0f;
 	float weight = max(1.0f / count, 1.0f - TESR_AmbientOcclusionTemporal.z);
