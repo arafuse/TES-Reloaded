@@ -14,6 +14,7 @@ namespace FrameProfiler {
 
 	bool         Active = false;
 	bool         ShaderDetail = false;
+	bool         DrawCensus = false;
 	unsigned int Counters[Cnt_COUNT] = {};
 
 	namespace {
@@ -240,6 +241,17 @@ namespace FrameProfiler {
 			}
 		}
 
+		/// Mean cost of one QueryPerformanceCounter call, measured once.
+		double QpcCostUs() {
+			static double Cost = -1.0;
+			if (Cost >= 0.0) return Cost;
+			const int Calls = 20000;
+			LONGLONG Start = QpcNow();
+			for (int i = 0; i < Calls; i++) QpcNow();
+			Cost = (double)(QpcNow() - Start) * 1e6 / (double)gQpcFreq / Calls;
+			return Cost;
+		}
+
 		void Report() {
 			double inv    = 1.0 / gFrames;
 			double total  = gAccumMs[Buck_FrameTotal] * inv;
@@ -285,7 +297,13 @@ namespace FrameProfiler {
 				ReportShaders();
 			}
 
-			Logger::Log("[FrameProfile]   -- counters (per frame; ShaderHook carries ~0.15 us/draw of profiler overhead) --");
+			// Every CPU scope costs two QueryPerformanceCounter calls, charged to its enclosing buckets.
+			double scopes = 0.0;
+			for (int i = TopLevelBegin; i < Buck_COUNT; i++) scopes += gCalls[i] * inv;
+			double qpcUs = QpcCostUs();
+			Logger::Log("[FrameProfile]   profiler self-cost: %.1f scopes/frame x 2 QPC x %.4f us = %.4f ms/frame (census %s; its QPC pair per draw is extra)",
+				scopes, qpcUs, scopes * 2.0 * qpcUs / 1000.0, DrawCensus ? "ON" : "off");
+			Logger::Log("[FrameProfile]   -- counters (per frame) --");
 			for (int i = 0; i < Cnt_COUNT; i++)
 				Logger::Log("[FrameProfile]   %-18s %9.1f  (max %u)", CounterNames[i], gAccumCounters[i] * inv, gMaxCounters[i]);
 		}
@@ -371,6 +389,7 @@ namespace FrameProfiler {
 			s.SegClosed = false;
 		}
 		ShaderDetail = false;
+		DrawCensus = TheSettingManager->SettingsMain.Develop.ProfileDrawCensus != 0;
 		if (TheSettingManager->SettingsMain.Develop.ProfileFrame >= 2 && gActiveSlot >= 0) {
 			GpuEnsureSegQueries(Device);
 			ShaderDetail = gSegAvailable;
@@ -1557,7 +1576,7 @@ UInt32 RenderHook::TrackSetupShaderPrograms(NiGeometry* Geometry, NiSkinInstance
 		}
 	}
 
-	int CensusSlot = FrameProfiler::Active ? DrawStats::Record(this, Geometry, SkinInstance, PropertyState, Pass, VertexShader, PixelShader) : -1;
+	int CensusSlot = FrameProfiler::Active && FrameProfiler::DrawCensus ? DrawStats::Record(this, Geometry, SkinInstance, PropertyState, Pass, VertexShader, PixelShader) : -1;
 	UInt32 result;
 	{
 		FrameProfiler::Scope EngineScope(FrameProfiler::Buck_HookEngine);

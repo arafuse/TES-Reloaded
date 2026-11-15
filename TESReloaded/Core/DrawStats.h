@@ -3,7 +3,7 @@
 class NiD3DVertexShaderEx;
 class NiD3DPixelShaderEx;
 
-// --- Main-pass draw census (Develop.ProfileFrame) ------------------------------
+// --- Main-pass draw census (Develop.ProfileFrame + ProfileDrawCensus) ----------
 // Answers "would batching the engine's static draws pay off?" before any batching is built. Every
 // hooked SetupShaderPrograms call in the main scene (the far pass when the near shell is on) and in
 // the shell pass is classified by where its geometry hangs in the scene graph, and the report shows

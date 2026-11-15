@@ -261,7 +261,10 @@ namespace DrawStats {
 	}
 
 	void Report(int Frames, LONGLONG QpcFreq) {
-		if (Frames > 0 && QpcFreq > 0) {
+		double Recorded = 0.0;
+		for (int p = 0; p < Pass_COUNT; p++)
+			for (int c = 0; c < Class_COUNT; c++) Recorded += gWindow[p][c].Sum[Col_Draws];
+		if (Recorded > 0.0 && Frames > 0 && QpcFreq > 0) {
 			double Inv = 1.0 / Frames;
 			double TicksToMs = 1000.0 / (double)QpcFreq;
 			for (int p = 0; p < Pass_COUNT; p++) LogTable(p, Inv, TicksToMs);

@@ -130,6 +130,7 @@ namespace FrameProfiler {
 	/// runs between that batch's draw and the next hooked draw.
 	void SetGrassTailKey(const void* Key, const char* Name);
 	extern bool ShaderDetail;                   // armed by FrameBegin when ProfileFrame >= 2
+	extern bool DrawCensus;                     // armed by FrameBegin when Develop.ProfileDrawCensus is set
 
 	/// Called before each main-pass draw (and before the mid-scene apply, with Key = NULL and
 	/// Seg_MidScene). A key change closes the running segment with a timestamp and opens a new one;
