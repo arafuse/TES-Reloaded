@@ -1226,6 +1226,7 @@ ShaderManager::ShaderManager() {
 	AOTemporalHasRun = false;
 	AOTemporalHistory = 0;
 	AOTemporalLastFrame = 0;
+	AOTemporalLastMs = 0.0;
 	EffectChainFrame = 0;
 	AOTemporalLastCamera = D3DXVECTOR3(0.0f, 0.0f, 0.0f);
 	ColoringEffect = NULL;
@@ -3428,6 +3429,8 @@ void ShaderManager::ProfileBlitToSource(IDirect3DSurface9* RenderTarget) {
 
 // A jump this large between temporal frames is a load door or fast travel (same as kGrassTeleportDist).
 static const float kAOTemporalTeleportDist = 1024.0f;
+// Longer than any rendered frame: a gap this long means a menu or loading screen hid the chain.
+static const double kAOTemporalMaxGapMs = 250.0;
 
 bool ShaderManager::CreateAOTemporalTargets() {
 
@@ -3472,8 +3475,10 @@ bool ShaderManager::RenderAmbientOcclusionTemporal(IDirect3DDevice9* Device, IDi
 	UInt32 Frame = EffectChainFrame;
 	D3DXVECTOR3 Camera(TheRenderManager->CameraPosition.x, TheRenderManager->CameraPosition.y, TheRenderManager->CameraPosition.z);
 	D3DXVECTOR3 Moved = Camera - AOTemporalLastCamera;
+	double NowMs = TheFrameRateManager->GetPerformance();
 	bool Reset = !AOTemporalHasRun || Frame != AOTemporalLastFrame + 1 ||
-		D3DXVec3LengthSq(&Moved) > kAOTemporalTeleportDist * kAOTemporalTeleportDist;
+		D3DXVec3LengthSq(&Moved) > kAOTemporalTeleportDist * kAOTemporalTeleportDist ||
+		NowMs - AOTemporalLastMs > kAOTemporalMaxGapMs;
 
 	// R2 sequence offset, cycling every 64 frames as XeGTAO's NoiseIndex does.
 	D3DXVECTOR4& Temporal = ShaderConst.AmbientOcclusion.Temporal;
@@ -3515,6 +3520,7 @@ bool ShaderManager::RenderAmbientOcclusionTemporal(IDirect3DDevice9* Device, IDi
 	AOTemporalHistory = Cur;
 	AOTemporalLastFrame = Frame;
 	AOTemporalLastCamera = Camera;
+	AOTemporalLastMs = NowMs;
 	AOTemporalHasRun = true;
 	return true;
 
