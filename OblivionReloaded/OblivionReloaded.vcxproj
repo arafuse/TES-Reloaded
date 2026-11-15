@@ -121,6 +121,7 @@ copy "$(TargetDir)$(TargetName).pdb" "C:\Games\Steam\steamapps\common\Oblivion\D
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClInclude Include="..\TESReloaded\Core\Animation.h" />
+    <ClInclude Include="..\TESReloaded\Core\AnimationBlending.h" />
     <ClInclude Include="..\TESReloaded\Core\CameraMode.h" />
     <ClInclude Include="..\TESReloaded\Core\CommandManager.h" />
     <ClInclude Include="..\TESReloaded\Core\D3D9Device.h" />
@@ -175,6 +176,7 @@ copy "$(TargetDir)$(TargetName).pdb" "C:\Games\Steam\steamapps\common\Oblivion\D
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\TESReloaded\Core\Animation.cpp" />
+    <ClCompile Include="..\TESReloaded\Core\AnimationBlending.cpp" />
     <ClCompile Include="..\TESReloaded\Core\CameraMode.cpp" />
     <ClCompile Include="..\TESReloaded\Core\CommandManager.cpp" />
     <ClCompile Include="..\TESReloaded\Core\D3D9Device.cpp" />

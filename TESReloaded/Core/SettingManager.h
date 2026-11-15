@@ -270,6 +270,14 @@ struct SettingsMainStruct {
 		UInt8	AcrobaticsLevel;
 		float	DoubleTapTime;
 	};
+
+	/// Minimum actor animation transition times in seconds (AnimationBlending.h); 0 leaves a kind to the engine.
+	struct AnimationBlendingStruct {
+		bool	Enabled;
+		float	MinBlendTime;		// starting any non-action group
+		float	ActionMinBlendTime;	// starting attacks, blocks, recoils, casts, dodges, jumps, equips, death
+		float	StopBlendTime;		// ease out when a single slot is stopped
+	};
 	
 	struct FlyCamStruct {
 		bool	Enabled;
@@ -292,6 +300,7 @@ struct SettingsMainStruct {
 		UInt8	NearShellDebug;
 		UInt8	LogSunShadowStealth;	// logs the player sun shadow probe about once a second
 		UInt8	LogWetActors;			// logs player and nearest-NPC wetness about once a second
+		bool	LogAnimationBlending;	// logs every animation transition AnimationBlending lengthens
 	};
 
 	MainStruct					Main;
@@ -308,6 +317,7 @@ struct SettingsMainStruct {
 	PurgerStruct				Purger;
 	GravityStruct				Gravity;
 	DodgeStruct					Dodge;
+	AnimationBlendingStruct		AnimationBlending;
 	FlyCamStruct				FlyCam;
 	DevelopStruct				Develop;
 };

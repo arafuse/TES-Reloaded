@@ -20,6 +20,9 @@
     <ClInclude Include="..\TESReloaded\Core\Animation.h">
       <Filter>Core</Filter>
     </ClInclude>
+    <ClInclude Include="..\TESReloaded\Core\AnimationBlending.h">
+      <Filter>Core</Filter>
+    </ClInclude>
     <ClInclude Include="..\TESReloaded\Core\CameraMode.h">
       <Filter>Core</Filter>
     </ClInclude>
@@ -173,6 +176,9 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\TESReloaded\Core\Animation.cpp">
+      <Filter>Core</Filter>
+    </ClCompile>
+    <ClCompile Include="..\TESReloaded\Core\AnimationBlending.cpp">
       <Filter>Core</Filter>
     </ClCompile>
     <ClCompile Include="..\TESReloaded\Core\CameraMode.cpp">

@@ -422,6 +422,14 @@ SettingManager::SettingManager() {
 	GetPrivateProfileStringA("Dodge", "DoubleTapTime", "0.5", value, SettingStringBuffer, Filename);
 	SettingsMain.Dodge.DoubleTapTime = atof(value);
 
+	SettingsMain.AnimationBlending.Enabled = GetPrivateProfileIntA("AnimationBlending", "Enabled", 1, Filename);
+	GetPrivateProfileStringA("AnimationBlending", "MinBlendTime", "0.25", value, SettingStringBuffer, Filename);
+	SettingsMain.AnimationBlending.MinBlendTime = atof(value);
+	GetPrivateProfileStringA("AnimationBlending", "ActionMinBlendTime", "0.1", value, SettingStringBuffer, Filename);
+	SettingsMain.AnimationBlending.ActionMinBlendTime = atof(value);
+	GetPrivateProfileStringA("AnimationBlending", "StopBlendTime", "0.2", value, SettingStringBuffer, Filename);
+	SettingsMain.AnimationBlending.StopBlendTime = atof(value);
+
 	SettingsMain.FlyCam.Enabled = GetPrivateProfileIntA("FlyCam", "Enabled", 0, Filename);
 	GetPrivateProfileStringA("FlyCam", "ScrollMultiplier", "5.0", value, SettingStringBuffer, Filename);
 	SettingsMain.FlyCam.ScrollMultiplier = atof(value);
@@ -442,6 +450,7 @@ SettingManager::SettingManager() {
 	SettingsMain.Develop.NearShellDebug = GetPrivateProfileIntA("Develop", "NearShellDebug", 0, Filename);
 	SettingsMain.Develop.LogSunShadowStealth = GetPrivateProfileIntA("Develop", "LogSunShadowStealth", 0, Filename);
 	SettingsMain.Develop.LogWetActors = GetPrivateProfileIntA("Develop", "LogWetActors", 0, Filename);
+	SettingsMain.Develop.LogAnimationBlending = GetPrivateProfileIntA("Develop", "LogAnimationBlending", 0, Filename);
 
 	GameLoading = false;
 
