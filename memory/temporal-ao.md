@@ -26,7 +26,7 @@ Verified in-game 2026-11-14 (DXVK, 3072x1728):
 
 Bug hit during verification: the plan used the engine counter at `vertexBufferMgr+0x3C` as a frame
 index. It steps ~36 per displayed frame, so the history reset every frame (debug view all black).
-Fixed by `ShaderManager::EffectChainFrame`, bumped once per `RenderEffects`. See
+Fixed by `ShaderManager::EffectChainFrame`, bumped once per `RenderEffects`. That count pauses during menus and loading screens, so a wall-clock gap above 250 ms also resets the history. See
 [[skinning-bone-matrix-cache]].
 
 Debugging tools that worked:
