@@ -594,6 +594,7 @@ void SettingManager::LoadSettings() {
 	SettingsGrass.MinDistance = atof(value);
 	GetPrivateProfileStringA("Default", "MaxDistance", "12000.0", value, SettingStringBuffer, Filename);
 	SettingsGrass.MaxDistance = atof(value);
+	SettingsGrass.CollisionEnabled = GetPrivateProfileIntA("Default", "CollisionEnabled", 1, Filename);
 	GetPrivateProfileStringA("Default", "CollisionRadius", "80.0", value, SettingStringBuffer, Filename);
 	SettingsGrass.CollisionRadius = atof(value);
 	GetPrivateProfileStringA("Default", "CollisionStrength", "150.0", value, SettingStringBuffer, Filename);
@@ -1657,6 +1658,7 @@ void SettingManager::SaveSettings(const char* Item, const char* Definition, cons
 			WritePrivateProfileStringA("Default", "WindCoefficient", ToString(SettingsGrass.WindCoefficient).c_str(), Filename);
 			WritePrivateProfileStringA("Default", "WindEnabled", ToString(SettingsGrass.WindEnabled).c_str(), Filename);
 			WritePrivateProfileStringA("Default", "SwaySpeed", ToString(SettingsGrass.SwaySpeed).c_str(), Filename);
+			WritePrivateProfileStringA("Default", "CollisionEnabled", ToString(SettingsGrass.CollisionEnabled).c_str(), Filename);
 			WritePrivateProfileStringA("Default", "CollisionRadius", ToString(SettingsGrass.CollisionRadius).c_str(), Filename);
 			WritePrivateProfileStringA("Default", "CollisionStrength", ToString(SettingsGrass.CollisionStrength).c_str(), Filename);
 			WritePrivateProfileStringA("Default", "CollisionFlattenStrength", ToString(SettingsGrass.CollisionFlattenStrength).c_str(), Filename);
@@ -2372,6 +2374,7 @@ SettingsList SettingManager::GetMenuSettings(const char* Item, const char* Defin
 			Settings["WindCoefficient"] = SettingsGrass.WindCoefficient;
 			Settings["WindEnabled"] = SettingsGrass.WindEnabled;
 			Settings["SwaySpeed"] = SettingsGrass.SwaySpeed;
+			Settings["CollisionEnabled"] = SettingsGrass.CollisionEnabled;
 			Settings["CollisionRadius"] = SettingsGrass.CollisionRadius;
 			Settings["CollisionStrength"] = SettingsGrass.CollisionStrength;
 			Settings["CollisionFlattenStrength"] = SettingsGrass.CollisionFlattenStrength;
@@ -3147,6 +3150,8 @@ void SettingManager::SetMenuSetting(const char* Item, const char* Definition, co
 				SettingsGrass.WindEnabled = Value;
 			else if (!strcmp(Setting, "SwaySpeed"))
 				SettingsGrass.SwaySpeed = Value;
+			else if (!strcmp(Setting, "CollisionEnabled"))
+				SettingsGrass.CollisionEnabled = Value;
 			else if (!strcmp(Setting, "CollisionRadius"))
 				SettingsGrass.CollisionRadius = Value;
 			else if (!strcmp(Setting, "CollisionStrength"))

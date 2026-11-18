@@ -444,6 +444,7 @@ struct SettingsGrassStruct {
 	float MinHeight;
 	float MinDistance;
 	float MaxDistance;
+	bool CollisionEnabled;				///< Master switch for all actor collision: tall-grass bending, groundcover press and shrub bending
 	float CollisionRadius;
 	float CollisionStrength;
 	float CollisionFlattenStrength;
