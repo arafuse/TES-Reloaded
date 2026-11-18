@@ -5,14 +5,18 @@ metadata:
   type: project
 ---
 
-Grass collision is a CPU-written trail map of two RGBA16 textures, not per-batch source slots.
+Grass and shrub collision is a CPU-written trail map of three RGBA16 textures, not per-batch source slots.
 Source: `TESReloaded/Core/GrassTrailMap.{h,cpp}` (pure C++, no D3D), `TESReloaded/Core/GrassTrail.{h,cpp}`
 (engine side), `OblivionReloaded/Shaders/Grass/Includes/GrassTrail.hlsl`.
 
 **Window and cells.** 512 x 512 cells, 8 world units each, 4096 units across, toroidal addressing
 (cell `floor(x/8) mod 512`). The window recentres on the player only when the player is more than
 512 units from its centre (`kRecentreDistance`), so at least 1536 units around the player stay covered.
-Layers: `Layer_Tall` (VS sampler `TESR_GrassTrailTall`) and `Layer_Ground` (PS sampler `TESR_GrassTrailGround`, s4).
+Layers: `Layer_Tall` (VS sampler `TESR_GrassTrailTall`), `Layer_Ground` (PS sampler `TESR_GrassTrailGround`, s4)
+and `Layer_Shrub` (VS sampler `TESR_GrassTrailShrub` in the SpeedTree and ShadowMap VS). The shrub layer uses the
+tall encoding, profile and springiness curve at `TreeCollisionRadius x actor scale` (0, so unstamped, when
+`TreeCollision` is off), and exists only when the tall layer does (vertex texture fetch). Shrubs share the grass
+recovery and springiness. Per-tree constants and the bend are in [[speedtree-shader-variants]].
 
 **Encodings** (16-bit UNORM per channel, `D3DFMT_A16B16G16R16`):
 - Tall: R,G = signed push vector (`v*0.5+0.5`), B = peak influence, A = press time.
@@ -101,8 +105,9 @@ GPU-bound ([[gpu-frame-breakdown]]).
 
 **How to apply:** do not reintroduce per-batch source packing or cell-0 "cleared" values. Keep the
 neutral encoding, the time-keeping sweep, and the ring when changing the stamp or sweep. Use the device
-sampler path for any new vertex-texture sampler. Footprint stamps (`kGrassStampCount`) now feed only
-TreeCollision. Check the core test after any change to `GrassTrailMap.cpp`.
+sampler path for any new vertex-texture sampler. The player footprint stamps are gone (2026-11-17); the
+live source list (`GrassCollisionSources`) now feeds only GrassCover and TreeCover. Check the core test
+after any change to `GrassTrailMap.cpp`.
 
 Related: [[grass-vs-constant-budget]], [[grass-batch-footprints]], [[grass-batched-per-geometry-hook]],
 [[d3d9-gpu-readback-stall]], [[game-runs-on-dxvk]].

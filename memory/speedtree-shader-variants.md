@@ -69,6 +69,13 @@ and `ShadowMapTreeInstanced.vso` (batched dynamic-tree composites, no collision:
 `TreeCollisionReaches` draws per tree). Change tree motion there, never in one shader, or batched and
 single tree shadows split apart.
 
+**Shrub collision registers (since 2026-11-17, built):** c240-c242 = rows of `scale * rot` with world
+x/y in c240.w/c241.w, c243 = (live flag, push / scale², flatten / scale², scale / bound); c244-c245 =
+`TESR_GrassTrailWindow` / `TESR_GrassTrailTime`; vertex sampler s0 = `TESR_GrassTrailShrub`. All
+declared in `ExtraShaders/Includes/TreeCollision.hlsl`, which nests `#include "../Grass/Includes/GrassTrail.hlsl"`:
+D3DX resolves that from the TOP-LEVEL shader's folder (probe-verified with D3DXCompileShaderFromFileA),
+fxc needs `/I <top-level dir>`. See [[grass-trail-map]].
+
 **How to apply:** the `[TreeCapDbg]` instrumentation in RenderHook.cpp (temporary; rides the
 `[GrassOrderDbg]` one-frame capture on the `Develop.LogShaders` key; `xform` lines come from the slot-13
 vtable wrap) is the ground truth for which variants draw. Related:

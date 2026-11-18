@@ -12,7 +12,8 @@ Shader-only edits can be fully verified without MSBuild. Two fxc copies are inst
 - Effects (`.fx.hlsl`, have `technique{}`): `/T fx_2_0`
 - Raw shaders (`.pso.hlsl`/`.vso.hlsl`): `/T ps_3_0` or `/T vs_3_0` with `/E main`
 - Pass `/I <the shader's own directory>`: the game's D3DX resolves nested relative includes
-  (`../Shadows/Includes/...`) from the top-level file's dir, fxc from the including file.
+  (`../Grass/Includes/...` inside `ExtraShaders/Includes/TreeCollision.hlsl`) from the TOP-LEVEL file's dir
+  (verified 2026-11-17 with a D3DXCompileShaderFromFileA probe), fxc from the including file.
 - `/Fc out.asm` dumps the assembly (check for real `if_*`/`endif` around `texld`, instruction counts).
 
 ```powershell
