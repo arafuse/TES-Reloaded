@@ -14,8 +14,9 @@ sampler2D ShadowMap : register(s2);
 sampler2D ShadowMaskMap : register(s3);
 row_major float4x4 TESR_InvViewProjectionTransform : register(c20);
 float4 TESR_GroundcoverPressParams : register(c32);
-float4 TESR_GroundcoverPressXY0 : register(c33);
-float4 TESR_GroundcoverPressXY1 : register(c34);
+float4 TESR_GrassTrailWindow : register(c33);
+float4 TESR_GrassTrailTime : register(c34);
+sampler2D TESR_GrassTrailGround : register(s4) = sampler_state { ADDRESSU = WRAP; ADDRESSV = WRAP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = NONE; };
 //
 //
 // Registers:
@@ -49,6 +50,7 @@ struct PS_OUTPUT {
 
 // Code:
 
+#include "Includes/GrassTrail.hlsl"
 #include "Includes/GroundcoverPress.hlsl"
 
 PS_OUTPUT main(VS_OUTPUT IN) {
