@@ -233,12 +233,17 @@ static void ClearedCellsAreNeutral() {
 		const uint16_t* T = Texel(M, (LayerId)L, 128, 0);
 		CHECK(T[0] != 32768 && T[2] != 0);
 	}
+	uint16_t TimeBefore[Layer_Count];
+	for (int L = 0; L < Layer_Count; ++L) TimeBefore[L] = Texel(M, (LayerId)L, 128, 0)[3];
 	double Now = 10.0;
 	for (int I = 0; I < 36 + 64; ++I) {
 		Now += 0.1;
 		M.BeginFrame(0, 0, Now, 3.5f, 0.8f);
 	}
-	for (int L = 0; L < Layer_Count; ++L) CHECK(IsNeutral(Texel(M, (LayerId)L, 128, 0)));
+	for (int L = 0; L < Layer_Count; ++L) {
+		const uint16_t* T = Texel(M, (LayerId)L, 128, 0);
+		CHECK(IsNeutral(T) && T[3] == TimeBefore[L]);
+	}
 
 	Map C; Begin(C);
 	C.Stamp({1500, 4, RT, RG});
