@@ -8,22 +8,28 @@
 // Scale of the ground trail's signed pull channels; must match GrassTrailMap::kPullScale.
 static const float GrassTrailPullScale = 32.0;
 
+// Seconds a press holds full strength before springing back, covering a standing actor's restamp
+// interval; must match GrassTrailMap::kStampHold.
+static const float GrassTrailHold = 0.1;
+
 // The stored time wraps every period: a bilinear fetch straddling a cell stamped just before the wrap and
 // one just after blends the time to ~0.5 and reads as expired, a one-cell gap once per period.
 
 // TimeN : a cell's stored press time, as a fraction of the time period
-// Returns the recovery weight: 1 when freshly pressed, dipping negative past upright for a spring
-// overshoot, and 0 once the recovery time has elapsed.
+// Returns the recovery weight: 1 when freshly pressed and through the hold, dipping negative past
+// upright for a spring overshoot, and 0 once the recovery time has elapsed after the hold.
 float GrassTrailSpring(float TimeN) {
     float age = frac(TESR_GrassTrailTime.x - TimeN) * TESR_GrassTrailTime.y;
-    float t = age * TESR_GrassTrailTime.z;
+    float t = max(age - GrassTrailHold, 0.0) * TESR_GrassTrailTime.z;
     return t < 1.0 ? (1.0 - t) * cos(TESR_GrassTrailTime.w * t) : 0.0;
 }
 
 // TimeN : a cell's stored press time, as a fraction of the time period
-// Returns the groundcover recovery weight: the springiness-0 curve, never negative, 0 once recovered.
+// Returns the groundcover recovery weight: the springiness-0 curve after the hold, never negative,
+// 0 once recovered.
 float GrassTrailGroundSpring(float TimeN) {
-    float t = frac(TESR_GrassTrailTime.x - TimeN) * TESR_GrassTrailTime.y * TESR_GrassTrailTime.z;
+    float age = frac(TESR_GrassTrailTime.x - TimeN) * TESR_GrassTrailTime.y;
+    float t = max(age - GrassTrailHold, 0.0) * TESR_GrassTrailTime.z;
     return t < 1.0 ? (1.0 - t) * cos(1.5707963 * t) : 0.0;
 }
 

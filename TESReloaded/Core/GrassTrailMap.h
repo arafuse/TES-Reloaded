@@ -27,6 +27,10 @@ const float kPullScale = 32.0f;
 const float kMinRecovery = 0.05f;
 /// Upper clamp of the recovery time in seconds.
 const float kMaxRecovery = kTimePeriod * 0.5f;
+/// Seconds a press holds its full peak before the spring starts. It must cover a standing actor's
+/// restamp interval, or every restamp snaps a slightly recovered bend back to full (visible jitter).
+/// Mirrored by GrassTrailHold in GrassTrail.hlsl.
+const float kStampHold = 0.1f;
 
 /// Trail layers: tall grass bending, ground cover pressing, and shrub bending (TreeCollision), which
 /// uses the tall-grass profile and spring at its own radius.

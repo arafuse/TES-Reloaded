@@ -15,6 +15,10 @@ const double kMaxDeltaSeconds = 0.1;
 const float  kTeleportDist = 1024.0f;
 const float  kStampMoveDist = 2.0f;
 const float  kStampMinInterval = 0.033f;
+// At a steady frame rate a standing actor restamps within 2 x kStampMinInterval, or once per frame
+// when frames are longer; the press hold must outlast that or the bend jitters.
+static_assert(GrassTrailMap::kStampHold >= 2.0f * kStampMinInterval && GrassTrailMap::kStampHold >= kMaxDeltaSeconds,
+	"the press hold must cover a standing actor's restamp interval");
 const size_t kMaxCachedStampers = 256;
 const int    kStagingCount = 3;
 

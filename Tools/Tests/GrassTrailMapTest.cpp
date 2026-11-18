@@ -63,8 +63,8 @@ static void RecoversOverTime() {
 	Map M; Begin(M);
 	M.Stamp({4, 4, RT, RG, RS});
 	M.BeginFrame(0, 0, 10.0 + 1.75, 3.5f, 0.8f);
-	CHECK_NEAR(M.CurrentWeight(Layer_Tall, 4, 4), SpringWeight(1.75f, 3.5f, 0.8f), 5e-3);
-	M.BeginFrame(0, 0, 10.0 + 3.6, 3.5f, 0.8f);
+	CHECK_NEAR(M.CurrentWeight(Layer_Tall, 4, 4), SpringWeight(1.75f - kStampHold, 3.5f, 0.8f), 5e-3);
+	M.BeginFrame(0, 0, 10.0 + 3.7, 3.5f, 0.8f);
 	CHECK(M.CurrentWeight(Layer_Tall, 4, 4) == 0.0f);
 }
 
@@ -81,12 +81,12 @@ static void GroundRecoversOverFullTime() {
 	Map M; Begin(M);
 	M.Stamp({4, 4, RT, RG, RS});
 	M.BeginFrame(0, 0, 10.0 + 2.5, 3.5f, 0.8f);
-	float T = 2.5f / 3.5f;
+	float T = (2.5f - kStampHold) / 3.5f;
 	float Expected = (1.0f - T) * std::cos(0.5f * 3.14159265f * T);
 	float W = M.CurrentWeight(Layer_Ground, 4, 4);
 	CHECK(W > 0.0f);
 	CHECK_NEAR(W, Expected, 5e-3);
-	M.BeginFrame(0, 0, 10.0 + 3.6, 3.5f, 0.8f);
+	M.BeginFrame(0, 0, 10.0 + 3.7, 3.5f, 0.8f);
 	CHECK(M.CurrentWeight(Layer_Ground, 4, 4) == 0.0f);
 }
 
@@ -331,7 +331,7 @@ static void ShrubOvershootsLikeTall() {
 	Map M; Begin(M);
 	M.Stamp({4, 4, RT, RG, RS});
 	M.BeginFrame(0, 0, 10.0 + 2.625, 3.5f, 0.8f);
-	CHECK_NEAR(M.CurrentWeight(Layer_Shrub, 4, 4), SpringWeight(2.625f, 3.5f, 0.8f), 5e-3);
+	CHECK_NEAR(M.CurrentWeight(Layer_Shrub, 4, 4), SpringWeight(2.625f - kStampHold, 3.5f, 0.8f), 5e-3);
 	CHECK(M.CurrentWeight(Layer_Shrub, 4, 4) < 0.0f);
 }
 
@@ -356,6 +356,29 @@ static void ShrubSweptAndReset() {
 	CHECK(M.Decode(Layer_Shrub, 4, 4).Peak == 0.0f);
 }
 
+static void StationaryRestampHoldsSteady() {
+	const double FrameRates[] = { 31.0, 60.0, 144.0 };
+	for (double Fps : FrameRates) {
+		Map M; Begin(M);
+		M.Stamp({4, 4, RT, RG, RS});
+		float FullCentre = M.CurrentWeight(Layer_Tall, 4, 4);
+		float FullEdge = M.CurrentWeight(Layer_Tall, 44, 4);
+		float FullGround = M.CurrentWeight(Layer_Ground, 12, 4);
+		double Now = 10.0, LastStamp = 10.0;
+		for (int F = 0; F < 300; ++F) {
+			Now += 1.0 / Fps;
+			M.BeginFrame(0, 0, Now, 0.8f, 1.0f);
+			if (Now - LastStamp >= 0.033) {
+				M.Stamp({4, 4, RT, RG, RS});
+				LastStamp = Now;
+			}
+			CHECK_NEAR(M.CurrentWeight(Layer_Tall, 4, 4), FullCentre, 1e-3);
+			CHECK_NEAR(M.CurrentWeight(Layer_Tall, 44, 4), FullEdge, 1e-3);
+			CHECK_NEAR(M.CurrentWeight(Layer_Ground, 12, 4), FullGround, 1e-3);
+		}
+	}
+}
+
 int main() {
 	SpringValues();
 	ShrubUsesOwnRadiusAndTallProfile();
@@ -369,6 +392,7 @@ int main() {
 	GroundNeverOvershoots();
 	GroundRecoversOverFullTime();
 	ContinuousWake();
+	StationaryRestampHoldsSteady();
 	WeakerStampKeepsFreshPeak();
 	SweepClearsExpired();
 	NoResurrectionAfterWrap();
