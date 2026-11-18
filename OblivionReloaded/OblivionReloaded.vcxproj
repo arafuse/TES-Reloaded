@@ -146,6 +146,7 @@ copy "$(TargetDir)$(TargetName).pdb" "C:\Games\Steam\steamapps\common\Oblivion\D
     <ClInclude Include="..\TESReloaded\Core\Managers.h" />
     <ClInclude Include="..\TESReloaded\Core\MemoryManagement.h" />
     <ClInclude Include="..\TESReloaded\Core\RagdollCollision.h" />
+    <ClInclude Include="..\TESReloaded\Core\GrassTrail.h" />
     <ClInclude Include="..\TESReloaded\Core\GrassTrailMap.h" />
     <ClInclude Include="..\TESReloaded\Core\TreeCollision.h" />
     <ClInclude Include="..\TESReloaded\Core\TreeCover.h" />
@@ -200,6 +201,7 @@ copy "$(TargetDir)$(TargetName).pdb" "C:\Games\Steam\steamapps\common\Oblivion\D
     <ClCompile Include="..\TESReloaded\Core\Managers.cpp" />
     <ClCompile Include="..\TESReloaded\Core\MemoryManagement.cpp" />
     <ClCompile Include="..\TESReloaded\Core\RagdollCollision.cpp" />
+    <ClCompile Include="..\TESReloaded\Core\GrassTrail.cpp" />
     <ClCompile Include="..\TESReloaded\Core\GrassTrailMap.cpp" />
     <ClCompile Include="..\TESReloaded\Core\TreeCollision.cpp" />
     <ClCompile Include="..\TESReloaded\Core\TreeCover.cpp" />

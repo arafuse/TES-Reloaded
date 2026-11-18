@@ -1,3 +1,4 @@
+#include "GrassTrail.h"
 #define WordSampler2D "sampler2D"
 #define WordSampler3D "sampler3D"
 #define WordSamplerCUBE "samplerCU"
@@ -85,6 +86,12 @@ bool TextureRecord::LoadTexture(TextureRecordType Type, const char* Filename) {
 			break;
 		case TextureRecordType_POMDepthBuffer:
 			Texture = TheShaderManager->POMDepthTexture;
+			break;
+		case TextureRecordType_GrassTrailTall:
+			Texture = GrassTrail::TallTexture();
+			break;
+		case TextureRecordType_GrassTrailGround:
+			Texture = GrassTrail::GroundTexture();
 			break;
 	}	
 	return true;
@@ -203,6 +210,20 @@ TextureRecord* TextureManager::LoadTexture(const char* ShaderSource, UInt32 Regi
 					if (SamplerParser && SamplerParser < strstr(Sampler, WordSamplerDelimeter)) {
 						Type = TextureRecordType_POMDepthBuffer;
 						strcpy(Filename, WordPOMDepthBuffer);
+					}
+				}
+				if (!Type) {
+					SamplerParser = strstr(Sampler, WordGrassTrailTall);
+					if (SamplerParser && SamplerParser < strstr(Sampler, WordSamplerDelimeter)) {
+						Type = TextureRecordType_GrassTrailTall;
+						strcpy(Filename, WordGrassTrailTall);
+					}
+				}
+				if (!Type) {
+					SamplerParser = strstr(Sampler, WordGrassTrailGround);
+					if (SamplerParser && SamplerParser < strstr(Sampler, WordSamplerDelimeter)) {
+						Type = TextureRecordType_GrassTrailGround;
+						strcpy(Filename, WordGrassTrailGround);
 					}
 				}
 				if (!Type) {

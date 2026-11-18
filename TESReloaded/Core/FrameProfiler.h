@@ -54,6 +54,9 @@ namespace FrameProfiler {
 		Buck_MidPoint,            // point-light shadow apply (SetCT + Render)
 		Buck_MidRestore,          // CachedStateBlock->Apply
 
+		// --- detail, nested inside Buck_UpdateConstants ---
+		Buck_GrassTrail,          // GrassTrail::Update: clock, stamps, dirty-band uploads
+
 		Buck_COUNT
 	};
 	const int TopLevelBegin = Buck_UpdateShaderStates;

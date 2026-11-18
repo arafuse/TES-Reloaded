@@ -8,6 +8,7 @@
 #include <iostream>
 #include <filesystem>
 #include "TreeCover.h"
+#include "GrassTrail.h"
 #include "GrassCover.h"
 #include "SunShadowStealth.h"
 #include "Wind.h"
@@ -741,11 +742,15 @@ void ShaderRecord::SetCT() {
 		for (UInt32 c = 0; c < TextureShaderValuesCount; c++) {
 			Value = &TextureShaderValues[c];
 			TextureRecord* Tex = Value->Texture;
-			if (Tex->Texture) Device->SetTexture(Value->RegisterIndex, Tex->Texture);
+			const bool Vertex = Type == ShaderType_Vertex;
+			const DWORD Sampler = Vertex ? D3DVERTEXTEXTURESAMPLER0 + Value->RegisterIndex : Value->RegisterIndex;
+			if (Tex->Texture) Device->SetTexture(Sampler, Tex->Texture);
 			// Packed at load by TextureRecord::PackSamplerStates; see there for why
-			// zero-valued states are still skipped.
+			// zero-valued states are still skipped. Vertex samplers bypass the engine's
+			// pixel-indexed render-state cache.
 			for (UInt32 s = 0; s < Tex->PackedStateCount; s++) {
-				TheRenderManager->SetSamplerState(Value->RegisterIndex, Tex->PackedStates[s].Type, Tex->PackedStates[s].Value);
+				if (Vertex) Device->SetSamplerState(Sampler, Tex->PackedStates[s].Type, Tex->PackedStates[s].Value);
+				else TheRenderManager->SetSamplerState(Value->RegisterIndex, Tex->PackedStates[s].Type, Tex->PackedStates[s].Value);
 			}
 		}
 		// One upload per constant: register order (fxc) and ShaderConst layout never
@@ -1292,6 +1297,7 @@ ShaderManager::ShaderManager() {
 	}
 	else if (UsePOMDepth)
 		Logger::Log("WARNING: TESR_POMDepthBuffer could not be created; POM and terrain shadows stay flat.");
+	if (TheSettingManager->SettingsMain.Shaders.Grass) GrassTrail::Create(TheRenderManager->device);
 	UseIntervalUpdate = TheSettingManager->SettingsShadows.Exteriors.UseIntervalUpdate;
 	if (TheSettingManager->SettingsMain.Develop.CompileShaders) {
 		CompileShaders(ShadersPath);

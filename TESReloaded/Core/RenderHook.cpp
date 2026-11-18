@@ -23,7 +23,8 @@ namespace FrameProfiler {
 			"UpdateShaderStates", "SetSceneGraph", "UpdateConstants", "ShadowMaps",
 			"Effects:PreHdr", "Effects:PostHdr", "BeginScene", "ShaderHook",
 			"Hook:Engine", "Hook:SetCT", "Hook:Resolve", "Hook:MidScene", "Hook:ShellWater",
-			"Mid:Resolve", "Mid:Setup", "Mid:Sun", "Mid:Probe", "Mid:ProbeRead", "Mid:Point", "Mid:Restore"
+			"Mid:Resolve", "Mid:Setup", "Mid:Sun", "Mid:Probe", "Mid:ProbeRead", "Mid:Point", "Mid:Restore",
+			"GrassTrail"
 		};
 		const char* const GpuBucketNames[Gpu_COUNT] = {
 			"GPU:ShadowMaps", "GPU:ShadowExt", "GPU:ShadowPoint", "GPU:MainPass",
