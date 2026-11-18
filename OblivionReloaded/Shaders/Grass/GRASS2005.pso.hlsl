@@ -35,7 +35,7 @@ sampler2D TESR_GrassTrailGround : register(s4) = sampler_state { ADDRESSU = WRAP
 // Structures:
 
 struct VS_OUTPUT {
-    float4 DiffuseUV : TEXCOORD0;	// zw = batch-relative XY
+    float4 DiffuseUV : TEXCOORD0;	// zw = world XY
     float4 texcoord_4 : TEXCOORD4_centroid;	// w = model-space height
     float4 texcoord_5 : TEXCOORD5_centroid;
     float4 texcoord_1 : TEXCOORD1;

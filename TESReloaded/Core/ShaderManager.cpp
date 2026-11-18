@@ -267,16 +267,12 @@ bool ShaderProgram::SetConstantTableValue1(LPCSTR Name, UInt32 Index) {
 		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.Grass.Scale;
 	else if (!strcmp(Name, "TESR_GrassCollisionParams"))
 		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.Grass.CollisionParams;
-	else if (!strcmp(Name, "TESR_GrassCollisionXY0"))
-		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.Grass.CollisionXY[0];
-	else if (!strcmp(Name, "TESR_GrassCollisionXY1"))
-		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.Grass.CollisionXY[1];
+	else if (!strcmp(Name, "TESR_GrassTrailWindow"))
+		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.Grass.TrailWindow;
+	else if (!strcmp(Name, "TESR_GrassTrailTime"))
+		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.Grass.TrailTime;
 	else if (!strcmp(Name, "TESR_GroundcoverPressParams"))
-		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.Grass.GroundcoverPress[0];
-	else if (!strcmp(Name, "TESR_GroundcoverPressXY0"))
-		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.Grass.GroundcoverPress[1];
-	else if (!strcmp(Name, "TESR_GroundcoverPressXY1"))
-		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.Grass.GroundcoverPress[2];
+		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.Grass.GroundcoverPress;
 	else if (!strcmp(Name, "TESR_TerrainData"))
 		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.Terrain.Data;
 	else if (!strcmp(Name, "TESR_SkinData"))
@@ -1954,21 +1950,34 @@ static void ApplyGrassDensitySettings(int density) {
 	}
 }
 
-// Nearby actors tracked as grass collision sources. Each batch still takes at most three sources,
-// but picks them from this list by which ones reach it.
+// Nearby on-screen actors tracked as tree collision sources.
 const int kGrassMaxNPCs = 16;
 
-static void TryInsertActor(ActorDist nearest[], int& count, const ActorDist& actor) {
-	if (count < kGrassMaxNPCs) {
-		nearest[count++] = actor;
+// Actors stamped into the grass trail map besides the player.
+const int kGrassMaxTrailActors = 64;
+
+// Half the trail map window: actors farther than this on either axis cannot be stamped.
+const float kGrassTrailHalfWindow = 2048.0f;
+
+struct TrailActor { GrassTrail::Stamper stamper; float distSq; };
+
+// Keeps the Capacity nearest entries of a fixed-size list, replacing the farthest once it is full.
+template <typename T>
+static void InsertNearest(T list[], int Capacity, int& count, const T& entry) {
+	if (count < Capacity) {
+		list[count++] = entry;
 	} else {
 		int farthestIdx = 0;
-		for (int i = 1; i < kGrassMaxNPCs; i++)
-			if (nearest[i].distSq > nearest[farthestIdx].distSq)
+		for (int i = 1; i < Capacity; i++)
+			if (list[i].distSq > list[farthestIdx].distSq)
 				farthestIdx = i;
-		if (actor.distSq < nearest[farthestIdx].distSq)
-			nearest[farthestIdx] = actor;
+		if (entry.distSq < list[farthestIdx].distSq)
+			list[farthestIdx] = entry;
 	}
+}
+
+static void TryInsertActor(ActorDist nearest[], int& count, const ActorDist& actor) {
+	InsertNearest(nearest, kGrassMaxNPCs, count, actor);
 }
 
 // Limits on the actor radius scale, so a degenerate bound can neither erase a source nor make it
@@ -2065,10 +2074,12 @@ static bool GrassSphereInView(const GrassViewCull& cull, float x, float y, float
 }
 
 // collisionRadius is the unscaled tall-grass collision radius; each actor's own scale is applied to it
-// for the view test.
+// for the view test. Living actors inside the trail map window are also collected as trail stampers,
+// without the view cull, so an off-screen actor still leaves a wake.
 static void CollectActorsFromObjectList(TList<TESObjectREFR>::Entry* entry, TESObjectREFR* player,
                                         ActorDist nearest[], int& count, float maxTrackDistSq,
-                                        const GrassViewCull& cull, float collisionRadius) {
+                                        const GrassViewCull& cull, float collisionRadius,
+                                        TrailActor trail[], int& trailCount) {
 	while (entry) {
 		if (TESObjectREFR* ref = entry->item) {
 			if (ref != player) {
@@ -2078,6 +2089,10 @@ static void CollectActorsFromObjectList(TList<TESObjectREFR>::Entry* entry, TESO
 					float dx = ref->pos.x - player->pos.x;
 					float dy = ref->pos.y - player->pos.y;
 					float distSq = dx * dx + dy * dy;
+					if (fabsf(dx) < kGrassTrailHalfWindow && fabsf(dy) < kGrassTrailHalfWindow) {
+						TrailActor actor = { { ref->refID, ref->pos.x, ref->pos.y, GrassActorRadiusScale(ref) }, distSq };
+						InsertNearest(trail, kGrassMaxTrailActors, trailCount, actor);
+					}
 					if (distSq < maxTrackDistSq) {
 						float scale = GrassActorRadiusScale(ref);
 						float cullRadius = collisionRadius * scale + kGrassActorHalfHeight + kGrassViewMargin;
@@ -2203,16 +2218,15 @@ void ShaderManager::UpdateGrass(ShaderConstants& ShaderConst) {
 		*SettingGrassWindMagnitudeMin = *LocalGrassWindMagnitudeMin = *SettingGrassWindMagnitudeMax * 0.5f;
 	}
 
-	// The per-batch source picks and their packing happen per draw, in RenderHook's
+	// The per-batch enable flag and press strength are set per draw, in RenderHook's
 	// SetGrassCollisionConstants; these are the defaults until the first grass draw.
 	float radius = TheSettingManager->SettingsGrass.CollisionRadius;
 	float recovery = TheSettingManager->SettingsGrass.CollisionRecoveryTime;
-	ShaderConst.Grass.CollisionParams.x = radius;
+	ShaderConst.Grass.CollisionParams.x = 0.0f;
 	ShaderConst.Grass.CollisionParams.y = TheSettingManager->SettingsGrass.CollisionStrength;
 	ShaderConst.Grass.CollisionParams.z = TheSettingManager->SettingsGrass.CollisionFlattenStrength;
 	ShaderConst.Grass.CollisionParams.w = 0.0f;
-	memset(ShaderConst.Grass.CollisionXY, 0, sizeof(ShaderConst.Grass.CollisionXY));
-	ShaderConst.Grass.GroundcoverPress[0].z = TheSettingManager->SettingsGrass.GroundcoverPressDarkening;
+	ShaderConst.Grass.GroundcoverPress = D3DXVECTOR4(0.0f, 0.0f, TheSettingManager->SettingsGrass.GroundcoverPressDarkening, 0.0f);
 
 	GrassSource* sources = TheShaderManager->GrassCollisionSources;
 	int& sourceCount = TheShaderManager->GrassCollisionSourceCount;
@@ -2229,6 +2243,8 @@ void ShaderManager::UpdateGrass(ShaderConstants& ShaderConst) {
 
 	ActorDist nearest[kGrassMaxNPCs] = {};
 	int npcCount = 0;
+	TrailActor trailActors[kGrassMaxTrailActors] = {};
+	int trailActorCount = 0;
 	float maxTrackDistSq = TheSettingManager->SettingsGrass.MaxDistance * TheSettingManager->SettingsGrass.MaxDistance;
 
 	// Only actors whose bent grass could be on screen compete for the slots.
@@ -2241,11 +2257,11 @@ void ShaderManager::UpdateGrass(ShaderConstants& ShaderConst) {
 				for (UInt32 y = 0; y < *SettingGridsToLoad; y++) {
 					TESObjectCELL* Cell = Tes->gridCellArray->GetCell(x, y);
 					if (Cell)
-						CollectActorsFromObjectList(&Cell->objectList.First, Player, nearest, npcCount, maxTrackDistSq, cull, radius);
+						CollectActorsFromObjectList(&Cell->objectList.First, Player, nearest, npcCount, maxTrackDistSq, cull, radius, trailActors, trailActorCount);
 				}
 			}
 		} else {
-			CollectActorsFromObjectList(&Player->parentCell->objectList.First, Player, nearest, npcCount, maxTrackDistSq, cull, radius);
+			CollectActorsFromObjectList(&Player->parentCell->objectList.First, Player, nearest, npcCount, maxTrackDistSq, cull, radius, trailActors, trailActorCount);
 		}
 	}
 
@@ -2255,8 +2271,17 @@ void ShaderManager::UpdateGrass(ShaderConstants& ShaderConst) {
 	for (int i = 0; i < npcCount; i++)
 		sources[sourceCount++] = { nearest[i].x, nearest[i].y, nearest[i].radiusScale, 1.0f, GrassSource_Actor };
 
-	// Newest stamps first so the freshest footprint wins; TrailSlots applies after
-	// sorting, or a limit of 1 could keep the older stamp.
+	GrassTrail::Stamper stampers[1 + kGrassMaxTrailActors];
+	int stamperCount = 0;
+	stampers[stamperCount++] = { Player->refID, Player->pos.x, Player->pos.y, playerScale };
+	for (int i = 0; i < trailActorCount; i++)
+		stampers[stamperCount++] = trailActors[i].stamper;
+	GrassTrail::Constants trailConsts;
+	GrassTrail::Update(stampers, stamperCount, Player->pos.x, Player->pos.y, space, trailConsts);
+	ShaderConst.Grass.TrailWindow = trailConsts.Window;
+	ShaderConst.Grass.TrailTime = trailConsts.Time;
+
+	// Newest stamps first so the freshest footprint wins.
 	int stampOrder[kGrassStampCount];
 	int stampCount = 0;
 	for (int i = 0; i < kGrassStampCount; i++) {
@@ -2268,9 +2293,6 @@ void ShaderManager::UpdateGrass(ShaderConstants& ShaderConst) {
 		}
 		stampOrder[at] = i;
 	}
-	int trailSlots = TheSettingManager->SettingsGrass.CollisionTrailSlots;
-	if (trailSlots > kGrassStampCount) trailSlots = kGrassStampCount;
-	if (stampCount > trailSlots) stampCount = trailSlots;
 
 	// Footprints rank after every live actor, matching the old fixed slots.
 	for (int i = 0; i < stampCount; i++) {

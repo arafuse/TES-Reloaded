@@ -67,7 +67,7 @@ struct VS_INPUT {
 struct VS_OUTPUT {
     float4 color_0 : COLOR0;
     float4 position : POSITION;
-    float4 texcoord_0 : TEXCOORD0;	// zw = batch-relative XY for the groundcover press
+    float4 texcoord_0 : TEXCOORD0;	// zw = world XY for the groundcover press
     float4 texcoord_1 : TEXCOORD1;
     float4 texcoord_2 : TEXCOORD2;
     float3 texcoord_3 : TEXCOORD3;

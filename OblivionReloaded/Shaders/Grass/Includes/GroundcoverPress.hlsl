@@ -8,7 +8,7 @@
 // TESR_GroundcoverPressParams.y is zero for every draw that is not groundcover. The press, its pull
 // and its recovery come from one fetch of the grass trail map (see GrassTrail.hlsl).
 
-// Pos          : batch-relative XY (xy) and model-space height (z) of the pixel
+// Pos          : world XY (xy) and model-space height (z) of the pixel
 // PosDx, PosDy : screen-space derivatives of Pos
 // UvDx, UvDy   : screen-space derivatives of the diffuse UV
 // Darken       : returns the fraction of light to remove
