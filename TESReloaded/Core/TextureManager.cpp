@@ -93,6 +93,9 @@ bool TextureRecord::LoadTexture(TextureRecordType Type, const char* Filename) {
 		case TextureRecordType_GrassTrailGround:
 			Texture = GrassTrail::GroundTexture();
 			break;
+		case TextureRecordType_GrassTrailShrub:
+			Texture = GrassTrail::ShrubTexture();
+			break;
 	}	
 	return true;
 
@@ -224,6 +227,13 @@ TextureRecord* TextureManager::LoadTexture(const char* ShaderSource, UInt32 Regi
 					if (SamplerParser && SamplerParser < strstr(Sampler, WordSamplerDelimeter)) {
 						Type = TextureRecordType_GrassTrailGround;
 						strcpy(Filename, WordGrassTrailGround);
+					}
+				}
+				if (!Type) {
+					SamplerParser = strstr(Sampler, WordGrassTrailShrub);
+					if (SamplerParser && SamplerParser < strstr(Sampler, WordSamplerDelimeter)) {
+						Type = TextureRecordType_GrassTrailShrub;
+						strcpy(Filename, WordGrassTrailShrub);
 					}
 				}
 				if (!Type) {

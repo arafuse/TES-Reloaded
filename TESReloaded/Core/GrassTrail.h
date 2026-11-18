@@ -1,6 +1,6 @@
 #pragma once
 
-/// Engine side of the grass trail: owns the two trail textures, feeds actor stamps into
+/// Engine side of the grass trail: owns the trail textures (tall grass, groundcover, shrubs), feeds actor stamps into
 /// GrassTrailMap, uploads only the dirty bands and exposes the shader constants.
 namespace GrassTrail {
 
@@ -26,16 +26,25 @@ bool TallEnabled();
 /// True when the groundcover pressing layer is usable.
 bool GroundEnabled();
 
+/// True when the shrub bending layer is usable; it needs vertex texture fetch, like the tall-grass layer.
+bool ShrubEnabled();
+
 /// True when live tall-grass trail overlaps the world-space box.
 bool TallReaches(float MinX, float MinY, float MaxX, float MaxY);
 
 /// True when live groundcover trail overlaps the world-space box.
 bool GroundReaches(float MinX, float MinY, float MaxX, float MaxY);
 
+/// True when live shrub trail overlaps the world-space box.
+bool ShrubReaches(float MinX, float MinY, float MaxX, float MaxY);
+
 /// The tall-grass trail texture, or NULL.
 IDirect3DTexture9* TallTexture();
 
 /// The groundcover trail texture, or NULL.
 IDirect3DTexture9* GroundTexture();
+
+/// The shrub trail texture, or NULL.
+IDirect3DTexture9* ShrubTexture();
 
 }

@@ -133,6 +133,7 @@ void Create(IDirect3DDevice9* Device) {
 		Created = false;
 	}
 	Layers[GrassTrailMap::Layer_Tall].Enabled = Created;
+	Layers[GrassTrailMap::Layer_Shrub].Enabled = Created && CreateLayer(Device, Layers[GrassTrailMap::Layer_Shrub], "shrub");
 }
 
 void Update(const Stamper* Stampers, int Count, float PlayerX, float PlayerY, const void* Space, Constants& Out) {
@@ -177,11 +178,13 @@ void Update(const Stamper* Stampers, int Count, float PlayerX, float PlayerY, co
 			if (Dx * Dx + Dy * Dy < kStampMoveDist * kStampMoveDist && TrailClock - It->second.T < kStampMinInterval) continue;
 		}
 		LastStamps[S.RefId] = { S.X, S.Y, TrailClock };
-		TrailMap->Stamp({ S.X, S.Y, Settings.CollisionRadius * S.RadiusScale, Settings.GroundcoverPressRadius * S.RadiusScale });
+		float ShrubRadius = Settings.TreeCollision ? Settings.TreeCollisionRadius * S.RadiusScale : 0.0f;
+		TrailMap->Stamp({ S.X, S.Y, Settings.CollisionRadius * S.RadiusScale, Settings.GroundcoverPressRadius * S.RadiusScale, ShrubRadius });
 	}
 
 	Upload(GrassTrailMap::Layer_Tall);
 	Upload(GrassTrailMap::Layer_Ground);
+	Upload(GrassTrailMap::Layer_Shrub);
 	RefreshBounds();
 
 	Out.Window = D3DXVECTOR4(TrailMap->OriginX(), TrailMap->OriginY(), GrassTrailMap::kSize * GrassTrailMap::kCellSize, 1.0f / (GrassTrailMap::kSize * GrassTrailMap::kCellSize));
@@ -201,12 +204,18 @@ bool TallEnabled() { return Layers[GrassTrailMap::Layer_Tall].Enabled; }
 
 bool GroundEnabled() { return Layers[GrassTrailMap::Layer_Ground].Enabled; }
 
+bool ShrubEnabled() { return Layers[GrassTrailMap::Layer_Shrub].Enabled; }
+
 bool TallReaches(float MinX, float MinY, float MaxX, float MaxY) { return Reaches(GrassTrailMap::Layer_Tall, MinX, MinY, MaxX, MaxY); }
 
 bool GroundReaches(float MinX, float MinY, float MaxX, float MaxY) { return Reaches(GrassTrailMap::Layer_Ground, MinX, MinY, MaxX, MaxY); }
 
+bool ShrubReaches(float MinX, float MinY, float MaxX, float MaxY) { return Reaches(GrassTrailMap::Layer_Shrub, MinX, MinY, MaxX, MaxY); }
+
 IDirect3DTexture9* TallTexture() { return TallEnabled() ? Layers[GrassTrailMap::Layer_Tall].Default : NULL; }
 
 IDirect3DTexture9* GroundTexture() { return GroundEnabled() ? Layers[GrassTrailMap::Layer_Ground].Default : NULL; }
+
+IDirect3DTexture9* ShrubTexture() { return ShrubEnabled() ? Layers[GrassTrailMap::Layer_Shrub].Default : NULL; }
 
 }

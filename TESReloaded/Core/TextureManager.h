@@ -8,6 +8,7 @@
 #define WordPOMDepthBuffer "TESR_POMDepthBuffer"
 #define WordGrassTrailTall "TESR_GrassTrailTall"
 #define WordGrassTrailGround "TESR_GrassTrailGround"
+#define WordGrassTrailShrub "TESR_GrassTrailShrub"
 #define WordShadowMapBufferNear "TESR_ShadowMapBufferNear"
 #define WordShadowMapBufferFar "TESR_ShadowMapBufferFar"
 #define WordShadowMapBufferSkin "TESR_ShadowMapBufferSkin"
@@ -42,6 +43,7 @@ enum TextureRecordType {
 	TextureRecordType_POMDepthBuffer,
 	TextureRecordType_GrassTrailTall,
 	TextureRecordType_GrassTrailGround,
+	TextureRecordType_GrassTrailShrub,
 	TextureRecordType_Max,
 };
 
