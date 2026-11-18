@@ -46,13 +46,29 @@ not view-culled, nearest first. A stationary stamper is skipped when it moved le
 its last stamp is under 33 ms old (per-RefId cache, capped at 256 entries). A teleport (over 1024
 units) or a worldspace change resets both layers.
 
-**Trail clock.** The clock is the frame delta from `FrameRateManager::GetPerformance()` clamped to
-0.1 s per frame. Menus and pauses therefore freeze recovery instead of letting it run out.
+**Trail clock.** The clock advances per rendered frame by the delta from `FrameRateManager::GetPerformance()`
+clamped to 0.1 s, so hitches and load screens do not age the trail; menus that keep rendering the world do.
+`GrassTrail::Reset()` (resets the map, the stamp cache and the clock bookkeeping) is called from the
+load-game hook, so a loaded save never keeps the previous run's wake. Interiors have no grass: with a
+NULL worldspace `Update` clears the trail once and returns, so a return to an exterior starts clean.
 
-**Upload.** Only dirty row bands are written into a staging texture, then copied to the default texture
-with `UpdateSurface`. Nothing locks the whole texture with LOCK_DISCARD. `LiveBounds` pads the live bounds by half a cell (the
-bilinear footprint) and clips them to the window; `TallReaches` and `GroundReaches` test a batch's
-instance bounds against it, and the batch's c253.w / c32.y flags are gated on that.
+**Upload.** Dirty cells are tracked per row as 8-cell column chunks. Consecutive dirty rows merge into one
+band only while their chunks overlap (within one chunk), and a band splits into one rectangle per column run,
+so distant actors upload separately instead of as a near-full-width band. Rectangles are copied into one of
+3 round-robin SYSTEMMEM staging textures per layer (a non-discard lock on a surface the GPU still reads
+stalls on DXVK), then to the default texture with `UpdateSurface`. Standing actors restamp at most every
+33 ms, so a "stationary" scene still uploads small rectangles. `LiveBounds` (padded by half a cell for the
+bilinear footprint, clipped to the window) is computed once per frame at the end of `Update` and cached;
+`TallReaches` and `GroundReaches` test a batch's instance bounds against the cache, and the batch's
+c253.w / c32.y flags are gated on that (the batch bounds are only read when a flag could be set).
+
+**Ground curve.** Groundcover ignores `CollisionSpringiness`: its weight is always `(1-t) cos(0.5 pi t)`
+(0 at `t >= 1`, never negative), on both the CPU (`Weight`) and the shader (`GrassTrailGroundSpring`).
+Tall grass keeps the springiness curve.
+
+**Wrap seam.** The 256 s time wrap is not handled in the encoding: a bilinear fetch between a cell stamped
+just before the wrap and one just after blends the time to about 0.5 and reads as expired, leaving a one-cell
+gap for the recovery time once per 256 s. Accepted and documented in `GrassTrail.hlsl`.
 
 **Vertex sampler binding.** `ShaderRecord::SetCT` binds a vertex-shader `TESR_` sampler at
 `D3DVERTEXTEXTURESAMPLER0 + RegisterIndex`. Its sampler states must go through `device->SetSamplerState`
@@ -80,7 +96,7 @@ At walking speed they were about 210 units apart, so trail coverage 80-800 units
 14-38%, and 0% at an 8 s recovery. The settings appeared to do nothing. Each batch also had only 3
 collision slots, and actors outranked footprints for them. Storing when a cell was pressed, instead
 of how bent it is now, makes the wake continuous, lets recovery follow the setting, and means a
-stationary scene uploads nothing. The GPU-stamped alternative was rejected because the frame is
+scene only uploads what actors keep restamping. The GPU-stamped alternative was rejected because the frame is
 GPU-bound ([[gpu-frame-breakdown]]).
 
 **How to apply:** do not reintroduce per-batch source packing or cell-0 "cleared" values. Keep the

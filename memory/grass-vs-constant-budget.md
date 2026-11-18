@@ -37,7 +37,7 @@ Per-draw data for the grass PIXEL shaders goes through PS constants instead (ple
 groundcover press uses PS c32-c34: c32 `TESR_GroundcoverPressParams` (x unused, y strength, z
 darkening, w model height), c33 `TESR_GrassTrailWindow`, c34 `TESR_GrassTrailTime`, and the ground
 trail map is sampler s4 (`TESR_GrassTrailGround`). Groundcover draws get strength 0 when
-`GroundReaches` says the batch misses the ground trail. The VS hands the PS its batch-relative XY in the
+`GroundReaches` says the batch misses the ground trail. The VS hands the PS its world XY in the
 spare `TEXCOORD0.zw` (TEXCOORD0 was float2) and the vertex's model-space height in `TEXCOORD4.w` (the PS
 only read ambient .rgb; 2034's ambient alpha was dropped), which avoids a new interpolator. GRASS2034
 used 11 of the 12 vs_3_0 outputs before the shadow outputs went; it now uses 9.
