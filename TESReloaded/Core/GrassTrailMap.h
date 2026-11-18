@@ -28,16 +28,17 @@ const float kMinRecovery = 0.05f;
 /// Upper clamp of the recovery time in seconds.
 const float kMaxRecovery = kTimePeriod * 0.5f;
 
-/// Trail layers: tall grass bending and ground cover pressing.
-enum LayerId { Layer_Tall, Layer_Ground, Layer_Count };
+/// Trail layers: tall grass bending, ground cover pressing, and shrub bending (TreeCollision), which
+/// uses the tall-grass profile and spring at its own radius.
+enum LayerId { Layer_Tall, Layer_Ground, Layer_Shrub, Layer_Count };
 
 /// Spring recovery weight at Age seconds after a press: 1 at Age 0, 0 at Age >= Recovery (or negative Age).
 float SpringWeight(float Age, float Recovery, float Springiness);
 /// Angular frequency of the spring for a springiness in [0, 1].
 float SpringOmega(float Springiness);
 
-/// An actor stamping the trail: world position and the radius it affects each layer to.
-struct Source { float X, Y, TallRadius, GroundRadius; };
+/// An actor stamping the trail: world position and the radius it affects each layer to; a radius of 0 skips that layer.
+struct Source { float X, Y, TallRadius, GroundRadius, ShrubRadius; };
 /// Half-open rectangle of texture cells.
 struct Rect { int X0, Y0, X1, Y1; };
 /// World-space axis-aligned bounds.
@@ -45,16 +46,16 @@ struct WorldBounds { float MinX, MinY, MaxX, MaxY; };
 /// Decoded cell: signed vector in [-1, 1], peak and press time in [0, 1].
 struct CellValue { float VecX, VecY, Peak, TimeN; };
 
-/// The two-layer trail map.
+/// The three-layer trail map.
 class Map {
 public:
 	/// Creates the map in the Reset state.
 	Map();
-	/// Clears both layers, forgets the window and marks everything dirty.
+	/// Clears every layer, forgets the window and marks everything dirty.
 	void Reset();
 	/// Advances the clock, recentres the window on the player and sweeps expired rows.
 	void BeginFrame(float PlayerX, float PlayerY, double Now, float Recovery, float Springiness);
-	/// Stamps a source into both layers.
+	/// Stamps a source into every layer.
 	void Stamp(const Source& S);
 	/// Appends dirty rectangles (texture cells) of a layer, then clears that layer's dirty state. Consecutive
 	/// rows merge only while their dirty columns overlap, so distant actors upload as separate rectangles.

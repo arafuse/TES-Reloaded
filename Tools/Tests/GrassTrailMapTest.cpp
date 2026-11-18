@@ -12,6 +12,7 @@ static int Failures = 0;
 
 static const float RT = 80.0f;
 static const float RG = 35.0f;
+static const float RS = 100.0f;
 
 static void Begin(Map& M) {
 	M.Reset();
@@ -30,14 +31,14 @@ static void SpringValues() {
 
 static void StampCentreFull() {
 	Map M; Begin(M);
-	M.Stamp({4, 4, RT, RG});
+	M.Stamp({4, 4, RT, RG, RS});
 	CHECK_NEAR(M.CurrentWeight(Layer_Tall, 4, 4), 1.0, 1e-3);
 	CHECK_NEAR(M.CurrentWeight(Layer_Ground, 4, 4), 1.0, 1e-3);
 }
 
 static void StampFalloffMatchesShader() {
 	Map M; Begin(M);
-	M.Stamp({4, 4, RT, RG});
+	M.Stamp({4, 4, RT, RG, RS});
 	CellValue T = M.Decode(Layer_Tall, 44, 4);
 	CHECK_NEAR(T.Peak, 1.0 - Smooth01(0.5f), 2e-3);
 	CHECK_NEAR(T.VecX, 0.5, 2e-3);
@@ -50,7 +51,7 @@ static void StampFalloffMatchesShader() {
 
 static void RingWritesTimeOnly() {
 	Map M; Begin(M);
-	M.Stamp({4, 4, RT, RG});
+	M.Stamp({4, 4, RT, RG, RS});
 	CellValue Ring = M.Decode(Layer_Tall, 4 + RT + 8, 4);
 	CHECK(Ring.Peak == 0.0f);
 	CHECK_NEAR(Ring.TimeN, M.NowN(), 1e-4);
@@ -60,7 +61,7 @@ static void RingWritesTimeOnly() {
 
 static void RecoversOverTime() {
 	Map M; Begin(M);
-	M.Stamp({4, 4, RT, RG});
+	M.Stamp({4, 4, RT, RG, RS});
 	M.BeginFrame(0, 0, 10.0 + 1.75, 3.5f, 0.8f);
 	CHECK_NEAR(M.CurrentWeight(Layer_Tall, 4, 4), SpringWeight(1.75f, 3.5f, 0.8f), 5e-3);
 	M.BeginFrame(0, 0, 10.0 + 3.6, 3.5f, 0.8f);
@@ -69,7 +70,7 @@ static void RecoversOverTime() {
 
 static void GroundNeverOvershoots() {
 	Map M; Begin(M);
-	M.Stamp({4, 4, RT, RG});
+	M.Stamp({4, 4, RT, RG, RS});
 	for (int I = 0; I <= 70; ++I) {
 		M.BeginFrame(0, 0, 10.0 + I * 0.05, 3.5f, 0.8f);
 		CHECK(M.CurrentWeight(Layer_Ground, 4, 4) >= 0.0f);
@@ -78,7 +79,7 @@ static void GroundNeverOvershoots() {
 
 static void GroundRecoversOverFullTime() {
 	Map M; Begin(M);
-	M.Stamp({4, 4, RT, RG});
+	M.Stamp({4, 4, RT, RG, RS});
 	M.BeginFrame(0, 0, 10.0 + 2.5, 3.5f, 0.8f);
 	float T = 2.5f / 3.5f;
 	float Expected = (1.0f - T) * std::cos(0.5f * 3.14159265f * T);
@@ -98,7 +99,7 @@ static void ContinuousWake() {
 		Now += 1.0 / 60.0;
 		X += 5.0f;
 		M.BeginFrame(X, 4, Now, 8.0f, 0.0f);
-		M.Stamp({X, 4, RT, RG});
+		M.Stamp({X, 4, RT, RG, RS});
 	}
 	for (float W = 100; W <= 500; W += 8)
 		CHECK(M.CurrentWeight(Layer_Tall, W, 4) > 0.2f);
@@ -106,10 +107,10 @@ static void ContinuousWake() {
 
 static void WeakerStampKeepsFreshPeak() {
 	Map M; Begin(M);
-	M.Stamp({4, 4, RT, RG});
+	M.Stamp({4, 4, RT, RG, RS});
 	CellValue Before = M.Decode(Layer_Tall, 4, 4);
 	M.BeginFrame(0, 0, 10.01, 3.5f, 0.8f);
-	M.Stamp({64, 4, RT, RG});
+	M.Stamp({64, 4, RT, RG, RS});
 	CellValue After = M.Decode(Layer_Tall, 4, 4);
 	CHECK_NEAR(After.Peak, 1.0, 1e-3);
 	CHECK(After.TimeN == Before.TimeN);
@@ -117,7 +118,7 @@ static void WeakerStampKeepsFreshPeak() {
 
 static void SweepClearsExpired() {
 	Map M; Begin(M);
-	M.Stamp({4, 4, RT, RG});
+	M.Stamp({4, 4, RT, RG, RS});
 	CellValue Before = M.Decode(Layer_Tall, 4, 4);
 	double Now = 10.0;
 	for (int I = 0; I < 36 + 64; ++I) {
@@ -134,7 +135,7 @@ static void SweepClearsExpired() {
 
 static void NoResurrectionAfterWrap() {
 	Map M; Begin(M);
-	M.Stamp({4, 4, RT, RG});
+	M.Stamp({4, 4, RT, RG, RS});
 	double Now = 10.0;
 	for (int I = 0; I < 3000; ++I) {
 		Now += 0.1;
@@ -146,12 +147,12 @@ static void NoResurrectionAfterWrap() {
 
 static void NoResurrectionInBusyRow() {
 	Map M; Begin(M);
-	M.Stamp({4, 4, RT, RG});
+	M.Stamp({4, 4, RT, RG, RS});
 	double Now = 10.0;
 	for (int I = 0; I < 3000; ++I) {
 		Now += 0.1;
 		M.BeginFrame(0, 0, Now, 3.5f, 0.8f);
-		M.Stamp({1000, 4, RT, RG});
+		M.Stamp({1000, 4, RT, RG, RS});
 	}
 	CHECK(M.Decode(Layer_Tall, 4, 4).Peak == 0.0f);
 	CHECK(M.Decode(Layer_Ground, 4, 4).Peak == 0.0f);
@@ -159,7 +160,7 @@ static void NoResurrectionInBusyRow() {
 
 static void RecentreKeepsWorldData() {
 	Map M; Begin(M);
-	M.Stamp({4, 4, RT, RG});
+	M.Stamp({4, 4, RT, RG, RS});
 	float Old = M.OriginX();
 	M.BeginFrame(600, 0, 10.0, 3.5f, 0.8f);
 	CHECK(M.OriginX() != Old);
@@ -168,7 +169,7 @@ static void RecentreKeepsWorldData() {
 
 static void RecentreClearsEnteringCells() {
 	Map M; Begin(M);
-	M.Stamp({1500, 4, RT, RG});
+	M.Stamp({1500, 4, RT, RG, RS});
 	CHECK_NEAR(M.Decode(Layer_Tall, 1500, 4).Peak, 1.0, 1e-3);
 	M.BeginFrame(4000, 0, 10.0, 3.5f, 0.8f);
 	CellValue V = M.Decode(Layer_Tall, 1500 + 4096, 4);
@@ -178,7 +179,7 @@ static void RecentreClearsEnteringCells() {
 
 static void ResetClearsEverything() {
 	Map M; Begin(M);
-	M.Stamp({4, 4, RT, RG});
+	M.Stamp({4, 4, RT, RG, RS});
 	M.Reset();
 	M.BeginFrame(0, 0, 10.0, 3.5f, 0.8f);
 	CHECK(M.Decode(Layer_Tall, 4, 4).Peak == 0.0f);
@@ -193,7 +194,7 @@ static void DirtyBandsCoverStampOnce() {
 	std::vector<Rect> R;
 	M.CollectDirty(Layer_Tall, R);
 	std::vector<uint16_t> Snap(M.Data(Layer_Tall), M.Data(Layer_Tall) + kSize * kSize * 4);
-	M.Stamp({1000, 500, RT, RG});
+	M.Stamp({1000, 500, RT, RG, RS});
 	R.clear();
 	M.CollectDirty(Layer_Tall, R);
 	long Area = 0;
@@ -230,8 +231,8 @@ static void DirtyBandsSplitByX() {
 	Map M; Begin(M);
 	std::vector<Rect> R;
 	M.CollectDirty(Layer_Tall, R);
-	M.Stamp({-1500, 500, RT, RG});
-	M.Stamp({1500, 500, RT, RG});
+	M.Stamp({-1500, 500, RT, RG, RS});
+	M.Stamp({1500, 500, RT, RG, RS});
 	R.clear();
 	M.CollectDirty(Layer_Tall, R);
 	long Area = 0;
@@ -244,7 +245,7 @@ static void NegativeCoordinates() {
 	Map M;
 	M.Reset();
 	M.BeginFrame(-3004, -1500, 10.0, 3.5f, 0.8f);
-	M.Stamp({-3004, -1500, RT, RG});
+	M.Stamp({-3004, -1500, RT, RG, RS});
 	CHECK_NEAR(M.CurrentWeight(Layer_Tall, -3004, -1500), 1.0, 1e-3);
 	CHECK_NEAR(M.Decode(Layer_Tall, -3004 + 40, -1500).Peak, 1.0 - Smooth01(0.5f), 2e-3);
 	WorldBounds B;
@@ -254,8 +255,8 @@ static void NegativeCoordinates() {
 
 static void YAxisRecentre() {
 	Map M; Begin(M);
-	M.Stamp({4, 1500, RT, RG});
-	M.Stamp({4, 2004, RT, RG});
+	M.Stamp({4, 1500, RT, RG, RS});
+	M.Stamp({4, 2004, RT, RG, RS});
 	M.BeginFrame(0, 4000, 10.0, 3.5f, 0.8f);
 	for (int L = 0; L < Layer_Count; ++L) {
 		int Row = ((int)std::floor(1500.0f / kCellSize)) % kSize;
@@ -267,7 +268,7 @@ static void YAxisRecentre() {
 
 static void LiveBoundsContainStamp() {
 	Map M; Begin(M);
-	M.Stamp({1000, 500, RT, RG});
+	M.Stamp({1000, 500, RT, RG, RS});
 	WorldBounds B;
 	CHECK(M.LiveBounds(Layer_Tall, B));
 	CHECK(B.MinX <= 920 && B.MaxX >= 1080 && B.MinY <= 420 && B.MaxY >= 580);
@@ -280,7 +281,7 @@ static void ClearedCellsAreNeutral() {
 		CHECK(IsNeutral(T) && T[3] == 0);
 	}
 
-	M.Stamp({1004, 4, RT, RG});
+	M.Stamp({1004, 4, RT, RG, RS});
 	for (int L = 0; L < Layer_Count; ++L) {
 		const uint16_t* T = Texel(M, (LayerId)L, 128, 0);
 		CHECK(T[0] != 32768 && T[2] != 0);
@@ -298,7 +299,7 @@ static void ClearedCellsAreNeutral() {
 	}
 
 	Map C; Begin(C);
-	C.Stamp({1500, 4, RT, RG});
+	C.Stamp({1500, 4, RT, RG, RS});
 	for (int L = 0; L < Layer_Count; ++L) CHECK(Texel(C, (LayerId)L, 190, 0)[0] != 32768);
 	C.BeginFrame(4000, 0, 10.0, 3.5f, 0.8f);
 	for (int L = 0; L < Layer_Count; ++L) {
@@ -307,7 +308,7 @@ static void ClearedCellsAreNeutral() {
 	}
 
 	Map R; Begin(R);
-	R.Stamp({4, 1500, RT, RG});
+	R.Stamp({4, 1500, RT, RG, RS});
 	for (int L = 0; L < Layer_Count; ++L) CHECK(Texel(R, (LayerId)L, 3, 187)[1] == 32768 && Texel(R, (LayerId)L, 3, 187)[0] != 32768);
 	R.BeginFrame(0, 4000, 10.0, 3.5f, 0.8f);
 	for (int L = 0; L < Layer_Count; ++L) {
@@ -316,8 +317,51 @@ static void ClearedCellsAreNeutral() {
 	}
 }
 
+static void ShrubUsesOwnRadiusAndTallProfile() {
+	Map M; Begin(M);
+	M.Stamp({4, 4, RT, RG, RS});
+	CHECK_NEAR(M.CurrentWeight(Layer_Shrub, 4, 4), 1.0, 1e-3);
+	CellValue S = M.Decode(Layer_Shrub, 4 + 56, 4);
+	CHECK_NEAR(S.Peak, 1.0 - Smooth01(56.0f / RS), 2e-3);
+	CHECK(M.Decode(Layer_Tall, 4 + 88, 4).Peak == 0.0f);
+	CHECK(M.Decode(Layer_Shrub, 4 + 88, 4).Peak > 0.0f);
+}
+
+static void ShrubOvershootsLikeTall() {
+	Map M; Begin(M);
+	M.Stamp({4, 4, RT, RG, RS});
+	M.BeginFrame(0, 0, 10.0 + 2.625, 3.5f, 0.8f);
+	CHECK_NEAR(M.CurrentWeight(Layer_Shrub, 4, 4), SpringWeight(2.625f, 3.5f, 0.8f), 5e-3);
+	CHECK(M.CurrentWeight(Layer_Shrub, 4, 4) < 0.0f);
+}
+
+static void ZeroShrubRadiusSkipsLayer() {
+	Map M; Begin(M);
+	M.Stamp({4, 4, RT, RG, 0.0f});
+	WorldBounds B;
+	CHECK(!M.LiveBounds(Layer_Shrub, B));
+	CHECK(M.Decode(Layer_Shrub, 4, 4).Peak == 0.0f);
+	CHECK(M.Decode(Layer_Tall, 4, 4).Peak > 0.0f);
+}
+
+static void ShrubSweptAndReset() {
+	Map M; Begin(M);
+	M.Stamp({4, 4, RT, RG, RS});
+	for (int F = 1; F <= 80; ++F) M.BeginFrame(0, 0, 10.0 + 4.0 + F * 0.016, 3.5f, 0.8f);
+	WorldBounds B;
+	CHECK(!M.LiveBounds(Layer_Shrub, B));
+	M.Stamp({4, 4, RT, RG, RS});
+	CHECK(M.Decode(Layer_Shrub, 4, 4).Peak > 0.0f);
+	M.Reset();
+	CHECK(M.Decode(Layer_Shrub, 4, 4).Peak == 0.0f);
+}
+
 int main() {
 	SpringValues();
+	ShrubUsesOwnRadiusAndTallProfile();
+	ShrubOvershootsLikeTall();
+	ZeroShrubRadiusSkipsLayer();
+	ShrubSweptAndReset();
 	StampCentreFull();
 	StampFalloffMatchesShader();
 	RingWritesTimeOnly();

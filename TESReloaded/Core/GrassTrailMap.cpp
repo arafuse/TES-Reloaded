@@ -234,7 +234,7 @@ void Map::StampLayer(LayerId Id, const Source& S, float Radius) {
 			float VecX, VecY, Peak;
 			float DirX = D > 0.0f ? DX / D : 0.0f;
 			float DirY = D > 0.0f ? DY / D : 0.0f;
-			if (Id == Layer_Tall) {
+			if (Id != Layer_Ground) {
 				float T = Saturate(D / Radius);
 				float Influence = 1.0f - Smooth01(T);
 				float Fade = SmoothStep(0.0f, 0.3f, T);
@@ -282,6 +282,7 @@ void Map::Stamp(const Source& S) {
 	if (!HasWindow) return;
 	StampLayer(Layer_Tall, S, S.TallRadius);
 	StampLayer(Layer_Ground, S, S.GroundRadius);
+	StampLayer(Layer_Shrub, S, S.ShrubRadius);
 }
 
 void Map::CollectDirty(LayerId Id, std::vector<Rect>& Out) {
