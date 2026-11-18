@@ -213,23 +213,49 @@ static void LiveBoundsContainStamp() {
 	CHECK(B.MinX <= 920 && B.MaxX >= 1080 && B.MinY <= 420 && B.MaxY >= 580);
 }
 
+static const uint16_t* Texel(const Map& M, LayerId L, int Col, int Row) {
+	return M.Data(L) + (Row * kSize + Col) * 4;
+}
+
+static bool IsNeutral(const uint16_t* T) {
+	return T[0] == 32768 && T[1] == 32768 && T[2] == 0;
+}
+
 static void ClearedCellsAreNeutral() {
 	Map M; Begin(M);
 	for (int L = 0; L < Layer_Count; ++L) {
-		const uint16_t* D = M.Data((LayerId)L);
-		CHECK(D[(100 * kSize + 200) * 4 + 0] == 32768 && D[(100 * kSize + 200) * 4 + 1] == 32768);
-		CHECK(D[(100 * kSize + 200) * 4 + 2] == 0 && D[(100 * kSize + 200) * 4 + 3] == 0);
+		const uint16_t* T = Texel(M, (LayerId)L, 200, 100);
+		CHECK(IsNeutral(T) && T[3] == 0);
 	}
+
 	M.Stamp({1004, 4, RT, RG});
+	for (int L = 0; L < Layer_Count; ++L) {
+		const uint16_t* T = Texel(M, (LayerId)L, 128, 0);
+		CHECK(T[0] != 32768 && T[2] != 0);
+	}
 	double Now = 10.0;
 	for (int I = 0; I < 36 + 64; ++I) {
 		Now += 0.1;
 		M.BeginFrame(0, 0, Now, 3.5f, 0.8f);
 	}
+	for (int L = 0; L < Layer_Count; ++L) CHECK(IsNeutral(Texel(M, (LayerId)L, 128, 0)));
+
+	Map C; Begin(C);
+	C.Stamp({1500, 4, RT, RG});
+	for (int L = 0; L < Layer_Count; ++L) CHECK(Texel(C, (LayerId)L, 190, 0)[0] != 32768);
+	C.BeginFrame(4000, 0, 10.0, 3.5f, 0.8f);
 	for (int L = 0; L < Layer_Count; ++L) {
-		const uint16_t* D = M.Data((LayerId)L);
-		int Idx = (4 / 8 * kSize + 1004 / 8) * 4;
-		CHECK(D[Idx + 0] == 32768 && D[Idx + 1] == 32768 && D[Idx + 2] == 0);
+		const uint16_t* T = Texel(C, (LayerId)L, 190, 0);
+		CHECK(IsNeutral(T) && T[3] == 0);
+	}
+
+	Map R; Begin(R);
+	R.Stamp({4, 1500, RT, RG});
+	for (int L = 0; L < Layer_Count; ++L) CHECK(Texel(R, (LayerId)L, 3, 187)[1] == 32768 && Texel(R, (LayerId)L, 3, 187)[0] != 32768);
+	R.BeginFrame(0, 4000, 10.0, 3.5f, 0.8f);
+	for (int L = 0; L < Layer_Count; ++L) {
+		const uint16_t* T = Texel(R, (LayerId)L, 3, 187);
+		CHECK(IsNeutral(T) && T[3] == 0);
 	}
 }
 
