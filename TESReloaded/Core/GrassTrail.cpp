@@ -170,7 +170,8 @@ void Update(const Stamper* Stampers, int Count, float PlayerX, float PlayerY, co
 	TrailMap->BeginFrame(PlayerX, PlayerY, TrailClock, Settings.CollisionRecoveryTime, Settings.CollisionSpringiness);
 
 	if (LastStamps.size() > kMaxCachedStampers) LastStamps.clear();
-	for (int i = 0; i < Count; i++) {
+	int StampCount = Settings.CollisionEnabled ? Count : 0;
+	for (int i = 0; i < StampCount; i++) {
 		const Stamper& S = Stampers[i];
 		auto It = LastStamps.find(S.RefId);
 		if (It != LastStamps.end()) {

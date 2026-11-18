@@ -51,7 +51,7 @@ static bool BuildTreeCollisionConstants(NiGeometry* Geometry, const NiTransform*
 	memset(Constants, 0, sizeof(D3DXVECTOR4) * 4);
 
 	SettingsGrassStruct* Settings = &TheSettingManager->SettingsGrass;
-	bool Eligible = Active && Settings->TreeCollision && Player && WorldTransform && WorldTransform->scale > 0.0f && GrassTrail::ShrubEnabled();
+	bool Eligible = Active && Settings->CollisionEnabled && Settings->TreeCollision && Player && WorldTransform && WorldTransform->scale > 0.0f && GrassTrail::ShrubEnabled();
 	NiNode* Tree = Eligible ? FindTreeNode(Geometry) : NULL;
 	if (!Tree) return false;
 	const NiBound& Bound = Tree->m_kWorldBound;

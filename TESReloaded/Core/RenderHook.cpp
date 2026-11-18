@@ -1214,9 +1214,9 @@ static void SetGrassCollisionConstants(NiGeometry* Geometry, void* GrassProperty
 	const SettingsGrassStruct& Settings = TheSettingManager->SettingsGrass;
 	float ModelHeight = GetGrassModelHeight(Geometry);
 	bool Groundcover = ModelHeight <= Settings.GroundcoverMaxHeight;
-	bool Pressed = Groundcover && Settings.GroundcoverPress;
+	bool Pressed = Groundcover && Settings.GroundcoverPress && Settings.CollisionEnabled;
 
-	bool TallWanted = !Groundcover && GrassTrail::TallEnabled();
+	bool TallWanted = Settings.CollisionEnabled && !Groundcover && GrassTrail::TallEnabled();
 	bool GroundWanted = Pressed && GrassTrail::GroundEnabled();
 	GrassBatchBounds Bounds;
 	bool Known = (TallWanted || GroundWanted) && GetGrassBatchBounds(GrassProperty, Bounds);
