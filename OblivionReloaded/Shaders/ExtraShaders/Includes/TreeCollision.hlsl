@@ -1,35 +1,35 @@
 // Small-tree collision, shared by the SpeedTree vertex shader overrides and Shadows/ShadowMap.vso.
 //
-// Bends shrubs away from up to three actors in the tree's model space. TreeCollision.cpp uploads
+// Bends shrubs away from actors by the shrub layer of the grass trail map (see GrassTrail.hlsl): one
+// bilinear fetch at the vertex's world XY gives the push vector, flatten peak and press time, so a
+// shrub stays bent behind an actor and springs back over the recovery time. TreeCollision.cpp uploads
 // c240-c243 per tree. They are deliberately not TESR_ constants: for a batch's first tree the
 // per-tree hook runs before SetCT, which would overwrite a TESR_ value with a global one.
-// Unused source slots carry weight 0, and count 0 skips the whole block. Each source has its own
-// radius, scaled by the size of the actor behind it.
+// A zero live flag (c243.x) skips the whole block.
 
-float4 TreeCollisionParams : register(c240);	// x source 0 radius, y push, z flatten, w source count
-float4 TreeCollisionXY0 : register(c241);		// source 0 xy, source 1 xy
-float4 TreeCollisionXY1 : register(c242);		// source 2 xy, z = 1 / bend height, w source 1 radius
-float4 TreeCollisionWeights : register(c243);	// xyz = source weights, w source 2 radius
+float4 TreeCollisionRow0 : register(c240);		// row 0 of scale * rot, w = world x
+float4 TreeCollisionRow1 : register(c241);		// row 1 of scale * rot, w = world y
+float4 TreeCollisionRow2 : register(c242);		// row 2 of scale * rot
+float4 TreeCollisionParams : register(c243);	// x live, y push / scale^2, z flatten / scale^2, w = 1 / bend height
+float4 TESR_GrassTrailWindow : register(c244);
+float4 TESR_GrassTrailTime : register(c245);
+sampler2D TESR_GrassTrailShrub : register(s0) = sampler_state { ADDRESSU = WRAP; ADDRESSV = WRAP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = NONE; };
+
+#include "../Grass/Includes/GrassTrail.hlsl"
 
 // ModelPos : model-space vertex, or leaf cluster centre before billboarding
 // Returns the model-space displacement to add to ModelPos.
 float3 TreeCollisionDisplacement(float3 ModelPos) {
     float3 disp = 0;
-    [branch] if (TreeCollisionParams.w > 0) {
-        float3 invRadii = 1.0 / max(float3(TreeCollisionParams.x, TreeCollisionXY1.w, TreeCollisionWeights.w), 0.001);
-        float bend = saturate(ModelPos.z * TreeCollisionXY1.z);
-        float2 sources[3] = { TreeCollisionXY0.xy, TreeCollisionXY0.zw, TreeCollisionXY1.xy };
-
-        [unroll]
-        for (int i = 0; i < 3; i++) {
-            float2 diff = ModelPos.xy - sources[i];
-            float dist = length(diff);
-            float t = saturate(dist * invRadii[i]);
-            float influence = smoothstep(1.0, 0.0, t) * TreeCollisionWeights[i];
-            float2 pushDir = (dist > 0.001) ? (diff / dist) : float2(1, 0);
-            disp.xy += pushDir * (influence * smoothstep(0.0, 0.3, t) * TreeCollisionParams.y);
-            disp.z -= influence * TreeCollisionParams.z;
-        }
+    [branch] if (TreeCollisionParams.x > 0.5) {
+        float2 worldXY = float2(dot(TreeCollisionRow0.xyz, ModelPos) + TreeCollisionRow0.w, dot(TreeCollisionRow1.xyz, ModelPos) + TreeCollisionRow1.w);
+        float4 cell = tex2Dlod(TESR_GrassTrailShrub, GrassTrailUV(worldXY));
+        float w = GrassTrailSpring(cell.a) * GrassTrailEdgeFade(worldXY);
+        float2 push = (cell.rg * 2.0 - 1.0) * (w * TreeCollisionParams.y);
+        float sink = -cell.b * w * TreeCollisionParams.z;
+        // Transposed scaled rotation; the strengths already carry the second 1 / scale.
+        disp = push.x * TreeCollisionRow0.xyz + push.y * TreeCollisionRow1.xyz + sink * TreeCollisionRow2.xyz;
+        float bend = saturate(ModelPos.z * TreeCollisionParams.w);
         disp *= bend * bend;
     }
     return disp;
