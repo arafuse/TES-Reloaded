@@ -8,6 +8,9 @@ const float kPi = 3.14159265358979f;
 const float kStampMargin = 1.5f * kCellSize;
 const float kBilinearPad = 0.5f * kCellSize;
 const uint16_t kNeutral = 32768;
+const int kDirtyChunk = 8;
+const int kChunks = kSize / kDirtyChunk;
+const uint64_t kAllChunks = ~0ull;
 
 float MinF(float A, float B) { return A < B ? A : B; }
 float MaxF(float A, float B) { return A > B ? A : B; }
@@ -71,8 +74,7 @@ void Map::ClearLayerAll(Layer& L) {
 	L.Live.assign(kSize, 0);
 	L.LiveMin.assign(kSize, 0);
 	L.LiveMax.assign(kSize, 0);
-	L.DirtyMin.assign(kSize, 0);
-	L.DirtyMax.assign(kSize, kSize - 1);
+	L.DirtyMask.assign(kSize, kAllChunks);
 }
 
 void Map::Reset() {
@@ -87,13 +89,7 @@ void Map::Reset() {
 }
 
 void Map::MarkDirty(Layer& L, int Row, int Col) {
-	if (L.DirtyMin[Row] < 0) {
-		L.DirtyMin[Row] = Col;
-		L.DirtyMax[Row] = Col;
-	} else {
-		L.DirtyMin[Row] = MinI(L.DirtyMin[Row], Col);
-		L.DirtyMax[Row] = MaxI(L.DirtyMax[Row], Col);
-	}
+	L.DirtyMask[Row] |= 1ull << (Col / kDirtyChunk);
 }
 
 void Map::ClearColumns(int CellStart, int Count) {
@@ -116,8 +112,7 @@ void Map::ClearRows(int CellStart, int Count) {
 			int Row = PosMod(CellStart + C);
 			for (int Col = 0; Col < kSize; ++Col) ClearTexel(&Lay.Cells[((size_t)Row * kSize + Col) * 4]);
 			Lay.Live[Row] = 0;
-			Lay.DirtyMin[Row] = 0;
-			Lay.DirtyMax[Row] = kSize - 1;
+			Lay.DirtyMask[Row] = kAllChunks;
 		}
 	}
 }
@@ -142,8 +137,7 @@ float Map::AgeOf(uint16_t TimeValue) const {
 
 float Map::Weight(LayerId Id, uint16_t Peak, uint16_t TimeValue) const {
 	if (Peak == 0) return 0.0f;
-	float W = SpringWeight(AgeOf(TimeValue), RecoveryValue, SpringinessValue);
-	if (Id == Layer_Ground) W = MaxF(W, 0.0f);
+	float W = SpringWeight(AgeOf(TimeValue), RecoveryValue, Id == Layer_Ground ? 0.0f : SpringinessValue);
 	return Peak / 65535.0f * W;
 }
 
@@ -292,25 +286,26 @@ void Map::Stamp(const Source& S) {
 
 void Map::CollectDirty(LayerId Id, std::vector<Rect>& Out) {
 	Layer& L = Layers[Id];
-	int Start = -1, X0 = 0, X1 = 0;
+	int Start = -1;
+	uint64_t Band = 0;
 	for (int Row = 0; Row <= kSize; ++Row) {
-		bool Dirty = Row < kSize && L.DirtyMin[Row] >= 0;
-		if (Dirty) {
-			if (Start < 0) {
-				Start = Row;
-				X0 = L.DirtyMin[Row];
-				X1 = L.DirtyMax[Row];
-			} else {
-				X0 = MinI(X0, L.DirtyMin[Row]);
-				X1 = MaxI(X1, L.DirtyMax[Row]);
+		uint64_t Mask = Row < kSize ? L.DirtyMask[Row] : 0;
+		bool Joins = Start >= 0 && Mask != 0 && (Mask & (Band | (Band << 1) | (Band >> 1))) != 0;
+		if (Start >= 0 && !Joins) {
+			for (int C = 0; C < kChunks; ++C) {
+				if (!(Band >> C & 1)) continue;
+				int RunStart = C;
+				while (C + 1 < kChunks && (Band >> (C + 1) & 1)) ++C;
+				Rect R = {RunStart * kDirtyChunk, Start, (C + 1) * kDirtyChunk, Row};
+				Out.push_back(R);
 			}
-			L.DirtyMin[Row] = -1;
-			L.DirtyMax[Row] = -1;
-		} else if (Start >= 0) {
-			Rect R = {X0, Start, X1 + 1, Row};
-			Out.push_back(R);
 			Start = -1;
+			Band = 0;
 		}
+		if (Mask == 0) continue;
+		if (Start < 0) Start = Row;
+		Band |= Mask;
+		L.DirtyMask[Row] = 0;
 	}
 }
 

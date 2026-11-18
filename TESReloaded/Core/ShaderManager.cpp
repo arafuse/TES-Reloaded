@@ -2276,8 +2276,8 @@ void ShaderManager::UpdateGrass(ShaderConstants& ShaderConst) {
 	stampers[stamperCount++] = { Player->refID, Player->pos.x, Player->pos.y, playerScale };
 	for (int i = 0; i < trailActorCount; i++)
 		stampers[stamperCount++] = trailActors[i].stamper;
-	GrassTrail::Constants trailConsts;
-	GrassTrail::Update(stampers, stamperCount, Player->pos.x, Player->pos.y, space, trailConsts);
+	GrassTrail::Constants trailConsts = {};
+	GrassTrail::Update(stampers, stamperCount, Player->pos.x, Player->pos.y, Player->GetWorldSpace(), trailConsts);
 	ShaderConst.Grass.TrailWindow = trailConsts.Window;
 	ShaderConst.Grass.TrailTime = trailConsts.Time;
 

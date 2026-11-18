@@ -76,6 +76,19 @@ static void GroundNeverOvershoots() {
 	}
 }
 
+static void GroundRecoversOverFullTime() {
+	Map M; Begin(M);
+	M.Stamp({4, 4, RT, RG});
+	M.BeginFrame(0, 0, 10.0 + 2.5, 3.5f, 0.8f);
+	float T = 2.5f / 3.5f;
+	float Expected = (1.0f - T) * std::cos(0.5f * 3.14159265f * T);
+	float W = M.CurrentWeight(Layer_Ground, 4, 4);
+	CHECK(W > 0.0f);
+	CHECK_NEAR(W, Expected, 5e-3);
+	M.BeginFrame(0, 0, 10.0 + 3.6, 3.5f, 0.8f);
+	CHECK(M.CurrentWeight(Layer_Ground, 4, 4) == 0.0f);
+}
+
 static void ContinuousWake() {
 	Map M;
 	M.Reset();
@@ -205,20 +218,59 @@ static void DirtyBandsCoverStampOnce() {
 	CHECK(Again.empty());
 }
 
-static void LiveBoundsContainStamp() {
-	Map M; Begin(M);
-	M.Stamp({1000, 500, RT, RG});
-	WorldBounds B;
-	CHECK(M.LiveBounds(Layer_Tall, B));
-	CHECK(B.MinX <= 920 && B.MaxX >= 1080 && B.MinY <= 420 && B.MaxY >= 580);
-}
-
 static const uint16_t* Texel(const Map& M, LayerId L, int Col, int Row) {
 	return M.Data(L) + (Row * kSize + Col) * 4;
 }
 
 static bool IsNeutral(const uint16_t* T) {
 	return T[0] == 32768 && T[1] == 32768 && T[2] == 0;
+}
+
+static void DirtyBandsSplitByX() {
+	Map M; Begin(M);
+	std::vector<Rect> R;
+	M.CollectDirty(Layer_Tall, R);
+	M.Stamp({-1500, 500, RT, RG});
+	M.Stamp({1500, 500, RT, RG});
+	R.clear();
+	M.CollectDirty(Layer_Tall, R);
+	long Area = 0;
+	for (size_t I = 0; I < R.size(); ++I) Area += (long)(R[I].X1 - R[I].X0) * (R[I].Y1 - R[I].Y0);
+	CHECK(R.size() >= 2);
+	CHECK(Area <= 2 * 32 * 32);
+}
+
+static void NegativeCoordinates() {
+	Map M;
+	M.Reset();
+	M.BeginFrame(-3004, -1500, 10.0, 3.5f, 0.8f);
+	M.Stamp({-3004, -1500, RT, RG});
+	CHECK_NEAR(M.CurrentWeight(Layer_Tall, -3004, -1500), 1.0, 1e-3);
+	CHECK_NEAR(M.Decode(Layer_Tall, -3004 + 40, -1500).Peak, 1.0 - Smooth01(0.5f), 2e-3);
+	WorldBounds B;
+	CHECK(M.LiveBounds(Layer_Tall, B));
+	CHECK(B.MinX <= -3004 - RT && B.MaxX >= -3004 + RT && B.MinY <= -1500 - RT && B.MaxY >= -1500 + RT);
+}
+
+static void YAxisRecentre() {
+	Map M; Begin(M);
+	M.Stamp({4, 1500, RT, RG});
+	M.Stamp({4, 2004, RT, RG});
+	M.BeginFrame(0, 4000, 10.0, 3.5f, 0.8f);
+	for (int L = 0; L < Layer_Count; ++L) {
+		int Row = ((int)std::floor(1500.0f / kCellSize)) % kSize;
+		const uint16_t* T = Texel(M, (LayerId)L, 0, Row);
+		CHECK(IsNeutral(T) && T[3] == 0);
+	}
+	CHECK_NEAR(M.Decode(Layer_Tall, 4, 2004).Peak, 1.0, 1e-3);
+}
+
+static void LiveBoundsContainStamp() {
+	Map M; Begin(M);
+	M.Stamp({1000, 500, RT, RG});
+	WorldBounds B;
+	CHECK(M.LiveBounds(Layer_Tall, B));
+	CHECK(B.MinX <= 920 && B.MaxX >= 1080 && B.MinY <= 420 && B.MaxY >= 580);
 }
 
 static void ClearedCellsAreNeutral() {
@@ -271,6 +323,7 @@ int main() {
 	RingWritesTimeOnly();
 	RecoversOverTime();
 	GroundNeverOvershoots();
+	GroundRecoversOverFullTime();
 	ContinuousWake();
 	WeakerStampKeepsFreshPeak();
 	SweepClearsExpired();
@@ -280,7 +333,10 @@ int main() {
 	RecentreClearsEnteringCells();
 	ResetClearsEverything();
 	DirtyBandsCoverStampOnce();
+	DirtyBandsSplitByX();
 	LiveBoundsContainStamp();
+	NegativeCoordinates();
+	YAxisRecentre();
 	ClearedCellsAreNeutral();
 	if (Failures == 0) std::printf("GrassTrailMap: all tests passed\n");
 	else std::printf("GrassTrailMap: %d failure(s)\n", Failures);

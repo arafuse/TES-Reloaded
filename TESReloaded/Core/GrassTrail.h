@@ -13,8 +13,12 @@ struct Constants { D3DXVECTOR4 Window, Time; };
 /// Creates the trail textures; must run before any shader record loads its samplers.
 void Create(IDirect3DDevice9* Device);
 
-/// Advances the trail clock, stamps the actors, uploads dirty bands and fills Out.
+/// Advances the trail clock, stamps the actors, uploads dirty bands and fills Out. A NULL Space
+/// (an interior, where there is no grass) clears the trail and does nothing else.
 void Update(const Stamper* Stampers, int Count, float PlayerX, float PlayerY, const void* Space, Constants& Out);
+
+/// Clears the trail and its clock bookkeeping, for a loaded save.
+void Reset();
 
 /// True when the tall-grass bending layer is usable (textures exist and vertex texture fetch is supported).
 bool TallEnabled();

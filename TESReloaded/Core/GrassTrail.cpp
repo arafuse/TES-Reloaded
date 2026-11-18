@@ -16,16 +16,20 @@ const float  kTeleportDist = 1024.0f;
 const float  kStampMoveDist = 2.0f;
 const float  kStampMinInterval = 0.033f;
 const size_t kMaxCachedStampers = 256;
+const int    kStagingCount = 3;
 
 struct LayerTextures {
 	IDirect3DTexture9* Default = NULL;
-	IDirect3DTexture9* Staging = NULL;
+	IDirect3DTexture9* Staging[kStagingCount] = {};
 	IDirect3DSurface9* DefaultSurface = NULL;
-	IDirect3DSurface9* StagingSurface = NULL;
+	IDirect3DSurface9* StagingSurface[kStagingCount] = {};
+	int NextStaging = 0;
 	bool Enabled = false;
+	bool HasBounds = false;
+	GrassTrailMap::WorldBounds Bounds = {};
 };
 
-struct LastStamp { float X, Y, T; };
+struct LastStamp { float X, Y; double T; };
 
 GrassTrailMap::Map* TrailMap = NULL;
 LayerTextures Layers[Layer_Count];
@@ -37,20 +41,28 @@ float LastPlayerX = 0.0f, LastPlayerY = 0.0f;
 double LastMs = -1.0;
 double TrailClock = 0.0;
 
-bool CreateLayer(IDirect3DDevice9* Device, LayerTextures& L, const char* Name) {
-	if (FAILED(Device->CreateTexture(kSize, kSize, 1, 0, D3DFMT_A16B16G16R16, D3DPOOL_DEFAULT, &L.Default, NULL)) ||
-		FAILED(Device->CreateTexture(kSize, kSize, 1, 0, D3DFMT_A16B16G16R16, D3DPOOL_SYSTEMMEM, &L.Staging, NULL)) ||
-		FAILED(L.Default->GetSurfaceLevel(0, &L.DefaultSurface)) ||
-		FAILED(L.Staging->GetSurfaceLevel(0, &L.StagingSurface))) {
-		Logger::Log("Grass trail map: could not create the %s texture", Name);
-		if (L.StagingSurface) L.StagingSurface->Release();
-		if (L.DefaultSurface) L.DefaultSurface->Release();
-		if (L.Staging) L.Staging->Release();
-		if (L.Default) L.Default->Release();
-		L = LayerTextures();
-		return false;
+void ReleaseLayer(LayerTextures& L) {
+	for (int I = 0; I < kStagingCount; I++) {
+		if (L.StagingSurface[I]) L.StagingSurface[I]->Release();
+		if (L.Staging[I]) L.Staging[I]->Release();
 	}
-	return true;
+	if (L.DefaultSurface) L.DefaultSurface->Release();
+	if (L.Default) L.Default->Release();
+	L = LayerTextures();
+}
+
+bool CreateLayer(IDirect3DDevice9* Device, LayerTextures& L, const char* Name) {
+	bool Ok = SUCCEEDED(Device->CreateTexture(kSize, kSize, 1, 0, D3DFMT_A16B16G16R16, D3DPOOL_DEFAULT, &L.Default, NULL)) &&
+		SUCCEEDED(L.Default->GetSurfaceLevel(0, &L.DefaultSurface));
+	for (int I = 0; Ok && I < kStagingCount; I++) {
+		Ok = SUCCEEDED(Device->CreateTexture(kSize, kSize, 1, 0, D3DFMT_A16B16G16R16, D3DPOOL_SYSTEMMEM, &L.Staging[I], NULL)) &&
+			SUCCEEDED(L.Staging[I]->GetSurfaceLevel(0, &L.StagingSurface[I]));
+	}
+	if (!Ok) {
+		Logger::Log("Grass trail map: could not create the %s texture", Name);
+		ReleaseLayer(L);
+	}
+	return Ok;
 }
 
 bool SupportsVertexTextures(IDirect3DDevice9* Device) {
@@ -72,31 +84,41 @@ void ResetAll() {
 	LastStamps.clear();
 }
 
+void RefreshBounds() {
+	for (int Id = 0; Id < Layer_Count; Id++) {
+		LayerTextures& L = Layers[Id];
+		L.HasBounds = L.Enabled && TrailMap->LiveBounds((GrassTrailMap::LayerId)Id, L.Bounds);
+	}
+}
+
 void Upload(GrassTrailMap::LayerId Id) {
 	LayerTextures& L = Layers[Id];
 	if (!L.Enabled) return;
 	DirtyRects.clear();
 	TrailMap->CollectDirty(Id, DirtyRects);
+	if (DirtyRects.empty()) return;
+	IDirect3DSurface9* Staging = L.StagingSurface[L.NextStaging];
+	L.NextStaging = (L.NextStaging + 1) % kStagingCount;
 	const uint16_t* Data = TrailMap->Data(Id);
 	for (const GrassTrailMap::Rect& R : DirtyRects) {
 		RECT Region = { R.X0, R.Y0, R.X1, R.Y1 };
 		D3DLOCKED_RECT Locked;
-		if (FAILED(L.StagingSurface->LockRect(&Locked, &Region, 0))) continue;
+		if (FAILED(Staging->LockRect(&Locked, &Region, 0))) continue;
 		const size_t RowBytes = (size_t)(R.X1 - R.X0) * 4 * sizeof(uint16_t);
 		for (int Row = R.Y0; Row < R.Y1; Row++) {
 			memcpy((BYTE*)Locked.pBits + (size_t)(Row - R.Y0) * Locked.Pitch,
 				Data + ((size_t)Row * kSize + R.X0) * 4, RowBytes);
 		}
-		L.StagingSurface->UnlockRect();
+		Staging->UnlockRect();
 		POINT Dest = { R.X0, R.Y0 };
-		TheRenderManager->device->UpdateSurface(L.StagingSurface, &Region, L.DefaultSurface, &Dest);
+		TheRenderManager->device->UpdateSurface(Staging, &Region, L.DefaultSurface, &Dest);
 	}
 }
 
 bool Reaches(GrassTrailMap::LayerId Id, float MinX, float MinY, float MaxX, float MaxY) {
-	if (!Layers[Id].Enabled || !TrailMap) return false;
-	GrassTrailMap::WorldBounds B;
-	if (!TrailMap->LiveBounds(Id, B)) return false;
+	const LayerTextures& L = Layers[Id];
+	if (!L.Enabled || !L.HasBounds) return false;
+	const GrassTrailMap::WorldBounds& B = L.Bounds;
 	return MaxX >= B.MinX && MinX <= B.MaxX && MaxY >= B.MinY && MinY <= B.MaxY;
 }
 
@@ -116,6 +138,15 @@ void Create(IDirect3DDevice9* Device) {
 void Update(const Stamper* Stampers, int Count, float PlayerX, float PlayerY, const void* Space, Constants& Out) {
 	FrameProfiler::Scope ProfileScope(FrameProfiler::Buck_GrassTrail);
 	if (!TrailMap) return;
+
+	if (!Space) {
+		if (LastSpace) {
+			LastSpace = NULL;
+			ResetAll();
+			RefreshBounds();
+		}
+		return;
+	}
 
 	double NowMs = TheFrameRateManager->GetPerformance();
 	double Dt = LastMs < 0.0 ? 0.0 : (NowMs - LastMs) * 0.001;
@@ -145,15 +176,25 @@ void Update(const Stamper* Stampers, int Count, float PlayerX, float PlayerY, co
 			float Dx = S.X - It->second.X, Dy = S.Y - It->second.Y;
 			if (Dx * Dx + Dy * Dy < kStampMoveDist * kStampMoveDist && TrailClock - It->second.T < kStampMinInterval) continue;
 		}
-		LastStamps[S.RefId] = { S.X, S.Y, (float)TrailClock };
+		LastStamps[S.RefId] = { S.X, S.Y, TrailClock };
 		TrailMap->Stamp({ S.X, S.Y, Settings.CollisionRadius * S.RadiusScale, Settings.GroundcoverPressRadius * S.RadiusScale });
 	}
 
 	Upload(GrassTrailMap::Layer_Tall);
 	Upload(GrassTrailMap::Layer_Ground);
+	RefreshBounds();
 
 	Out.Window = D3DXVECTOR4(TrailMap->OriginX(), TrailMap->OriginY(), GrassTrailMap::kSize * GrassTrailMap::kCellSize, 1.0f / (GrassTrailMap::kSize * GrassTrailMap::kCellSize));
 	Out.Time = D3DXVECTOR4(TrailMap->NowN(), GrassTrailMap::kTimePeriod, 1.0f / TrailMap->Recovery(), GrassTrailMap::SpringOmega(TrailMap->Springiness()));
+}
+
+void Reset() {
+	if (!TrailMap) return;
+	ResetAll();
+	RefreshBounds();
+	LastMs = -1.0;
+	TrailClock = 0.0;
+	HavePlayerPos = false;
 }
 
 bool TallEnabled() { return Layers[GrassTrailMap::Layer_Tall].Enabled; }

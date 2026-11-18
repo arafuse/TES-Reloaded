@@ -17,7 +17,7 @@
 float2 GroundcoverPressOffset(float3 Pos, float3 PosDx, float3 PosDy, float2 UvDx, float2 UvDy, out float Darken, out float Above) {
     float strength = TESR_GroundcoverPressParams.y;
     float4 cell = tex2Dlod(TESR_GrassTrailGround, GrassTrailUV(Pos.xy));
-    float w = max(GrassTrailSpring(cell.a), 0.0) * GrassTrailEdgeFade(Pos.xy);
+    float w = GrassTrailGroundSpring(cell.a) * GrassTrailEdgeFade(Pos.xy);
     float2 pull = (cell.rg * 2.0 - 1.0) * GrassTrailPullScale * w;
     float press = cell.b * w;
     Darken = press * TESR_GroundcoverPressParams.z;

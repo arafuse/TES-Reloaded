@@ -56,7 +56,8 @@ public:
 	void BeginFrame(float PlayerX, float PlayerY, double Now, float Recovery, float Springiness);
 	/// Stamps a source into both layers.
 	void Stamp(const Source& S);
-	/// Appends merged dirty bands (texture cells) of a layer, then clears that layer's dirty state.
+	/// Appends dirty rectangles (texture cells) of a layer, then clears that layer's dirty state. Consecutive
+	/// rows merge only while their dirty columns overlap, so distant actors upload as separate rectangles.
 	void CollectDirty(LayerId Layer, std::vector<Rect>& Out);
 	/// Texel data of a layer, kSize*kSize*4 values, row-major, memory order R,G,B,A.
 	const uint16_t* Data(LayerId Layer) const;
@@ -74,7 +75,7 @@ public:
 	float Springiness() const;
 	/// Decodes the cell containing a world position; zeros outside the window.
 	CellValue Decode(LayerId Layer, float WorldX, float WorldY) const;
-	/// Peak * spring at a world position; the ground layer is clamped at 0; zero outside the window.
+	/// Peak * spring at a world position; the ground layer always uses the non-overshooting curve; zero outside the window.
 	float CurrentWeight(LayerId Layer, float WorldX, float WorldY) const;
 
 private:
@@ -82,7 +83,7 @@ private:
 		std::vector<uint16_t> Cells;
 		std::vector<char> Live;
 		std::vector<int> LiveMin, LiveMax;
-		std::vector<int> DirtyMin, DirtyMax;
+		std::vector<uint64_t> DirtyMask;
 	};
 
 	void ClearLayerAll(Layer& L);

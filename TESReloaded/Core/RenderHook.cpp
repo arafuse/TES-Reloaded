@@ -1216,14 +1216,16 @@ static void SetGrassCollisionConstants(NiGeometry* Geometry, void* GrassProperty
 	bool Groundcover = ModelHeight <= Settings.GroundcoverMaxHeight;
 	bool Pressed = Groundcover && Settings.GroundcoverPress;
 
+	bool TallWanted = !Groundcover && GrassTrail::TallEnabled();
+	bool GroundWanted = Pressed && GrassTrail::GroundEnabled();
 	GrassBatchBounds Bounds;
-	bool Known = GetGrassBatchBounds(GrassProperty, Bounds);
+	bool Known = (TallWanted || GroundWanted) && GetGrassBatchBounds(GrassProperty, Bounds);
 
-	bool TallReached = !Groundcover && GrassTrail::TallEnabled() && (!Known || GrassTrail::TallReaches(Bounds.MinX, Bounds.MinY, Bounds.MaxX, Bounds.MaxY));
+	bool TallReached = TallWanted && (!Known || GrassTrail::TallReaches(Bounds.MinX, Bounds.MinY, Bounds.MaxX, Bounds.MaxY));
 	Grass.CollisionParams.w = TallReached ? 1.0f : 0.0f;
 	TheRenderManager->device->SetVertexShaderConstantF(253, (const float*)&Grass.CollisionParams, 1);
 
-	bool GroundReached = Pressed && (!Known || GrassTrail::GroundReaches(Bounds.MinX, Bounds.MinY, Bounds.MaxX, Bounds.MaxY));
+	bool GroundReached = GroundWanted && (!Known || GrassTrail::GroundReaches(Bounds.MinX, Bounds.MinY, Bounds.MaxX, Bounds.MaxY));
 	// At 1 the press centre would squash to zero height.
 	Grass.GroundcoverPress.y = GroundReached ? min(Settings.GroundcoverPressStrength, 0.9f) : 0.0f;
 	Grass.GroundcoverPress.w = ModelHeight;

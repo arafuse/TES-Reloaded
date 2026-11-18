@@ -5,6 +5,7 @@
 #include <algorithm>
 #include "WindowedMode.h"
 #include "WeatherMode.h"
+#include "GrassTrail.h"
 
 #if defined(NEWVEGAS)
 #define kSaveSettings 0x0044F950
@@ -3973,6 +3974,7 @@ bool Settings::TrackLoadGame(BSFile* GameFile, char* FileName, UInt8 Arg3) {
 	if (r) {
 		TheShaderManager->InitializeConstants();
 		TheShadowManager->ResetIntervals();
+		GrassTrail::Reset();
 	}
 	return r;
 
