@@ -27,9 +27,12 @@ Because the time wraps every 256 s, a cell with time 0 would look like it was pr
 fall inside the spring window for `recovery` seconds after each wrap. Cleared cells keep their time
 and neutral vectors to avoid this.
 
-**Sweep.** Per row the map keeps the newest press time and a has-live-peaks flag. Each BeginFrame
-visits 8 rows (`kSweepRowsPerFrame`). A live row whose newest press is older than the recovery time
-has its peaks and vectors zeroed (neutral), and its time kept. A full pass takes about 64 frames.
+**Sweep.** Per row the map keeps a live flag and the live cell span. Each BeginFrame visits 8 rows per
+layer (`kSweepRowsPerFrame`). In a live row it checks every live cell's own age and neutralises each cell
+whose age is at least the recovery time (R,G = 32768, B = 0, A kept). It then re-derives the row's live
+flag and span from the surviving cells. A full pass takes about 64 frames. The check is per cell because
+a row can stay busy with a standing actor; a row-level rule would never sweep its old cells, and they
+would resurrect after the 256 s wrap.
 
 **Ring rule.** Stamping writes press time with zero peak into a margin of cells just beyond the
 radius (`kStampMargin` = 1.5 cells, cells with zero peak and no live peak). Bilinear filtering between
