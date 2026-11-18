@@ -10,6 +10,9 @@ float4 RustleParams : register(c66);
 float4 WindMatrices[16] : register(c67);
 float4 LeafBase[48] : register(c83);
 
+float4 TESR_GrassTrailWindow : register(c244);
+float4 TESR_GrassTrailTime : register(c245);
+sampler2D TESR_GrassTrailShrub : register(s0) = sampler_state { ADDRESSU = WRAP; ADDRESSV = WRAP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = NONE; };
 #include "../ExtraShaders/Includes/TreeCollision.hlsl"
 #include "ShadowMapTree.hlsl"
 

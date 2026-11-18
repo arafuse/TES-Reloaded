@@ -6,14 +6,15 @@
 // c240-c243 per tree. They are deliberately not TESR_ constants: for a batch's first tree the
 // per-tree hook runs before SetCT, which would overwrite a TESR_ value with a global one.
 // A zero live flag (c243.x) skips the whole block.
+//
+// The includer declares TESR_GrassTrailWindow (c244), TESR_GrassTrailTime (c245) and the vertex
+// sampler TESR_GrassTrailShrub (s0): TextureManager binds a TESR_ sampler only when it is declared
+// in the top-level shader file.
 
 float4 TreeCollisionRow0 : register(c240);		// row 0 of scale * rot, w = world x
 float4 TreeCollisionRow1 : register(c241);		// row 1 of scale * rot, w = world y
 float4 TreeCollisionRow2 : register(c242);		// row 2 of scale * rot
 float4 TreeCollisionParams : register(c243);	// x live, y push / scale^2, z flatten / scale^2, w = 1 / bend height
-float4 TESR_GrassTrailWindow : register(c244);
-float4 TESR_GrassTrailTime : register(c245);
-sampler2D TESR_GrassTrailShrub : register(s0) = sampler_state { ADDRESSU = WRAP; ADDRESSV = WRAP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = NONE; };
 
 #include "../Grass/Includes/GrassTrail.hlsl"
 

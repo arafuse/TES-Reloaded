@@ -23,6 +23,9 @@ float4 WindMatrices[16] : register(c18);
 row_major float4x4 TESR_ShadowCameraToLightTransform[2] : register(c100);
 row_major float4x4 TESR_InvViewProjectionTransform : register(c150);
 
+float4 TESR_GrassTrailWindow : register(c244);
+float4 TESR_GrassTrailTime : register(c245);
+sampler2D TESR_GrassTrailShrub : register(s0) = sampler_state { ADDRESSU = WRAP; ADDRESSV = WRAP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = NONE; };
 #include "Includes/TreeCollision.hlsl"
 
 //
