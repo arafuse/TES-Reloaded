@@ -121,6 +121,7 @@ copy "$(TargetDir)$(TargetName).pdb" "C:\Games\Steam\steamapps\common\Oblivion\D
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClInclude Include="..\TESReloaded\Core\Animation.h" />
+    <ClInclude Include="..\TESReloaded\Core\AnimationBlending.h" />
     <ClInclude Include="..\TESReloaded\Core\CameraMode.h" />
     <ClInclude Include="..\TESReloaded\Core\CommandManager.h" />
     <ClInclude Include="..\TESReloaded\Core\D3D9Device.h" />
@@ -145,6 +146,8 @@ copy "$(TargetDir)$(TargetName).pdb" "C:\Games\Steam\steamapps\common\Oblivion\D
     <ClInclude Include="..\TESReloaded\Core\Managers.h" />
     <ClInclude Include="..\TESReloaded\Core\MemoryManagement.h" />
     <ClInclude Include="..\TESReloaded\Core\RagdollCollision.h" />
+    <ClInclude Include="..\TESReloaded\Core\GrassTrail.h" />
+    <ClInclude Include="..\TESReloaded\Core\GrassTrailMap.h" />
     <ClInclude Include="..\TESReloaded\Core\TreeCollision.h" />
     <ClInclude Include="..\TESReloaded\Core\TreeCover.h" />
     <ClInclude Include="..\TESReloaded\Core\TreeCoverMath.h" />
@@ -159,6 +162,7 @@ copy "$(TargetDir)$(TargetName).pdb" "C:\Games\Steam\steamapps\common\Oblivion\D
     <ClInclude Include="..\TESReloaded\Core\WeatherSmoothing.h" />
     <ClInclude Include="..\TESReloaded\Core\MountedCombat.h" />
     <ClInclude Include="..\TESReloaded\Core\PluginVersion.h" />
+    <ClInclude Include="..\TESReloaded\Core\DrawStats.h" />
     <ClInclude Include="..\TESReloaded\Core\RenderHook.h" />
     <ClInclude Include="..\TESReloaded\Core\RenderManager.h" />
     <ClInclude Include="..\TESReloaded\Core\SampleProfiler.h" />
@@ -175,6 +179,7 @@ copy "$(TargetDir)$(TargetName).pdb" "C:\Games\Steam\steamapps\common\Oblivion\D
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\TESReloaded\Core\Animation.cpp" />
+    <ClCompile Include="..\TESReloaded\Core\AnimationBlending.cpp" />
     <ClCompile Include="..\TESReloaded\Core\CameraMode.cpp" />
     <ClCompile Include="..\TESReloaded\Core\CommandManager.cpp" />
     <ClCompile Include="..\TESReloaded\Core\D3D9Device.cpp" />
@@ -196,6 +201,8 @@ copy "$(TargetDir)$(TargetName).pdb" "C:\Games\Steam\steamapps\common\Oblivion\D
     <ClCompile Include="..\TESReloaded\Core\Managers.cpp" />
     <ClCompile Include="..\TESReloaded\Core\MemoryManagement.cpp" />
     <ClCompile Include="..\TESReloaded\Core\RagdollCollision.cpp" />
+    <ClCompile Include="..\TESReloaded\Core\GrassTrail.cpp" />
+    <ClCompile Include="..\TESReloaded\Core\GrassTrailMap.cpp" />
     <ClCompile Include="..\TESReloaded\Core\TreeCollision.cpp" />
     <ClCompile Include="..\TESReloaded\Core\TreeCover.cpp" />
     <ClCompile Include="..\TESReloaded\Core\GrassCover.cpp" />
@@ -207,6 +214,7 @@ copy "$(TargetDir)$(TargetName).pdb" "C:\Games\Steam\steamapps\common\Oblivion\D
     <ClCompile Include="..\TESReloaded\Core\WeatherSmoothing.cpp" />
     <ClCompile Include="..\TESReloaded\Core\MountedCombat.cpp" />
     <ClCompile Include="..\TESReloaded\Core\PluginVersion.cpp" />
+    <ClCompile Include="..\TESReloaded\Core\DrawStats.cpp" />
     <ClCompile Include="..\TESReloaded\Core\RenderHook.cpp" />
     <ClCompile Include="..\TESReloaded\Core\RenderManager.cpp" />
     <ClCompile Include="..\TESReloaded\Core\SampleProfiler.cpp" />

@@ -5,6 +5,7 @@
 #include <vector>
 #include "RenderHook.h"
 #include "WetActors.h"
+#include "GrassTrail.h"
 
 // --- Whole-frame plugin profiler (Develop.ProfileFrame) -----------------------
 // Definitions for FrameProfiler.h; see that header for the bucket model and for
@@ -14,6 +15,7 @@ namespace FrameProfiler {
 
 	bool         Active = false;
 	bool         ShaderDetail = false;
+	bool         DrawCensus = false;
 	unsigned int Counters[Cnt_COUNT] = {};
 
 	namespace {
@@ -22,7 +24,8 @@ namespace FrameProfiler {
 			"UpdateShaderStates", "SetSceneGraph", "UpdateConstants", "ShadowMaps",
 			"Effects:PreHdr", "Effects:PostHdr", "BeginScene", "ShaderHook",
 			"Hook:Engine", "Hook:SetCT", "Hook:Resolve", "Hook:MidScene", "Hook:ShellWater",
-			"Mid:Resolve", "Mid:Setup", "Mid:Sun", "Mid:Probe", "Mid:ProbeRead", "Mid:Point", "Mid:Restore"
+			"Mid:Resolve", "Mid:Setup", "Mid:Sun", "Mid:Probe", "Mid:ProbeRead", "Mid:Point", "Mid:Restore",
+			"GrassTrail"
 		};
 		const char* const GpuBucketNames[Gpu_COUNT] = {
 			"GPU:ShadowMaps", "GPU:ShadowExt", "GPU:ShadowPoint", "GPU:MainPass",
@@ -240,6 +243,17 @@ namespace FrameProfiler {
 			}
 		}
 
+		/// Mean cost of one QueryPerformanceCounter call, measured once.
+		double QpcCostUs() {
+			static double Cost = -1.0;
+			if (Cost >= 0.0) return Cost;
+			const int Calls = 20000;
+			LONGLONG Start = QpcNow();
+			for (int i = 0; i < Calls; i++) QpcNow();
+			Cost = (double)(QpcNow() - Start) * 1e6 / (double)gQpcFreq / Calls;
+			return Cost;
+		}
+
 		void Report() {
 			double inv    = 1.0 / gFrames;
 			double total  = gAccumMs[Buck_FrameTotal] * inv;
@@ -285,7 +299,13 @@ namespace FrameProfiler {
 				ReportShaders();
 			}
 
-			Logger::Log("[FrameProfile]   -- counters (per frame; ShaderHook carries ~0.15 us/draw of profiler overhead) --");
+			// Every CPU scope costs two QueryPerformanceCounter calls, charged to its enclosing buckets.
+			double scopes = 0.0;
+			for (int i = TopLevelBegin; i < Buck_COUNT; i++) scopes += gCalls[i] * inv;
+			double qpcUs = QpcCostUs();
+			Logger::Log("[FrameProfile]   profiler self-cost: %.1f scopes/frame x 2 QPC x %.4f us = %.4f ms/frame (census %s; its QPC pair per draw is extra)",
+				scopes, qpcUs, scopes * 2.0 * qpcUs / 1000.0, DrawCensus ? "ON" : "off");
+			Logger::Log("[FrameProfile]   -- counters (per frame) --");
 			for (int i = 0; i < Cnt_COUNT; i++)
 				Logger::Log("[FrameProfile]   %-18s %9.1f  (max %u)", CounterNames[i], gAccumCounters[i] * inv, gMaxCounters[i]);
 		}
@@ -371,6 +391,7 @@ namespace FrameProfiler {
 			s.SegClosed = false;
 		}
 		ShaderDetail = false;
+		DrawCensus = TheSettingManager->SettingsMain.Develop.ProfileDrawCensus != 0;
 		if (TheSettingManager->SettingsMain.Develop.ProfileFrame >= 2 && gActiveSlot >= 0) {
 			GpuEnsureSegQueries(Device);
 			ShaderDetail = gSegAvailable;
@@ -403,8 +424,10 @@ namespace FrameProfiler {
 			gAccumCounters[i] += Counters[i];
 			if (Counters[i] > gMaxCounters[i]) gMaxCounters[i] = Counters[i];
 		}
+		DrawStats::FrameEnd();
 		if (++gFrames < ReportFrames) return;
 		Report();
+		DrawStats::Report(gFrames, gQpcFreq);
 		ResetWindow();
 	}
 }
@@ -1152,15 +1175,7 @@ static float GetGrassModelHeight(NiGeometry* Geometry) {
 
 }
 
-// Grass VS c255.zw values at or above this mark an actor source carrying its own radius; below it is
-// a footprint's recovery weight, within about [-0.3, 1]. Must match GrassCollisionActorTag in
-// GrassCollision.hlsl.
-static const float kGrassCollisionActorTag = 2.0f;
-
-// Sources one grass batch can take; the grass vertex and pixel shaders each have room for three.
-static const int kGrassBatchSources = 3;
-
-/// The XY footprint of a grass batch's instances, relative to the geometry.
+/// The XY footprint of a grass batch's instances in world coordinates (grass geometry has an identity transform).
 struct GrassBatchBounds {
 	float MinX, MinY, MaxX, MaxY;
 };
@@ -1190,132 +1205,31 @@ static bool GetGrassBatchBounds(void* GrassProperty, GrassBatchBounds& Bounds) {
 
 }
 
-// True if a circle of the given radius around (x, y) overlaps the footprint; everything reaches a
-// batch whose footprint is unknown.
-static bool GrassSourceReaches(const GrassBatchBounds* Bounds, float x, float y, float Radius) {
-
-	if (!Bounds) return true;
-	float Dx = max(max(Bounds->MinX - x, 0.0f), x - Bounds->MaxX);
-	float Dy = max(max(Bounds->MinY - y, 0.0f), y - Bounds->MaxY);
-	return Dx * Dx + Dy * Dy < Radius * Radius;
-
-}
-
-// Picks this tall-grass batch's collision sources from the frame's list and packs them into
-// ShaderConst (VS c253-c255). Slot 0 has an implicit weight of 1 and its radius in c253.x, which
-// footprints share, so the player holds slot 0 whenever it or one of its footprints reaches the
-// batch; otherwise the nearest reaching actor does.
-static void PackGrassCollisionSources(const GrassBatchBounds* Bounds, float cx, float cy) {
-
-	ShaderConstants::GrassStruct& Grass = TheShaderManager->ShaderConst.Grass;
-	const ShaderManager::GrassSource* Sources = TheShaderManager->GrassCollisionSources;
-	int SourceCount = TheShaderManager->GrassCollisionSourceCount;
-	float Radius = TheSettingManager->SettingsGrass.CollisionRadius;
-
-	int Actors[kGrassBatchSources], ActorCount = 0;
-	int Footprints[kGrassBatchSources], FootprintCount = 0;
-	bool PlayerReaches = false;
-	for (int i = 0; i < SourceCount; i++) {
-		const ShaderManager::GrassSource& Source = Sources[i];
-		if (!GrassSourceReaches(Bounds, Source.x - cx, Source.y - cy, Radius * Source.radiusScale)) continue;
-		if (Source.kind == ShaderManager::GrassSource_Player)
-			PlayerReaches = true;
-		else if (Source.kind == ShaderManager::GrassSource_Actor && ActorCount < kGrassBatchSources)
-			Actors[ActorCount++] = i;
-		else if (Source.kind == ShaderManager::GrassSource_Footprint && Source.weight != 0.0f && FootprintCount < kGrassBatchSources)
-			Footprints[FootprintCount++] = i;
-	}
-
-	int Slots[kGrassBatchSources], SlotCount = 0;
-	if (PlayerReaches || FootprintCount) {
-		Slots[SlotCount++] = 0;
-		for (int i = 0; i < ActorCount && SlotCount < kGrassBatchSources; i++) Slots[SlotCount++] = Actors[i];
-		for (int i = 0; i < FootprintCount && SlotCount < kGrassBatchSources; i++) Slots[SlotCount++] = Footprints[i];
-	}
-	else {
-		for (int i = 0; i < ActorCount; i++) Slots[SlotCount++] = Actors[i];
-	}
-
-	float XY[kGrassBatchSources * 2] = {};
-	float SlotData[kGrassBatchSources - 1] = {};
-	for (int s = 0; s < SlotCount; s++) {
-		const ShaderManager::GrassSource& Source = Sources[Slots[s]];
-		XY[s * 2] = Source.x - cx;
-		XY[s * 2 + 1] = Source.y - cy;
-		if (s == 0)
-			Grass.CollisionParams.x = Radius * Source.radiusScale;
-		else
-			SlotData[s - 1] = Source.kind == ShaderManager::GrassSource_Footprint ? Source.weight : kGrassCollisionActorTag + Radius * Source.radiusScale;
-	}
-	Grass.CollisionParams.w = (float)SlotCount;
-	Grass.CollisionXY[0] = D3DXVECTOR4(XY[0], XY[1], XY[2], XY[3]);
-	Grass.CollisionXY[1] = D3DXVECTOR4(XY[4], XY[5], SlotData[0], SlotData[1]);
-
-}
-
-// Picks this groundcover batch's press sources, the live player and actors only, and packs them into
-// ShaderConst (PS c32-c34). Unused sources sit far outside any batch, so the pixel shader needs no
-// source count.
-static void PackGroundcoverPressSources(const GrassBatchBounds* Bounds, float cx, float cy, bool Pressed) {
-
-	ShaderConstants::GrassStruct& Grass = TheShaderManager->ShaderConst.Grass;
-	const ShaderManager::GrassSource* Sources = TheShaderManager->GrassCollisionSources;
-	int SourceCount = TheShaderManager->GrassCollisionSourceCount;
-	float PressRadius = TheSettingManager->SettingsGrass.GroundcoverPressRadius;
-
-	float X[kGrassBatchSources], Y[kGrassBatchSources], Radii[kGrassBatchSources];
-	for (int s = 0; s < kGrassBatchSources; s++) {
-		X[s] = Y[s] = 1.0e7f;
-		Radii[s] = PressRadius;
-	}
-	int SlotCount = 0;
-	for (int i = 0; Pressed && i < SourceCount && SlotCount < kGrassBatchSources; i++) {
-		const ShaderManager::GrassSource& Source = Sources[i];
-		if (Source.kind == ShaderManager::GrassSource_Footprint) continue;
-		float Radius = PressRadius * Source.radiusScale;
-		if (!GrassSourceReaches(Bounds, Source.x - cx, Source.y - cy, Radius)) continue;
-		X[SlotCount] = Source.x - cx;
-		Y[SlotCount] = Source.y - cy;
-		Radii[SlotCount] = Radius;
-		SlotCount++;
-	}
-	Grass.GroundcoverPress[0].x = Radii[0];
-	Grass.GroundcoverPress[1] = D3DXVECTOR4(X[0], Y[0], X[1], Y[1]);
-	Grass.GroundcoverPress[2] = D3DXVECTOR4(X[2], Y[2], Radii[1], Radii[2]);
-
-}
-
-// Uploads the per-geometry grass constants: this batch's collision sources (VS c253-c255) and its
-// groundcover press (PS c32-c34). Groundcover takes no collision sources and tall grass no press.
-// Each value is also stored in ShaderConst, so a later SetCT re-uploads the same thing.
+// Sets the per-geometry grass constants: tall grass's trail-bend flag and strengths (VS c253) and
+// groundcover's press strength and model height (PS c32). A batch whose trail footprint is unknown
+// counts as reached. Each value is also stored in ShaderConst, so a later SetCT re-uploads the same thing.
 static void SetGrassCollisionConstants(NiGeometry* Geometry, void* GrassProperty) {
 
 	ShaderConstants::GrassStruct& Grass = TheShaderManager->ShaderConst.Grass;
 	const SettingsGrassStruct& Settings = TheSettingManager->SettingsGrass;
-	float cx = Geometry->m_worldTransform.pos.x;
-	float cy = Geometry->m_worldTransform.pos.y;
 	float ModelHeight = GetGrassModelHeight(Geometry);
 	bool Groundcover = ModelHeight <= Settings.GroundcoverMaxHeight;
 	bool Pressed = Groundcover && Settings.GroundcoverPress;
 
+	bool TallWanted = !Groundcover && GrassTrail::TallEnabled();
+	bool GroundWanted = Pressed && GrassTrail::GroundEnabled();
 	GrassBatchBounds Bounds;
-	const GrassBatchBounds* BoundsPtr = NULL;
-	if (TheShaderManager->GrassCollisionSourceCount > 0 && GetGrassBatchBounds(GrassProperty, Bounds)) BoundsPtr = &Bounds;
+	bool Known = (TallWanted || GroundWanted) && GetGrassBatchBounds(GrassProperty, Bounds);
 
-	if (Groundcover) {
-		Grass.CollisionParams.w = 0.0f;
-		memset(Grass.CollisionXY, 0, sizeof(Grass.CollisionXY));
-	}
-	else {
-		PackGrassCollisionSources(BoundsPtr, cx, cy);
-	}
-	TheRenderManager->device->SetVertexShaderConstantF(253, (const float*)&Grass.CollisionParams, 3);
+	bool TallReached = TallWanted && (!Known || GrassTrail::TallReaches(Bounds.MinX, Bounds.MinY, Bounds.MaxX, Bounds.MaxY));
+	Grass.CollisionParams.w = TallReached ? 1.0f : 0.0f;
+	TheRenderManager->device->SetVertexShaderConstantF(253, (const float*)&Grass.CollisionParams, 1);
 
+	bool GroundReached = GroundWanted && (!Known || GrassTrail::GroundReaches(Bounds.MinX, Bounds.MinY, Bounds.MaxX, Bounds.MaxY));
 	// At 1 the press centre would squash to zero height.
-	Grass.GroundcoverPress[0].y = Pressed ? min(Settings.GroundcoverPressStrength, 0.9f) : 0.0f;
-	Grass.GroundcoverPress[0].w = ModelHeight;
-	PackGroundcoverPressSources(BoundsPtr, cx, cy, Pressed);
-	TheRenderManager->device->SetPixelShaderConstantF(32, (const float*)Grass.GroundcoverPress, 3);
+	Grass.GroundcoverPress.y = GroundReached ? min(Settings.GroundcoverPressStrength, 0.9f) : 0.0f;
+	Grass.GroundcoverPress.w = ModelHeight;
+	TheRenderManager->device->SetPixelShaderConstantF(32, (const float*)&Grass.GroundcoverPress, 1);
 
 }
 
@@ -1555,10 +1469,13 @@ UInt32 RenderHook::TrackSetupShaderPrograms(NiGeometry* Geometry, NiSkinInstance
 		}
 	}
 
+	int CensusSlot = FrameProfiler::Active && FrameProfiler::DrawCensus ? DrawStats::Record(this, Geometry, SkinInstance, PropertyState, Pass, VertexShader, PixelShader) : -1;
 	UInt32 result;
 	{
 		FrameProfiler::Scope EngineScope(FrameProfiler::Buck_HookEngine);
+		LONGLONG EngineStart = CensusSlot >= 0 ? FrameProfiler::QpcNow() : 0;
 		result = (this->*SetupShaderPrograms)(Geometry, SkinInstance, SkinPartition, GeometryBufferData, PropertyState, EffectState, WorldTransform, WorldBound);
+		if (CensusSlot >= 0) DrawStats::AddEngineTicks(CensusSlot, FrameProfiler::QpcNow() - EngineStart);
 	}
 
 	return result;

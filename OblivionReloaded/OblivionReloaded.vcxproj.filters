@@ -20,6 +20,9 @@
     <ClInclude Include="..\TESReloaded\Core\Animation.h">
       <Filter>Core</Filter>
     </ClInclude>
+    <ClInclude Include="..\TESReloaded\Core\AnimationBlending.h">
+      <Filter>Core</Filter>
+    </ClInclude>
     <ClInclude Include="..\TESReloaded\Core\CameraMode.h">
       <Filter>Core</Filter>
     </ClInclude>
@@ -63,6 +66,12 @@
       <Filter>Core</Filter>
     </ClInclude>
     <ClInclude Include="..\TESReloaded\Core\RagdollCollision.h">
+      <Filter>Core</Filter>
+    </ClInclude>
+    <ClInclude Include="..\TESReloaded\Core\GrassTrail.h">
+      <Filter>Core</Filter>
+    </ClInclude>
+    <ClInclude Include="..\TESReloaded\Core\GrassTrailMap.h">
       <Filter>Core</Filter>
     </ClInclude>
     <ClInclude Include="..\TESReloaded\Core\TreeCollision.h">
@@ -175,6 +184,9 @@
     <ClCompile Include="..\TESReloaded\Core\Animation.cpp">
       <Filter>Core</Filter>
     </ClCompile>
+    <ClCompile Include="..\TESReloaded\Core\AnimationBlending.cpp">
+      <Filter>Core</Filter>
+    </ClCompile>
     <ClCompile Include="..\TESReloaded\Core\CameraMode.cpp">
       <Filter>Core</Filter>
     </ClCompile>
@@ -218,6 +230,12 @@
       <Filter>Core</Filter>
     </ClCompile>
     <ClCompile Include="..\TESReloaded\Core\RagdollCollision.cpp">
+      <Filter>Core</Filter>
+    </ClCompile>
+    <ClCompile Include="..\TESReloaded\Core\GrassTrail.cpp">
+      <Filter>Core</Filter>
+    </ClCompile>
+    <ClCompile Include="..\TESReloaded\Core\GrassTrailMap.cpp">
       <Filter>Core</Filter>
     </ClCompile>
     <ClCompile Include="..\TESReloaded\Core\TreeCollision.cpp">

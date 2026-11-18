@@ -3,11 +3,12 @@
 // Groundcover is a few large leaf-textured cards, too coarse to bend around a foot, so actors press
 // it instead of moving it: inside a foot-sized radius the diffuse texture is warped so the leaves
 // squash down toward the root and shrink toward the foot, and the area darkens. The includer
-// declares the TESR_GroundcoverPress* constants (c32-c34); the strength in
-// TESR_GroundcoverPressParams.y is zero for every draw that is not groundcover. Each source has its
-// own radius (c32.x, c34.z, c34.w), scaled by the size of the actor behind it.
+// declares TESR_GroundcoverPressParams (c32), TESR_GrassTrailWindow (c33), TESR_GrassTrailTime (c34)
+// and the ground trail sampler TESR_GrassTrailGround (s4); the strength in
+// TESR_GroundcoverPressParams.y is zero for every draw that is not groundcover. The press, its pull
+// and its recovery come from one fetch of the grass trail map (see GrassTrail.hlsl).
 
-// Pos          : batch-relative XY (xy) and model-space height (z) of the pixel
+// Pos          : world XY (xy) and model-space height (z) of the pixel
 // PosDx, PosDy : screen-space derivatives of Pos
 // UvDx, UvDy   : screen-space derivatives of the diffuse UV
 // Darken       : returns the fraction of light to remove
@@ -15,23 +16,10 @@
 // Returns the offset to add to the diffuse UV.
 float2 GroundcoverPressOffset(float3 Pos, float3 PosDx, float3 PosDy, float2 UvDx, float2 UvDy, out float Darken, out float Above) {
     float strength = TESR_GroundcoverPressParams.y;
-    float2 sources[3] = {
-        TESR_GroundcoverPressXY0.xy, TESR_GroundcoverPressXY0.zw,
-        TESR_GroundcoverPressXY1.xy
-    };
-    float radii[3] = { TESR_GroundcoverPressParams.x, TESR_GroundcoverPressXY1.z, TESR_GroundcoverPressXY1.w };
-
-    // Unused sources are parked far away by the CPU, so all three are always evaluated.
-    float2 pull = 0.0;
-    float press = 0.0;
-    [unroll]
-    for (int i = 0; i < 3; i++) {
-        float2 fromSource = Pos.xy - sources[i];
-        float d = length(fromSource);
-        float spread = saturate(1.0 - d / radii[i]);
-        pull += fromSource * spread * spread;
-        press = max(press, smoothstep(radii[i], radii[i] * 0.35, d));
-    }
+    float4 cell = tex2Dlod(TESR_GrassTrailGround, GrassTrailUV(Pos.xy));
+    float w = GrassTrailGroundSpring(cell.a) * GrassTrailEdgeFade(Pos.xy);
+    float2 pull = (cell.rg * 2.0 - 1.0) * GrassTrailPullScale * w;
+    float press = cell.b * w;
     Darken = press * TESR_GroundcoverPressParams.z;
 
     // Sampling farther from the foot and higher up the card shrinks the leaves into a dent and squashes

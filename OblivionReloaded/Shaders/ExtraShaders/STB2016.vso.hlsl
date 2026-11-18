@@ -7,6 +7,9 @@ float4 EyePosition : register(c25);
 row_major float4x4 ModelViewProj : register(c0);
 float4 WindMatrices[16] : register(c38);
 
+float4 TESR_GrassTrailWindow : register(c244);
+float4 TESR_GrassTrailTime : register(c245);
+sampler2D TESR_GrassTrailShrub : register(s0) = sampler_state { ADDRESSU = WRAP; ADDRESSV = WRAP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = NONE; };
 #include "Includes/TreeCollision.hlsl"
 
 struct VS_INPUT {

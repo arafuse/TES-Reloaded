@@ -12,6 +12,7 @@
 #include "KeyboardManager.h"
 #include "ShadowManager.h"
 #include "FrameProfiler.h"
+#include "DrawStats.h"
 #include "SampleProfiler.h"
 
 extern SettingManager*		TheSettingManager;

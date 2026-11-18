@@ -5,6 +5,7 @@
 #include <algorithm>
 #include "WindowedMode.h"
 #include "WeatherMode.h"
+#include "GrassTrail.h"
 
 #if defined(NEWVEGAS)
 #define kSaveSettings 0x0044F950
@@ -422,6 +423,14 @@ SettingManager::SettingManager() {
 	GetPrivateProfileStringA("Dodge", "DoubleTapTime", "0.5", value, SettingStringBuffer, Filename);
 	SettingsMain.Dodge.DoubleTapTime = atof(value);
 
+	SettingsMain.AnimationBlending.Enabled = GetPrivateProfileIntA("AnimationBlending", "Enabled", 1, Filename);
+	GetPrivateProfileStringA("AnimationBlending", "MinBlendTime", "0.25", value, SettingStringBuffer, Filename);
+	SettingsMain.AnimationBlending.MinBlendTime = atof(value);
+	GetPrivateProfileStringA("AnimationBlending", "ActionMinBlendTime", "0.1", value, SettingStringBuffer, Filename);
+	SettingsMain.AnimationBlending.ActionMinBlendTime = atof(value);
+	GetPrivateProfileStringA("AnimationBlending", "StopBlendTime", "0.2", value, SettingStringBuffer, Filename);
+	SettingsMain.AnimationBlending.StopBlendTime = atof(value);
+
 	SettingsMain.FlyCam.Enabled = GetPrivateProfileIntA("FlyCam", "Enabled", 0, Filename);
 	GetPrivateProfileStringA("FlyCam", "ScrollMultiplier", "5.0", value, SettingStringBuffer, Filename);
 	SettingsMain.FlyCam.ScrollMultiplier = atof(value);
@@ -437,11 +446,13 @@ SettingManager::SettingManager() {
 	SettingsMain.Develop.ProfileShadows = GetPrivateProfileIntA("Develop", "ProfileShadows", 0, Filename);
 	SettingsMain.Develop.ProfileEffects = GetPrivateProfileIntA("Develop", "ProfileEffects", 0, Filename);
 	SettingsMain.Develop.ProfileFrame = GetPrivateProfileIntA("Develop", "ProfileFrame", 0, Filename);
+	SettingsMain.Develop.ProfileDrawCensus = GetPrivateProfileIntA("Develop", "ProfileDrawCensus", 0, Filename);
 	SettingsMain.Develop.ProfileSampler = GetPrivateProfileIntA("Develop", "ProfileSampler", 0, Filename);
 	SettingsMain.Develop.ProfileSamplerHz = GetPrivateProfileIntA("Develop", "ProfileSamplerHz", 1000, Filename);
 	SettingsMain.Develop.NearShellDebug = GetPrivateProfileIntA("Develop", "NearShellDebug", 0, Filename);
 	SettingsMain.Develop.LogSunShadowStealth = GetPrivateProfileIntA("Develop", "LogSunShadowStealth", 0, Filename);
 	SettingsMain.Develop.LogWetActors = GetPrivateProfileIntA("Develop", "LogWetActors", 0, Filename);
+	SettingsMain.Develop.LogAnimationBlending = GetPrivateProfileIntA("Develop", "LogAnimationBlending", 0, Filename);
 
 	GameLoading = false;
 
@@ -593,7 +604,6 @@ void SettingManager::LoadSettings() {
 	SettingsGrass.CollisionRecoveryTime = atof(value);
 	GetPrivateProfileStringA("Default", "CollisionSpringiness", "0.5", value, SettingStringBuffer, Filename);
 	SettingsGrass.CollisionSpringiness = atof(value);
-	SettingsGrass.CollisionTrailSlots = GetPrivateProfileIntA("Default", "CollisionTrailSlots", 2, Filename);
 	SettingsGrass.CollisionScaleByActorSize = GetPrivateProfileIntA("Default", "CollisionScaleByActorSize", 1, Filename);
 	GetPrivateProfileStringA("Default", "CollisionReferenceRadius", "75.0", value, SettingStringBuffer, Filename);
 	SettingsGrass.CollisionReferenceRadius = atof(value);
@@ -1652,7 +1662,6 @@ void SettingManager::SaveSettings(const char* Item, const char* Definition, cons
 			WritePrivateProfileStringA("Default", "CollisionFlattenStrength", ToString(SettingsGrass.CollisionFlattenStrength).c_str(), Filename);
 			WritePrivateProfileStringA("Default", "CollisionRecoveryTime", ToString(SettingsGrass.CollisionRecoveryTime).c_str(), Filename);
 			WritePrivateProfileStringA("Default", "CollisionSpringiness", ToString(SettingsGrass.CollisionSpringiness).c_str(), Filename);
-			WritePrivateProfileStringA("Default", "CollisionTrailSlots", ToString(SettingsGrass.CollisionTrailSlots).c_str(), Filename);
 			WritePrivateProfileStringA("Default", "CollisionScaleByActorSize", ToString(SettingsGrass.CollisionScaleByActorSize).c_str(), Filename);
 			WritePrivateProfileStringA("Default", "CollisionReferenceRadius", ToString(SettingsGrass.CollisionReferenceRadius).c_str(), Filename);
 			WritePrivateProfileStringA("Default", "GroundcoverMaxHeight", ToString(SettingsGrass.GroundcoverMaxHeight).c_str(), Filename);
@@ -2368,7 +2377,6 @@ SettingsList SettingManager::GetMenuSettings(const char* Item, const char* Defin
 			Settings["CollisionFlattenStrength"] = SettingsGrass.CollisionFlattenStrength;
 			Settings["CollisionRecoveryTime"] = SettingsGrass.CollisionRecoveryTime;
 			Settings["CollisionSpringiness"] = SettingsGrass.CollisionSpringiness;
-			Settings["CollisionTrailSlots"] = SettingsGrass.CollisionTrailSlots;
 			Settings["CollisionScaleByActorSize"] = SettingsGrass.CollisionScaleByActorSize;
 			Settings["CollisionReferenceRadius"] = SettingsGrass.CollisionReferenceRadius;
 			Settings["GroundcoverMaxHeight"] = SettingsGrass.GroundcoverMaxHeight;
@@ -3149,8 +3157,6 @@ void SettingManager::SetMenuSetting(const char* Item, const char* Definition, co
 				SettingsGrass.CollisionRecoveryTime = Value;
 			else if (!strcmp(Setting, "CollisionSpringiness"))
 				SettingsGrass.CollisionSpringiness = Value;
-			else if (!strcmp(Setting, "CollisionTrailSlots"))
-				SettingsGrass.CollisionTrailSlots = Value;
 			else if (!strcmp(Setting, "CollisionScaleByActorSize"))
 				SettingsGrass.CollisionScaleByActorSize = Value;
 			else if (!strcmp(Setting, "CollisionReferenceRadius"))
@@ -3968,6 +3974,7 @@ bool Settings::TrackLoadGame(BSFile* GameFile, char* FileName, UInt8 Arg3) {
 	if (r) {
 		TheShaderManager->InitializeConstants();
 		TheShadowManager->ResetIntervals();
+		GrassTrail::Reset();
 	}
 	return r;
 

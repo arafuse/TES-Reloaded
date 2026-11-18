@@ -270,6 +270,14 @@ struct SettingsMainStruct {
 		UInt8	AcrobaticsLevel;
 		float	DoubleTapTime;
 	};
+
+	/// Minimum actor animation transition times in seconds (AnimationBlending.h); 0 leaves a kind to the engine.
+	struct AnimationBlendingStruct {
+		bool	Enabled;
+		float	MinBlendTime;		// starting any non-action group
+		float	ActionMinBlendTime;	// starting attacks, blocks, recoils, casts, dodges, jumps, equips, death
+		float	StopBlendTime;		// ease out when a single slot is stopped
+	};
 	
 	struct FlyCamStruct {
 		bool	Enabled;
@@ -287,11 +295,13 @@ struct SettingsMainStruct {
 		UInt8	ProfileShadows;
 		UInt8	ProfileEffects;
 		UInt8	ProfileFrame;
+		UInt8	ProfileDrawCensus;	// adds the DrawStats census to the ProfileFrame report
 		UInt8	ProfileSampler;		// key code: toggles the main-thread sampling profiler
 		int		ProfileSamplerHz;
 		UInt8	NearShellDebug;
 		UInt8	LogSunShadowStealth;	// logs the player sun shadow probe about once a second
 		UInt8	LogWetActors;			// logs player and nearest-NPC wetness about once a second
+		bool	LogAnimationBlending;	// logs every animation transition AnimationBlending lengthens
 	};
 
 	MainStruct					Main;
@@ -308,6 +318,7 @@ struct SettingsMainStruct {
 	PurgerStruct				Purger;
 	GravityStruct				Gravity;
 	DodgeStruct					Dodge;
+	AnimationBlendingStruct		AnimationBlending;
 	FlyCamStruct				FlyCam;
 	DevelopStruct				Develop;
 };
@@ -438,7 +449,6 @@ struct SettingsGrassStruct {
 	float CollisionFlattenStrength;
 	float CollisionRecoveryTime;
 	float CollisionSpringiness;
-	int CollisionTrailSlots;
 	bool CollisionScaleByActorSize;		///< Scale CollisionRadius, GroundcoverPressRadius and TreeCollisionRadius by each actor's first-seen bound radius
 	float CollisionReferenceRadius;		///< Actor bound radius at which the collision radii apply unscaled
 	float GroundcoverMaxHeight;			///< Grass models at or below this model-space height are groundcover: pressed, never bent

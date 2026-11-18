@@ -24,8 +24,9 @@ float4 TESR_GrassScale : register(c248);
 float4 TESR_PointLightPosition[2]: register(c16);
 float4 TESR_PointLightColor[2]: register(c18);
 float4 TESR_GrassCollisionParams : register(c253);
-float4 TESR_GrassCollisionXY0 : register(c254);
-float4 TESR_GrassCollisionXY1 : register(c255);
+float4 TESR_GrassTrailWindow : register(c249);
+float4 TESR_GrassTrailTime : register(c250);
+sampler2D TESR_GrassTrailTall : register(s0) = sampler_state { ADDRESSU = WRAP; ADDRESSV = WRAP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = NONE; };
 
 //
 //
@@ -66,7 +67,7 @@ struct VS_INPUT {
 struct VS_OUTPUT {
     float4 color_0 : COLOR0;
     float4 position : POSITION;
-    float4 texcoord_0 : TEXCOORD0;	// zw = batch-relative XY for the groundcover press
+    float4 texcoord_0 : TEXCOORD0;	// zw = world XY for the groundcover press
     float4 texcoord_1 : TEXCOORD1;
     float4 texcoord_2 : TEXCOORD2;
     float3 texcoord_3 : TEXCOORD3;
@@ -76,6 +77,7 @@ struct VS_OUTPUT {
 
 // Code:
 
+#include "Includes/GrassTrail.hlsl"
 #include "Includes/GrassCollision.hlsl"
 #include "Includes/GrassWind.hlsl"
 
