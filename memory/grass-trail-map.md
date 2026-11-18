@@ -31,6 +31,12 @@ Because the time wraps every 256 s, a cell with time 0 would look like it was pr
 fall inside the spring window for `recovery` seconds after each wrap. Cleared cells keep their time
 and neutral vectors to avoid this.
 
+**Hold.** A press holds its full peak for `kStampHold` (0.1 s, mirrored as `GrassTrailHold` in
+`GrassTrail.hlsl`) before the spring starts; the sweep expires a cell at `recovery + hold`. Without it a
+standing actor's 33 ms restamp snapped a ~5% recovered bend back to full every other frame, which read
+as wind and collision fighting (fixed 2026-11-18). A `static_assert` in `GrassTrail.cpp` ties the hold to
+the restamp interval; keep it if either changes.
+
 **Sweep.** Per row the map keeps a live flag and the live cell span. Each BeginFrame visits 8 rows per
 layer (`kSweepRowsPerFrame`). In a live row it checks every live cell's own age and neutralises each cell
 whose age is at least the recovery time (R,G = 32768, B = 0, A kept). It then re-derives the row's live
