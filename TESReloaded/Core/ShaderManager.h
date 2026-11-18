@@ -538,17 +538,16 @@ public:
 	int						InitFrameTarget;
 	struct					EffectQuad { float x, y, z; float u, v; };
 	/// What is behind a grass collision source.
-	enum					GrassSourceKind { GrassSource_Player, GrassSource_Footprint, GrassSource_Actor };
-	/// A tree collision source: world XY, the factor the configured collision radius is multiplied by for
-	/// the actor behind it (1 when actor scaling is off), and its strength. A footprint's strength is
-	/// its spring recovery weight, which dips negative past upright; live actors are always 1.
+	enum					GrassSourceKind { GrassSource_Player, GrassSource_Actor };
+	/// A grass collision source: world XY, the factor the configured collision radius is multiplied by for
+	/// the actor behind it (1 when actor scaling is off), and its strength (always 1).
 	struct					GrassSource { float x, y, radiusScale, weight; GrassSourceKind kind; };
-	/// Most grass collision sources tracked per frame: the player, its footprints and visible actors.
+	/// Most grass collision sources tracked per frame: the player and visible actors.
 	static const int		GrassMaxSources = 20;
 	ShaderConstants			ShaderConst;
 	/// This frame's collision sources in priority order: the player first, then visible actors
-	/// nearest the player first, then the player's footprints newest first. Only TreeCollision, GrassCover
-	/// and TreeCover read them; the grass shaders read the trail map instead.
+	/// nearest the player first. Only GrassCover and TreeCover read them; the grass and shrub shaders
+	/// read the trail map instead.
 	GrassSource				GrassCollisionSources[GrassMaxSources];
 	int						GrassCollisionSourceCount;
 	CustomConstants			CustomConst;

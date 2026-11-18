@@ -1950,8 +1950,9 @@ static void ApplyGrassDensitySettings(int density) {
 	}
 }
 
-// Nearby on-screen actors tracked as tree collision sources.
+// Nearby on-screen actors tracked as grass collision sources (read by GrassCover and TreeCover).
 const int kGrassMaxNPCs = 16;
+static_assert(1 + kGrassMaxNPCs <= ShaderManager::GrassMaxSources, "grass collision source list too small");
 
 // Actors stamped into the grass trail map besides the player.
 const int kGrassMaxTrailActors = 64;
@@ -2106,101 +2107,6 @@ static void CollectActorsFromObjectList(TList<TESObjectREFR>::Entry* entry, TESO
 	}
 }
 
-// A grass footprint: a world position where the player last crushed the grass. Because the shader
-// can only be handed a few point sources, the player's wake is approximated by a small number of
-// these. A stamp is planted once the player has walked clear of the previous one and then ages in
-// place, so its recovery is driven by wall-clock time instead of by how fast the player ran away.
-struct GrassStamp {
-	float x, y;
-	float age;		// seconds since planted; negative marks the slot free
-};
-
-const int   kGrassStampCount    = 2;
-static_assert(1 + kGrassMaxNPCs + kGrassStampCount <= ShaderManager::GrassMaxSources, "grass collision source list too small");
-const float kGrassStampSpacing  = 0.75f;	// fraction of the collision radius between stamps
-const float kGrassMaxDeltaTime  = 0.1f;		// clamp for a hitched or paused frame
-const float kGrassTeleportDist  = 1024.0f;	// a jump this large is a load door or fast travel
-
-GrassStamp		GrassStamps[kGrassStampCount] = { { 0.0f, 0.0f, -1.0f }, { 0.0f, 0.0f, -1.0f } };
-double			GrassStampLastMs = -1.0;
-const void*		GrassStampLastSpace = NULL;
-float			GrassStampLastPlayerX = 0.0f;
-float			GrassStampLastPlayerY = 0.0f;
-bool			GrassStampHavePlayerPos = false;
-
-static void ResetGrassStamps() {
-	for (int i = 0; i < kGrassStampCount; i++) GrassStamps[i].age = -1.0f;
-	GrassStampHavePlayerPos = false;
-}
-
-// Damped spring recovery for a footprint of the given age. Falls from 1 to 0, overshoots past
-// upright, then settles to exactly 0 at recovery so the slot can be reused. Springiness 0 places
-// the zero crossing at the end of the recovery, collapsing this to a plain ease-out.
-static float GrassSpringWeight(float age, float recovery, float springiness) {
-	if (recovery <= 0.0f || age < 0.0f || age >= recovery) return 0.0f;
-	float t = age / recovery;
-	float s = springiness < 0.0f ? 0.0f : (springiness > 1.0f ? 1.0f : springiness);
-	// An earlier zero crossing deepens the overshoot: springiness 0 gives none,
-	// 0.5 dips to about -11%, 1.0 to about -26%.
-	float omega = 3.14159274f * (0.5f + 0.7f * s);
-	return (1.0f - t) * cosf(omega * t);
-}
-
-// Ages the existing footprints and plants a new one if the player has walked clear of the last.
-// `space` identifies the worldspace (or interior cell) the position is expressed in.
-static void UpdateGrassStamps(float px, float py, const void* space, float radius, float recovery) {
-	double nowMs = TheFrameRateManager->GetPerformance();
-	float dt = (GrassStampLastMs < 0.0) ? 0.0f : (float)((nowMs - GrassStampLastMs) * 0.001);
-	GrassStampLastMs = nowMs;
-	if (dt < 0.0f) dt = 0.0f;
-	if (dt > kGrassMaxDeltaTime) dt = kGrassMaxDeltaTime;
-
-	// Stamps are world positions and survive cell changes; only a position jump
-	// or a worldspace change makes them stale.
-	if (space != GrassStampLastSpace) {
-		GrassStampLastSpace = space;
-		ResetGrassStamps();
-	}
-	if (GrassStampHavePlayerPos) {
-		float jx = px - GrassStampLastPlayerX;
-		float jy = py - GrassStampLastPlayerY;
-		if (jx * jx + jy * jy > kGrassTeleportDist * kGrassTeleportDist) ResetGrassStamps();
-	}
-	GrassStampLastPlayerX = px;
-	GrassStampLastPlayerY = py;
-	GrassStampHavePlayerPos = true;
-
-	for (int i = 0; i < kGrassStampCount; i++) {
-		if (GrassStamps[i].age < 0.0f) continue;
-		GrassStamps[i].age += dt;
-		if (GrassStamps[i].age >= recovery) GrassStamps[i].age = -1.0f;
-	}
-
-	// Plant only into an expired slot, where the spring weight is already 0:
-	// evicting a live footprint would snap it upright. The stagger keeps planting
-	// at a steady cadence instead of in pairs.
-	float spacing = radius * kGrassStampSpacing;
-	float stagger = recovery / kGrassStampCount;
-	int newest = -1;
-	int freeSlot = -1;
-	for (int i = 0; i < kGrassStampCount; i++) {
-		if (GrassStamps[i].age < 0.0f) {
-			if (freeSlot < 0) freeSlot = i;
-			continue;
-		}
-		if (newest < 0 || GrassStamps[i].age < GrassStamps[newest].age) newest = i;
-	}
-	if (freeSlot < 0) return;
-
-	bool plant = true;
-	if (newest >= 0) {
-		float dx = px - GrassStamps[newest].x;
-		float dy = py - GrassStamps[newest].y;
-		plant = (dx * dx + dy * dy) > (spacing * spacing) && GrassStamps[newest].age >= stagger;
-	}
-	if (plant) GrassStamps[freeSlot] = { px, py, 0.0f };
-}
-
 } // namespace
 
 void ShaderManager::UpdateGrass(ShaderConstants& ShaderConst) {
@@ -2221,7 +2127,6 @@ void ShaderManager::UpdateGrass(ShaderConstants& ShaderConst) {
 	// The per-batch enable flag and press strength are set per draw, in RenderHook's
 	// SetGrassCollisionConstants; these are the defaults until the first grass draw.
 	float radius = TheSettingManager->SettingsGrass.CollisionRadius;
-	float recovery = TheSettingManager->SettingsGrass.CollisionRecoveryTime;
 	ShaderConst.Grass.CollisionParams.x = 0.0f;
 	ShaderConst.Grass.CollisionParams.y = TheSettingManager->SettingsGrass.CollisionStrength;
 	ShaderConst.Grass.CollisionParams.z = TheSettingManager->SettingsGrass.CollisionFlattenStrength;
@@ -2234,12 +2139,7 @@ void ShaderManager::UpdateGrass(ShaderConstants& ShaderConst) {
 	if (!Player) return;
 
 	float playerScale = GrassActorRadiusScale(Player);
-	float playerRadius = radius * playerScale;
 	sources[sourceCount++] = { Player->pos.x, Player->pos.y, playerScale, 1.0f, GrassSource_Player };
-
-	const void* space = Player->GetWorldSpace() ? (const void*)Player->GetWorldSpace() : (const void*)Player->parentCell;
-	UpdateGrassStamps(Player->pos.x, Player->pos.y, space, playerRadius, recovery);
-	float spacing = playerRadius * kGrassStampSpacing;
 
 	ActorDist nearest[kGrassMaxNPCs] = {};
 	int npcCount = 0;
@@ -2280,32 +2180,6 @@ void ShaderManager::UpdateGrass(ShaderConstants& ShaderConst) {
 	GrassTrail::Update(stampers, stamperCount, Player->pos.x, Player->pos.y, Player->GetWorldSpace(), trailConsts);
 	ShaderConst.Grass.TrailWindow = trailConsts.Window;
 	ShaderConst.Grass.TrailTime = trailConsts.Time;
-
-	// Newest stamps first so the freshest footprint wins.
-	int stampOrder[kGrassStampCount];
-	int stampCount = 0;
-	for (int i = 0; i < kGrassStampCount; i++) {
-		if (GrassStamps[i].age < 0.0f) continue;
-		int at = stampCount++;
-		while (at > 0 && GrassStamps[i].age < GrassStamps[stampOrder[at - 1]].age) {
-			stampOrder[at] = stampOrder[at - 1];
-			at--;
-		}
-		stampOrder[at] = i;
-	}
-
-	// Footprints rank after every live actor, matching the old fixed slots.
-	for (int i = 0; i < stampCount; i++) {
-		const GrassStamp& stamp = GrassStamps[stampOrder[i]];
-		// A stamp is planted underfoot where the player already crushes the grass, so
-		// fade it in as the player moves away rather than doubling the deformation.
-		float sdx = Player->pos.x - stamp.x;
-		float sdy = Player->pos.y - stamp.y;
-		float sep = (spacing > 0.0f) ? (sqrtf(sdx * sdx + sdy * sdy) / spacing) : 1.0f;
-		if (sep > 1.0f) sep = 1.0f;
-		float weight = sep * GrassSpringWeight(stamp.age, recovery, TheSettingManager->SettingsGrass.CollisionSpringiness);
-		sources[sourceCount++] = { stamp.x, stamp.y, playerScale, weight, GrassSource_Footprint };
-	}
 }
 
 /// Packs the parallax height scale and its centering bias so the shader offset is a single mad,
@@ -3455,7 +3329,7 @@ void ShaderManager::ProfileBlitToSource(IDirect3DSurface9* RenderTarget) {
 	TheRenderManager->device->StretchRect(RenderTarget, NULL, SourceSurface, NULL, D3DTEXF_NONE);
 }
 
-// A jump this large between temporal frames is a load door or fast travel (same as kGrassTeleportDist).
+// A jump this large between temporal frames is a load door or fast travel (same as GrassTrail's kTeleportDist).
 static const float kAOTemporalTeleportDist = 1024.0f;
 // Longer than any rendered frame: a gap this long means a menu or loading screen hid the chain.
 static const double kAOTemporalMaxGapMs = 250.0;
