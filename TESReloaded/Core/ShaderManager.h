@@ -142,6 +142,14 @@ struct ShaderConstants {
 									// z = 1 / cube map size, w = depth bias (
 									// y is a neutral 1.0, kept only so a stale compiled ShadowsPoint.fx
 									// reading it as a darkness preshader degrades to "no point shadows")
+		// The apply darkens a pixel by the fraction of its light a shadow removes, so it needs the light
+		// that stays. These describe everything that lights the scene, as luma, the way the engine sums it.
+		D3DXVECTOR4		SlotLuminance;	// per slot like ShadowCastLightLuminance, but WITHOUT the fade
+		D3DXVECTOR4		BaseLight;		// x = ambient luma, y = directional (sun/moon/cell) luma
+		D3DXVECTOR4		DirLight;		// xyz = unit vector toward the directional light
+		// Scene lights that hold no slot, 4 per matrix: row = xyz camera-relative, w = radius (0 = empty).
+		D3DXMATRIX		FillLights[2];
+		D3DXVECTOR4		FillLuminance[2];	// one component per FillLights row
 	};
 	struct PrecipitationsStruct {
 		D3DXVECTOR4		RainData;
