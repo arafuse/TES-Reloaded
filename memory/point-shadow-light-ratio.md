@@ -31,10 +31,13 @@ therefore an exact ratio and albedo cancels. Brightness only: luma throughout, s
 - N is the depth-reconstructed geometric normal, so shadow depth can facet slightly on low-poly curved
   meshes; point-pass pixels facing away from a light skip its cube PCF
 
-**UNVERIFIED:** that niDirectionalLight's Amb/Diff are what feed AmbientColor / PSLightColor[0], in
-interiors as well as exteriors. With `Develop.ProfileFrame` on, each cell logs
-`[ShadowProfile] point base light:`. If ambient reads zero, point shadows go back to full depth AND sun
-shadows vanish wherever a point light reaches. If it reads too large, point shadows vanish.
+**Ambient source, logged 2026-11-19:** with `Develop.ProfileFrame` on, each cell logs
+`[ShadowProfile] point base light:`. One session across day, night and (by their 8-bit-exact colours)
+interiors read: day ambient luma ~0.34, directional ~0.5-0.83; night 0.05 / 0.08; Dimmer always 1; to-light
+points up by day and by night. Never zero or oversized, so neither failure mode occurs (zero ambient
+would restore full-depth point shadows and erase sun shadows near point lights; too large would erase
+point shadows). STILL UNPROVEN: that these exact values are the shader's AmbientColor / PSLightColor[0];
+only a constant dump from a lit draw would settle it.
 
 **How to apply:**
 - Overlap is approximate: the point pass runs after the sun pass and cannot see `sun`, so where both
