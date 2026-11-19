@@ -145,6 +145,7 @@ float AddProximityLight(float4 WorldPos, float4 ExternalLightPos) {
 }
 
 #include "ShadowsExteriorsLookup.hlsl"
+#include "SceneLightTotal.hlsl"
 
 float4 Shadow(VSOUT IN) : COLOR0{
 	float3 color = 1.0f;
@@ -241,7 +242,19 @@ float4 Shadow(VSOUT IN) : COLOR0{
 			Shadow = lerp(prevShadow, Shadow, TESR_ShadowFadeData.x);
 		}
 
-		color.rgb *= saturate(Shadow * fogCoeff) * float3(1.0f, 1.0f, 1.0f);
+		float sun = saturate(Shadow * fogCoeff);
+
+		// The shadow scales only ambient and directional light, which Darkness was tuned on; point lights
+		// keep theirs: (sun * base + points) / (base + points). Without point light this is just sun.
+		[branch]
+		if (sun < 1.0f && TESR_ShadowBaseLight.z > 0.0f) {
+			float3 N = (dot(raw, camera_vector) > 0.0f) ? -raw : raw;
+			float base = BaseLightAt(N);
+			float points = SlotLightAt(camera_vector, N) + FillLightAt(camera_vector, N);
+			sun = lerp(sun, 1.0f, points / max(base + points, 0.0001f));
+		}
+
+		color.rgb *= sun;
 	}
 	return float4(color, 1.0f);
 

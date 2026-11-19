@@ -10,31 +10,22 @@
 
 // Output is the shadow FACTOR, not the shadowed colour: RenderShadowsMidScene multiplies it into the
 // scene with DESTCOLOR blending, so the pass never reads the scene and needs no copy of it first.
-//
-// The engine shades albedo * (ambient + sum of light * N.L), unclamped, so removing one light's share
-// is a multiply by (total - lost) / total. The total counts ambient, the directional light and the
-// nearest unslotted scene lights, so a shadow is never darker than the scene without its light. It is
-// taken before the sun shadow, which scales the whole sum by Darkness, so the two passes compose.
 // The CPU looks this parameter up and keeps the old read-and-copy path when it is missing (a stale
 // compiled effect that still outputs colour), so keep it declared.
 bool ShadowOutputsFactor = true;
 
+// Removing one light's share is a multiply by (total - lost) / total, with the total from
+// SceneLightTotal.hlsl, so a shadow is never darker than the scene without its light. The total does
+// not know the sun shadow, which ran first and kept the point light: where the two overlap this point
+// shadow is a little shallower than exact (by lost * base * (1 - sun) / total^2), never deeper.
+
 float4x4 TESR_ViewTransform;
 float4x4 TESR_ProjectionTransform;
 float4 TESR_ShadowPointData;      // x = shadow strength scale, z = 1 / cube map size, w = depth bias
-float4 TESR_ShadowLightPosition0; // xyz = camera-relative light pos, w = far plane (0 = slot empty)
-float4 TESR_ShadowLightPosition1;
-float4 TESR_ShadowLightPosition2;
-float4 TESR_ShadowLightPosition3;
 float4 TESR_ShadowLightLuminance; // one component per slot (x=0..w=3): luma(Diff) * Dimmer * fade
-float4 TESR_ShadowSlotLuminance;  // the same without the fade: the light the slot still adds to the total
-float4 TESR_ShadowBaseLight;      // x = ambient luma, y = directional light luma
-float4 TESR_ShadowDirLight;       // xyz = unit vector toward the directional light
-float4x4 TESR_ShadowFillLights0;  // unslotted scene lights, one per row: xyz camera-relative, w = radius
-float4x4 TESR_ShadowFillLights1;
-float4 TESR_ShadowFillLuminance0; // one component per TESR_ShadowFillLights0 row (0 = empty)
-float4 TESR_ShadowFillLuminance1;
 float4 TESR_ReciprocalResolution;
+
+#include "SceneLightTotal.hlsl"
 
 // Not sampled any more (the pass outputs a factor), but kept: effect textures bind by ordinal, so
 // removing the first sampler would shift every other one. See ShadowsExteriors.fx.hlsl.
@@ -176,15 +167,6 @@ float3 GetNormal(float2 UVCoord)
 	return (dot(N, ray) > 0.0f) ? -N : N;
 }
 
-// A point light's falloff times N.L at pixelPos: multiplied by its luminance, the light it adds there.
-// The engine's own quadratic falloff over the light's radius.
-float PointGeometry(float3 toLight, float radius, float3 N)
-{
-	float len = length(toLight);
-	float dist = len / radius;
-	return saturate(1.0f - dist * dist) * saturate(dot(N, toLight / max(len, 0.001f)));
-}
-
 // One slot's light at the pixel: x = light its shadow removes (faded), y = light it adds unshadowed.
 // Brightness only -- the shadow darkens all three channels equally and never tints them.
 float2 SlotLight(samplerCUBE cubeMap, float4 lightPos, float lum, float fullLum, float3 pixelPos, float3 N)
@@ -211,16 +193,6 @@ float2 SlotLight(samplerCUBE cubeMap, float4 lightPos, float lum, float fullLum,
 	return geometry * float2(lum * (1.0f - lit), fullLum);
 }
 
-// Light the unslotted scene lights in one fill matrix add at the pixel.
-float FillLight(float4x4 lights, float4 lum, float3 pixelPos, float3 N)
-{
-	float light = 0.0f;
-	[unroll] for (int i = 0; i < 4; i++) {
-		if (lum[i] > 0.0f) light += lum[i] * PointGeometry(lights[i].xyz - pixelPos, lights[i].w, N);
-	}
-	return light;
-}
-
 float4 Shadow(VSOUT IN) : COLOR0{
 	float3 color = 1.0f;
 
@@ -241,10 +213,7 @@ float4 Shadow(VSOUT IN) : COLOR0{
 	slots += SlotLight(TESR_ShadowCubeMapBuffer2, TESR_ShadowLightPosition2, TESR_ShadowLightLuminance.z, TESR_ShadowSlotLuminance.z, pixelPos, N);
 	slots += SlotLight(TESR_ShadowCubeMapBuffer3, TESR_ShadowLightPosition3, TESR_ShadowLightLuminance.w, TESR_ShadowSlotLuminance.w, pixelPos, N);
 
-	float total = TESR_ShadowBaseLight.x + TESR_ShadowBaseLight.y * saturate(dot(N, TESR_ShadowDirLight.xyz));
-	total += slots.y;
-	total += FillLight(TESR_ShadowFillLights0, TESR_ShadowFillLuminance0, pixelPos, N);
-	total += FillLight(TESR_ShadowFillLights1, TESR_ShadowFillLuminance1, pixelPos, N);
+	float total = BaseLightAt(N) + slots.y + FillLightAt(pixelPos, N);
 
 	// lost <= total, since every slot's faded luminance is at most its full one.
 	float shadow = 1.0f - slots.x / max(total, 0.0001f);
