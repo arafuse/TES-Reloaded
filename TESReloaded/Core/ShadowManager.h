@@ -77,6 +77,8 @@ public:
 	void					AdvancePointFades();
 	void					SelectPointLights();
 	void					PublishPointLightConstants();
+	/// Publishes the ambient, directional and unslotted scene light the point-shadow apply divides by.
+	void					PublishPointBaseLight();
 	void					BuildPointGeoLists(UInt64* Checksums);
 	void					ClassifyCellForPointSlots(TESObjectCELL* Cell, UInt64* Checksums);
 	void					ClassifyRefForPointSlot(RefLightInfo& Info, int Slot, UInt64* Checksums);
@@ -290,6 +292,10 @@ public:
 		// that flickers across the distance cut reclaim its slot and cube instead of fading fully out
 		// and rebaking. NULL when the slot is not retiring.
 		NiPointLight*	RetiringLight;
+		// The light whose shadow this slot draws, as an opaque identity token: set while a light holds
+		// the slot and kept while it retires (eviction leaves RetiringLight NULL). Never dereferenced;
+		// only compared against live scene lights, so the slot's light is not also published as a fill light.
+		NiPointLight*	ShadedLight;
 	};
 	PointLightSlot			PointSlots[PointLightMax];
 	int						PointSlotsActive;	// slots holding a light after this frame's selection

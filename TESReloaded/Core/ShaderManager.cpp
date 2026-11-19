@@ -471,6 +471,20 @@ bool ShaderProgram::SetConstantTableValue2(LPCSTR Name, UInt32 Index) {
 		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.ShadowPoint.BakeData;
 	else if (!strcmp(Name, "TESR_ShadowPointData"))
 		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.ShadowPoint.PointData;
+	else if (!strcmp(Name, "TESR_ShadowSlotLuminance"))
+		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.ShadowPoint.SlotLuminance;
+	else if (!strcmp(Name, "TESR_ShadowBaseLight"))
+		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.ShadowPoint.BaseLight;
+	else if (!strcmp(Name, "TESR_ShadowDirLight"))
+		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.ShadowPoint.DirLight;
+	else if (!strcmp(Name, "TESR_ShadowFillLights0"))
+		FloatShaderValues[Index].Value = (D3DXVECTOR4*)&TheShaderManager->ShaderConst.ShadowPoint.FillLights[0];
+	else if (!strcmp(Name, "TESR_ShadowFillLights1"))
+		FloatShaderValues[Index].Value = (D3DXVECTOR4*)&TheShaderManager->ShaderConst.ShadowPoint.FillLights[1];
+	else if (!strcmp(Name, "TESR_ShadowFillLuminance0"))
+		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.ShadowPoint.FillLuminance[0];
+	else if (!strcmp(Name, "TESR_ShadowFillLuminance1"))
+		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.ShadowPoint.FillLuminance[1];
 	else if (!strcmp(Name, "TESR_VolumetricLightData1"))
 		FloatShaderValues[Index].Value = &TheShaderManager->ShaderConst.VolumetricLight.data1;
 	else if (!strcmp(Name, "TESR_VolumetricLightData2"))
