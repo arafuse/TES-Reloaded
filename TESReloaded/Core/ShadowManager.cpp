@@ -2190,9 +2190,10 @@ void ShadowManager::PublishPointLightConstants() {
 	PublishPointBaseLight();
 }
 
-// Publishes the light a point shadow does NOT remove: the ambient and directional terms and the
-// nearest scene lights that hold no slot. The apply shader divides a shadow's lost light by this
-// total, so a light only darkens its shadow by its own share of the pixel's lighting.
+// Publishes the scene's light for SceneLightTotal.hlsl: the ambient and directional terms and the
+// nearest scene lights that hold no slot. Both shadow applies take each shadow's lost light as a share
+// of this total: the point shadow its own light's, the sun shadow only ambient and directional light.
+// Runs every frame, point shadows on or off, since the sun shadow needs it either way.
 void ShadowManager::PublishPointBaseLight() {
 	ShaderConstants::ShadowPointStruct& Point = TheShaderManager->ShaderConst.ShadowPoint;
 	Point.BaseLight = D3DXVECTOR4(0.0f, 0.0f, 0.0f, 0.0f);
@@ -2207,7 +2208,7 @@ void ShadowManager::PublishPointBaseLight() {
 		D3DXVECTOR3 ToLight(-DirLight->m_direction.x, -DirLight->m_direction.y, -DirLight->m_direction.z);
 		float Length = D3DXVec3Length(&ToLight);
 		if (Length > 0.0f) Point.DirLight = D3DXVECTOR4(ToLight.x / Length, ToLight.y / Length, ToLight.z / Length, 0.0f);
-		if (ProfilingEnabled) {
+		if (ProfilingEnabled && Player) {
 			static TESObjectCELL* LastLoggedCell = NULL;
 			if (LastLoggedCell != Player->parentCell) {
 				LastLoggedCell = Player->parentCell;
@@ -2242,6 +2243,12 @@ void ShadowManager::PublishPointBaseLight() {
 		((float*)&Point.FillLuminance[Fill / 4])[Fill % 4] = Lum;
 		Fill++;
 	}
+
+	bool AnySlot = false;
+	for (int s = 0; s < PointLightMax; s++)
+		if (TheShaderManager->ShaderConst.ShadowMap.ShadowCastLightPosition[s].w > 0.0f) AnySlot = true;
+	// Lets the sun shadow skip the point-light sums on frames without any.
+	Point.BaseLight.z = (Fill > 0 || AnySlot) ? 1.0f : 0.0f;
 }
 
 void ShadowManager::ClearCubeMapNodeLists() {
@@ -2554,11 +2561,17 @@ void ShadowManager::RenderPointShadows() {
 			PointSlots[s].Valid = false;
 			PointSlots[s].Intensity = 0.0f;
 			PointSlots[s].RetiringLight = NULL;
+			PointSlots[s].ShadedLight = NULL;
 			TheShaderManager->ShaderConst.ShadowMap.ShadowCastLightPosition[s] = D3DXVECTOR4(0.0f, 0.0f, 0.0f, 0.0f);
 		}
 		TheShaderManager->ShaderConst.ShadowMap.ShadowCastLightLuminance = D3DXVECTOR4(0.0f, 0.0f, 0.0f, 0.0f);
+		TheShaderManager->ShaderConst.ShadowPoint.SlotLuminance = D3DXVECTOR4(0.0f, 0.0f, 0.0f, 0.0f);
 		// Pin the clock so the disabled gap does not snap the first slot to full.
 		PointFadeLastMs = TheFrameRateManager->GetPerformance();
+		// The sun shadow still spares point light, so every scene light is published as a fill light.
+		if (Player && Player->parentCell) CollectSceneLights();
+		else SceneLights.clear();
+		PublishPointBaseLight();
 		return;
 	}
 	ScopeTimer profile(Phase_PointTotal);
