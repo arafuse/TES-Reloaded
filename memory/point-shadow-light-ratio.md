@@ -1,39 +1,48 @@
 ---
 name: point-shadow-light-ratio
-description: Point-shadow apply multiplies by (total - lost) / total light, never a per-light 1 - lum*att; what "total" counts, the unverified ambient source, and the sun pass's matching flaw
+description: Sun and point shadow applies remove only their own light's share (ratio of an unclamped engine light sum); what the total counts, the unverified ambient source, and the overlap approximation
 metadata:
   type: project
 ---
 
-Since 220ba1a (2026-11-18) `ShadowsPoint.fx.hlsl` darkens a pixel by the fraction of its light the
-shadows remove: factor = (total - lost) / total. The old factor, a product of `1 - lum * att` per light,
-removed that fraction of ALL light at the pixel. So sunlit areas around exterior torches went dark,
-overlapping lights compounded, and faces turned away from a light still got its shadow.
+Both mid-scene shadow applies multiply the scene by the fraction of light that stays, with every light
+sum taken from `Shadows/SceneLightTotal.hlsl`:
+- **Point** (`ShadowsPoint.fx.hlsl`, 220ba1a): (total - lost) / total. The old per-light product of
+  `1 - lum * att` removed that fraction of ALL light, darkening sunlit areas round exterior torches and
+  compounding where lights overlapped.
+- **Sun** (`ShadowsExteriors.fx.hlsl`, 93f1a26): the existing term `sun` (in [Darkness, 1]) now scales only
+  base = ambient + directional × N.L, so factor = (sun × base + points) / (base + points). Without point
+  light it is exactly `sun`, so the tuned Darkness tiers look unchanged in daylight. Before this the sun
+  shadow also darkened the torchlight inside it.
 
-**Why it is valid:** the engine's SLS pixel shaders sum `AmbientColor + Σ PSLightColor * saturate(N.L)`
-with no clamp (only `max(..., 0)`, checked in `SLS2002.pso.hlsl`) and multiply by albedo. Removing one
-light is therefore an exact ratio and albedo cancels. Brightness only: luma throughout, so no tinting.
+**Why ratios are valid:** the engine's SLS pixel shaders sum `AmbientColor + Σ PSLightColor * saturate(N.L)`
+with no clamp (only `max(..., 0)`, checked in `SLS2002.pso.hlsl`) and multiply by albedo. A light's share is
+therefore an exact ratio and albedo cancels. Brightness only: luma throughout, so shadows never tint.
 
-**What total counts** (published by `ShadowManager::PublishPointBaseLight`):
+**What the sums count** (published every frame, point shadows on OR off, by
+`ShadowManager::PublishPointBaseLight`; `TESR_ShadowBaseLight.z` = 1 when any point light is published):
 - ambient luma and directional luma × N.L, from `Tes->niDirectionalLight` (`Amb`, `Diff`, `Dimmer`;
   `m_direction` is the direction of travel, so to-light = -m_direction)
-- each slot's UNFADED luminance (`TESR_ShadowSlotLuminance`); lost uses the faded one, so lost <= total
+- each slot's UNFADED luminance (`TESR_ShadowSlotLuminance`), over the cube far plane (257 for torches);
+  the point pass's lost light uses the faded one, so lost <= total
 - the 8 nearest scene lights that hold no slot (`TESR_ShadowFillLights0/1` rows: camera-relative xyz,
   w = radius). Slot lights are excluded by `PointLightSlot::ShadedLight`, an identity token that survives
-  eviction (eviction leaves RetiringLight NULL on purpose)
-- N is the depth-reconstructed geometric normal (as in the sun pass), so shadow depth can facet slightly
-  on low-poly curved meshes; back-facing pixels skip the cube PCF
+  eviction (eviction leaves RetiringLight NULL on purpose). With point shadows off, every light is a fill.
+- N is the depth-reconstructed geometric normal, so shadow depth can facet slightly on low-poly curved
+  meshes; point-pass pixels facing away from a light skip its cube PCF
 
 **UNVERIFIED:** that niDirectionalLight's Amb/Diff are what feed AmbientColor / PSLightColor[0], in
 interiors as well as exteriors. With `Develop.ProfileFrame` on, each cell logs
-`[ShadowProfile] point base light:`. If ambient reads zero, interior point shadows go back to full depth.
-If it reads too large, they vanish.
+`[ShadowProfile] point base light:`. If ambient reads zero, point shadows go back to full depth AND sun
+shadows vanish wherever a point light reaches. If it reads too large, point shadows vanish.
 
 **How to apply:**
-- The total ignores sun visibility deliberately. The sun pass scales the whole sum by Darkness, so a point
-  factor taken against the unshadowed total composes with it. Don't add a sun-visibility term.
-- The sun pass still has the mirror flaw: `lerp(darkness, 1, lit)` also scales torchlight inside a sun
-  shadow. Fixing it would need the same ratio (sun share of total), and is not done yet.
-- [[sun-shadow-probe-consumers]] and the Darkness tiers are unaffected; FogStrength still scales the factor.
+- Overlap is approximate: the point pass runs after the sun pass and cannot see `sun`, so where both
+  shadows overlap the point shadow is shallower than exact by lost × base × (1 - sun) / total², never
+  deeper. Exactness needs `sun` passed between the passes (an MRT side target), which breaks on a
+  multisampled scene target. Weigh that before attempting it.
+- Any new shadow-like darkening effect should take its share of this same total, not multiply the scene.
+- SunShadowStealth still uses the Darkness tier for the player's light level (point light counted in full
+  there), so it is consistent with the sun apply. See [[sun-shadow-probe-consumers]].
 
-Related: [[grass-drawn-after-water]] (where the apply fires), [[shader-deployment-workflow]].
+Related: [[grass-drawn-after-water]] (where the applies fire), [[shader-deployment-workflow]].
