@@ -120,4 +120,10 @@ namespace OcclusionCullMath {
 		return Dot3(D, D) <= CutDistance * CutDistance;
 	}
 
+	/// Whether this frame reads last frame's results. Debug mode 2 (freeze) keeps reading only until
+	/// it has captured a non-empty hidden set, then culls that set unchanged.
+	inline bool ShouldReadResults(int Debug, bool HaveFrozenSet) {
+		return Debug != 2 || !HaveFrozenSet;
+	}
+
 }

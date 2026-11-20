@@ -303,7 +303,7 @@ struct SettingsMainStruct {
 		UInt8	ProfileSampler;		// key code: toggles the main-thread sampling profiler
 		int		ProfileSamplerHz;
 		UInt8	NearShellDebug;
-		UInt8	OcclusionCullDebug;		///< 1 logs occlusion stats each second, 2 freezes the culled set, 3 measures without culling
+		UInt8	OcclusionCullDebug;		///< 1 logs occlusion stats each second, 2 freezes the first hidden set after a load, 3 measures without culling
 		UInt8	LogSunShadowStealth;	// logs the player sun shadow probe about once a second
 		UInt8	LogWetActors;			// logs player and nearest-NPC wetness about once a second
 		bool	LogAnimationBlending;	// logs every animation transition AnimationBlending lengthens

@@ -56,6 +56,7 @@ static bool							IssueCameraValid = false;
 static float						IssueCameraPos[3] = { 0.0f, 0.0f, 0.0f };
 static bool							OverflowLogged = false;
 static bool							DepthRowLogged = false;
+static bool							FrozenSetCaptured = false;
 static Stats						Totals = {};
 static DWORD						StatsStart = 0;
 
@@ -129,6 +130,7 @@ static void ReleaseResources() {
 	if (RectVB) { RectVB->Release(); RectVB = NULL; }
 	RectVBCapacity = 0;
 	HiddenSet.clear();
+	FrozenSetCaptured = false;
 	Candidates.clear();
 	IssueCameraValid = false;
 	OverflowLogged = false;
@@ -231,7 +233,11 @@ void BeginOcclusionCull() {
 
 	bool Cull = Debug != 3;
 	Serial++;
-	if (Debug != 2 && !ReadPreviousResults(Cam.Pos, WorldKey, Frame)) Frame.Dropped = 1;
+	if (Debug != 2) FrozenSetCaptured = false;
+	if (ShouldReadResults(Debug, FrozenSetCaptured)) {
+		if (!ReadPreviousResults(Cam.Pos, WorldKey, Frame)) Frame.Dropped = 1;
+		else if (Debug == 2 && !HiddenSet.empty()) FrozenSetCaptured = true;
+	}
 
 	if (Player->GetWorldSpace()) {
 		for (UInt32 x = 0; x < *SettingGridsToLoad; x++)
@@ -388,6 +394,7 @@ void ResetOcclusionCull() {
 		Ring[s].Meta.Valid = false;
 	}
 	HiddenSet.clear();
+	FrozenSetCaptured = false;
 	IssueCameraValid = false;
 }
 

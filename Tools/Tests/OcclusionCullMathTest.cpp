@@ -139,6 +139,14 @@ static void ResultsUnusableAcrossWorlds() {
 	CHECK(!ResultsUsable(Slot7(), 8, Cam0, &WorldB, 128.0f));
 }
 
+static void FreezeReadsUntilASetIsCaptured() {
+	CHECK(ShouldReadResults(0, false));
+	CHECK(ShouldReadResults(1, true));
+	CHECK(ShouldReadResults(3, true));
+	CHECK(ShouldReadResults(2, false));
+	CHECK(!ShouldReadResults(2, true));
+}
+
 int main() {
 	DepthEndpoints();
 	DepthMatchesDeviceRow();
@@ -155,6 +163,7 @@ int main() {
 	ResultsUnusableWhenStale();
 	ResultsUnusableAfterCameraCut();
 	ResultsUnusableAcrossWorlds();
+	FreezeReadsUntilASetIsCaptured();
 	std::printf("%d failures\n", Failures);
 	return Failures ? 1 : 0;
 }
