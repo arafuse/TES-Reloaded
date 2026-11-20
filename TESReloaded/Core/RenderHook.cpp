@@ -6,6 +6,7 @@
 #include "RenderHook.h"
 #include "WetActors.h"
 #include "GrassTrail.h"
+#include "OcclusionCulling.h"
 
 // --- Whole-frame plugin profiler (Develop.ProfileFrame) -----------------------
 // Definitions for FrameProfiler.h; see that header for the bucket model and for
@@ -1570,7 +1571,9 @@ void __cdecl TrackRenderObject(NiCamera* Camera, NiNode* Object, NiCullingProces
 		RenderManager::ApplyPass(RenderManager::PassFar);
 	}
 	if (MainScenePass) FrameProfiler::GpuBegin(FrameProfiler::Gpu_MainPass);
+	if (MainScenePass) BeginOcclusionCull();
 	RenderObject(Camera, Object, CullingProcess, VisibleArray);
+	if (MainScenePass) EndOcclusionCull();
 	if (MainScenePass) FrameProfiler::GpuEnd(FrameProfiler::Gpu_MainPass);
 	// Clear before the shell renders: this disarms the mid-scene shadow trigger and
 	// SetCT's depth resolve for the rest of the frame (shell, first-person and
@@ -1593,6 +1596,8 @@ void __cdecl TrackRenderObject(NiCamera* Camera, NiNode* Object, NiCullingProces
 		// sees only [M, F]. SetCT cannot resolve over it later: InMainScenePass is
 		// already cleared.
 		TheRenderManager->ResolveDepthBuffer();
+		// Must precede the shell's depth clear: the queries test against the far pass's depth.
+		IssueOcclusionQueries();
 
 		if (RenderManager::ShellActive) {
 			UInt8 Debug = TheSettingManager->SettingsMain.Develop.NearShellDebug;
