@@ -37,6 +37,9 @@ namespace FrameProfiler {
 		Buck_EffectsPostHdr,      // ShaderManager::RenderEffectsPostHdr
 		Buck_BeginScene,          // ShaderManager::BeginScene, summed over ALL scenes in the frame
 		Buck_ShaderHook,          // RenderHook::TrackSetupShaderPrograms, summed over all draws
+		Buck_OccBegin,            // BeginOcclusionCull: readback, cell walk, flag set (before the far pass)
+		Buck_OccEnd,              // EndOcclusionCull: flag restore (after the far pass)
+		Buck_OccIssue,            // IssueOcclusionQueries: one bound-rect query per candidate
 
 		// --- detail, nested inside Buck_ShaderHook ---
 		Buck_HookEngine,          // the nested engine SetupShaderPrograms call (game cost, not ours)
@@ -86,6 +89,10 @@ namespace FrameProfiler {
 		Cnt_TreeBranchesFar, Cnt_TreeBranchGroupsFar, Cnt_TreeLeavesFar, Cnt_TreeLeafGroupsFar,
 		Cnt_TreeInstancedDraws,  // instanced draws issued by the dynamic-tree composites (both maps)
 		Cnt_TreeInstancedPieces, // tree pieces those draws covered
+		Cnt_OccCandidates,  // cullable references in view (occlusion culling)
+		Cnt_OccQueried,     // of those, queried against the far-pass depth
+		Cnt_OccHidden,      // of those, hidden in the last far pass
+		Cnt_OccCulled,      // references skipped by the far pass this frame
 		Cnt_COUNT
 	};
 
