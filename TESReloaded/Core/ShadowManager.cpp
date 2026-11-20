@@ -8,6 +8,7 @@
 #include <sstream>
 #if defined(OBLIVION)
 #include "TreeCollision.h"
+#include "OcclusionCulling.h"
 #endif
 #if defined(NEWVEGAS)
 #define RenderStateArgs 0, 0
@@ -2632,6 +2633,11 @@ void ShadowManager::RenderPointShadows() {
 
 void ShadowManager::RenderShadowMaps() {
 	Global->RenderShadowMaps(); //Window reflections seem to be rendered here
+	static bool OcclusionFlagsLogged = false;
+	if (!OcclusionFlagsLogged && OcclusionCullFlagsHeld()) {
+		OcclusionFlagsLogged = true;
+		Logger::Log("ERROR: Occlusion cull flags held while shadow maps render");
+	}
 
 	FrameProfiler::Scope ProfileScope(FrameProfiler::Buck_ShadowMaps);
 	AdvanceStitchedStrips();

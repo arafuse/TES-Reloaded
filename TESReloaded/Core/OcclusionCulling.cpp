@@ -116,7 +116,10 @@ static const void* CurrentWorldKey() {
 	return World ? (const void*)World : (const void*)Player->parentCell;
 }
 
+static void RestoreCulledNodes();
+
 static void ReleaseResources() {
+	RestoreCulledNodes();
 	for (int s = 0; s < kRingSize; s++) {
 		for (IDirect3DQuery9* Query : Ring[s].Queries) Query->Release();
 		Ring[s].Queries.clear();
@@ -154,8 +157,11 @@ static bool ReadPreviousResults(const float CameraPos[3], const void* WorldKey, 
 	return true;
 }
 
-/// Appends one cell's candidates, counting the references that are always drawn instead.
-static void CollectCell(TESObjectCELL* Cell, const CullCamera& Camera, Stats& Frame) {
+/// Appends one cell's candidates, counting the references that are always drawn instead. With Cull
+/// set, a candidate hidden in the last far pass gets AppCulled on its root, remembered in CulledNodes.
+/// Roots already AppCulled (disabled, or culled by the engine) are never candidates, so End never
+/// clears a flag the engine set.
+static void CollectCell(TESObjectCELL* Cell, const CullCamera& Camera, bool Cull, Stats& Frame) {
 	if (!Cell) return;
 	SettingsMainStruct::MainStruct* Settings = &TheSettingManager->SettingsMain.Main;
 	bool HasWater = TheShaderManager->ShaderConst.HasWater;
@@ -178,7 +184,12 @@ static void CollectCell(TESObjectCELL* Cell, const CullCamera& Camera, Stats& Fr
 		}
 		UInt64 Key = MakeKey(Ref, Node);
 		Candidates.push_back({ Ref, Node, Key, Bound });
-		if (HiddenSet.count(Key)) Frame.Hidden++;
+		if (!HiddenSet.count(Key)) continue;
+		Frame.Hidden++;
+		if (!Cull) continue;
+		Node->m_flags |= NiAVObject::kFlag_AppCulled;
+		CulledNodes.push_back(Node);
+		Frame.Culled++;
 	}
 }
 
@@ -218,26 +229,36 @@ void BeginOcclusionCull() {
 	CullCamera Cam = BuildCamera(Camera);
 	const void* WorldKey = CurrentWorldKey();
 
+	bool Cull = Debug != 3;
 	Serial++;
 	if (Debug != 2 && !ReadPreviousResults(Cam.Pos, WorldKey, Frame)) Frame.Dropped = 1;
 
 	if (Player->GetWorldSpace()) {
 		for (UInt32 x = 0; x < *SettingGridsToLoad; x++)
 			for (UInt32 y = 0; y < *SettingGridsToLoad; y++)
-				CollectCell(Tes->gridCellArray->GetCell(x, y), Cam, Frame);
+				CollectCell(Tes->gridCellArray->GetCell(x, y), Cam, Cull, Frame);
 	}
 	else {
-		CollectCell(Player->parentCell, Cam, Frame);
+		CollectCell(Player->parentCell, Cam, Cull, Frame);
 	}
 
 	Frame.Candidates = (UInt32)Candidates.size();
 	FrameProfiler::Count(FrameProfiler::Cnt_OccCandidates, Frame.Candidates);
 	FrameProfiler::Count(FrameProfiler::Cnt_OccHidden, Frame.Hidden);
+	FrameProfiler::Count(FrameProfiler::Cnt_OccCulled, Frame.Culled);
 	if (Debug) LogStats(Frame);
 
 }
 
+static void RestoreCulledNodes() {
+	for (NiNode* Node : CulledNodes) Node->m_flags &= ~NiAVObject::kFlag_AppCulled;
+	CulledNodes.clear();
+}
+
 void EndOcclusionCull() {
+	if (CulledNodes.empty()) return;
+	FrameProfiler::Scope ProfileScope(FrameProfiler::Buck_OccEnd);
+	RestoreCulledNodes();
 }
 
 static bool EnsureRectBuffer(IDirect3DDevice9* Device, UInt32 Capacity) {
