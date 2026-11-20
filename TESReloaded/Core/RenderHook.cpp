@@ -23,6 +23,7 @@ namespace FrameProfiler {
 			"FrameTotal",
 			"UpdateShaderStates", "SetSceneGraph", "UpdateConstants", "ShadowMaps",
 			"Effects:PreHdr", "Effects:PostHdr", "BeginScene", "ShaderHook",
+			"Occ:Begin", "Occ:End", "Occ:Issue",
 			"Hook:Engine", "Hook:SetCT", "Hook:Resolve", "Hook:MidScene", "Hook:ShellWater",
 			"Mid:Resolve", "Mid:Setup", "Mid:Sun", "Mid:Probe", "Mid:ProbeRead", "Mid:Point", "Mid:Restore",
 			"GrassTrail"
@@ -44,7 +45,8 @@ namespace FrameProfiler {
 			"TreeItemsNear", "TreeItemsFar", "ActorItems",
 			"TreeBranchesNear", "  groups", "TreeLeavesNear", "  groups",
 			"TreeBranchesFar", "  groups", "TreeLeavesFar", "  groups",
-			"TreeInstDraws", "TreeInstPieces"
+			"TreeInstDraws", "TreeInstPieces",
+			"OccCandidates", "OccQueried", "OccHidden", "OccCulled"
 		};
 		const int ReportFrames = 600;
 

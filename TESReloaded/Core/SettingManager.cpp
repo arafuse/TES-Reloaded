@@ -84,6 +84,13 @@ SettingManager::SettingManager() {
 	SettingsMain.Main.WaterReflectionMapSize = GetPrivateProfileIntA("Main", "WaterReflectionMapSize", 512, Filename);
 	GetPrivateProfileStringA("Main", "WaterReflectionCullMinSize", "0.0", value, SettingStringBuffer, Filename);
 	SettingsMain.Main.WaterReflectionCullMinSize = max(0.0f, (float)atof(value));
+	SettingsMain.Main.OcclusionCulling = GetPrivateProfileIntA("Main", "OcclusionCulling", 0, Filename);
+	GetPrivateProfileStringA("Main", "OcclusionAlwaysDrawDistance", "1024.0", value, SettingStringBuffer, Filename);
+	SettingsMain.Main.OcclusionAlwaysDrawDistance = max(0.0f, (float)atof(value));
+	GetPrivateProfileStringA("Main", "OcclusionCameraCutDistance", "128.0", value, SettingStringBuffer, Filename);
+	SettingsMain.Main.OcclusionCameraCutDistance = (float)atof(value);
+	if (SettingsMain.Main.OcclusionCameraCutDistance <= 0.0f) SettingsMain.Main.OcclusionCameraCutDistance = 128.0f;
+	SettingsMain.Main.OcclusionMaxQueries = min(65536u, max(256u, (UInt32)GetPrivateProfileIntA("Main", "OcclusionMaxQueries", 8192, Filename)));
 	SettingsMain.Main.RemoveUnderwater = GetPrivateProfileIntA("Main", "RemoveUnderwater", 1, Filename);
 	SettingsMain.Main.RemovePrecipitations = GetPrivateProfileIntA("Main", "RemovePrecipitations", 0, Filename);
 	SettingsMain.Main.MemoryManagement = GetPrivateProfileIntA("Main", "MemoryManagement", 0, Filename);
@@ -450,6 +457,7 @@ SettingManager::SettingManager() {
 	SettingsMain.Develop.ProfileSampler = GetPrivateProfileIntA("Develop", "ProfileSampler", 0, Filename);
 	SettingsMain.Develop.ProfileSamplerHz = GetPrivateProfileIntA("Develop", "ProfileSamplerHz", 1000, Filename);
 	SettingsMain.Develop.NearShellDebug = GetPrivateProfileIntA("Develop", "NearShellDebug", 0, Filename);
+	SettingsMain.Develop.OcclusionCullDebug = GetPrivateProfileIntA("Develop", "OcclusionCullDebug", 0, Filename);
 	SettingsMain.Develop.LogSunShadowStealth = GetPrivateProfileIntA("Develop", "LogSunShadowStealth", 0, Filename);
 	SettingsMain.Develop.LogWetActors = GetPrivateProfileIntA("Develop", "LogWetActors", 0, Filename);
 	SettingsMain.Develop.LogAnimationBlending = GetPrivateProfileIntA("Develop", "LogAnimationBlending", 0, Filename);
@@ -1470,6 +1478,10 @@ void SettingManager::SaveSettings(const char* Item, const char* Definition, cons
 			WritePrivateProfileStringA("Main", "NearShellEnabled", ToString(SettingsMain.Main.NearShellEnabled).c_str(), SettingsMain.Main.MainFile);
 			WritePrivateProfileStringA("Main", "NearShellBoundary", ToString(SettingsMain.Main.NearShellBoundary).c_str(), SettingsMain.Main.MainFile);
 			WritePrivateProfileStringA("Main", "WaterReflectionCullMinSize", ToString(SettingsMain.Main.WaterReflectionCullMinSize).c_str(), SettingsMain.Main.MainFile);
+			WritePrivateProfileStringA("Main", "OcclusionCulling", ToString(SettingsMain.Main.OcclusionCulling).c_str(), SettingsMain.Main.MainFile);
+			WritePrivateProfileStringA("Main", "OcclusionAlwaysDrawDistance", ToString(SettingsMain.Main.OcclusionAlwaysDrawDistance).c_str(), SettingsMain.Main.MainFile);
+			WritePrivateProfileStringA("Main", "OcclusionCameraCutDistance", ToString(SettingsMain.Main.OcclusionCameraCutDistance).c_str(), SettingsMain.Main.MainFile);
+			WritePrivateProfileStringA("Main", "OcclusionMaxQueries", ToString(SettingsMain.Main.OcclusionMaxQueries).c_str(), SettingsMain.Main.MainFile);
 			WritePrivateProfileStringA("Main", "MoonPhaseLumNew", ToString(SettingsMain.Main.MoonPhaseLumNew).c_str(), SettingsMain.Main.MainFile);
 			WritePrivateProfileStringA("Main", "MoonPhaseLumQtr", ToString(SettingsMain.Main.MoonPhaseLumQtr).c_str(), SettingsMain.Main.MainFile);
 			WritePrivateProfileStringA("Main", "MoonPhaseLumHalf", ToString(SettingsMain.Main.MoonPhaseLumHalf).c_str(), SettingsMain.Main.MainFile);
@@ -2156,6 +2168,10 @@ SettingsList SettingManager::GetMenuSettings(const char* Item, const char* Defin
 				Settings["NearShellEnabled"] = SettingsMain.Main.NearShellEnabled;
 				Settings["NearShellBoundary"] = SettingsMain.Main.NearShellBoundary;
 				Settings["WaterReflectionCullMinSize"] = SettingsMain.Main.WaterReflectionCullMinSize;
+				Settings["OcclusionCulling"] = SettingsMain.Main.OcclusionCulling;
+				Settings["OcclusionAlwaysDrawDistance"] = SettingsMain.Main.OcclusionAlwaysDrawDistance;
+				Settings["OcclusionCameraCutDistance"] = SettingsMain.Main.OcclusionCameraCutDistance;
+				Settings["OcclusionMaxQueries"] = SettingsMain.Main.OcclusionMaxQueries;
 				Settings["ScreenshotKey"] = SettingsMain.Main.ScreenshotKey;
 				Settings["FPSOverlay"] = SettingsMain.Main.FPSOverlay;
 				Settings["DirectionalLightOverride"] = SettingsMain.Main.DirectionalLightOverride;
@@ -2765,6 +2781,14 @@ void SettingManager::SetMenuSetting(const char* Item, const char* Definition, co
 					SettingsMain.Main.NearShellBoundary = Value;
 				else if (!strcmp(Setting, "WaterReflectionCullMinSize"))
 					SettingsMain.Main.WaterReflectionCullMinSize = max(0.0f, Value);
+				else if (!strcmp(Setting, "OcclusionCulling"))
+					SettingsMain.Main.OcclusionCulling = Value;
+				else if (!strcmp(Setting, "OcclusionAlwaysDrawDistance"))
+					SettingsMain.Main.OcclusionAlwaysDrawDistance = max(0.0f, Value);
+				else if (!strcmp(Setting, "OcclusionCameraCutDistance"))
+					SettingsMain.Main.OcclusionCameraCutDistance = Value > 0.0f ? Value : 128.0f;
+				else if (!strcmp(Setting, "OcclusionMaxQueries"))
+					SettingsMain.Main.OcclusionMaxQueries = min(65536u, max(256u, (UInt32)Value));
 				else if (!strcmp(Setting, "ScreenshotKey"))
 					SettingsMain.Main.ScreenshotKey = Value;
 				else if (!strcmp(Setting, "FPSOverlay"))
