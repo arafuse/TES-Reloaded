@@ -104,6 +104,9 @@
     <ClInclude Include="..\TESReloaded\Core\RainProbe.h">
       <Filter>Core</Filter>
     </ClInclude>
+    <ClInclude Include="..\TESReloaded\Core\HavokStripProfile.h">
+      <Filter>Core</Filter>
+    </ClInclude>
     <ClInclude Include="..\TESReloaded\Core\OcclusionCulling.h">
       <Filter>Core</Filter>
     </ClInclude>
@@ -263,6 +266,9 @@
       <Filter>Core</Filter>
     </ClCompile>
     <ClCompile Include="..\TESReloaded\Core\RainProbe.cpp">
+      <Filter>Core</Filter>
+    </ClCompile>
+    <ClCompile Include="..\TESReloaded\Core\HavokStripProfile.cpp">
       <Filter>Core</Filter>
     </ClCompile>
     <ClCompile Include="..\TESReloaded\Core\OcclusionCulling.cpp">

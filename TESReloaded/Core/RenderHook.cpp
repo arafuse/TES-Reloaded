@@ -7,6 +7,7 @@
 #include "WetActors.h"
 #include "GrassTrail.h"
 #include "OcclusionCulling.h"
+#include "HavokStripProfile.h"
 
 // --- Whole-frame plugin profiler (Develop.ProfileFrame) -----------------------
 // Definitions for FrameProfiler.h; see that header for the bucket model and for
@@ -27,7 +28,8 @@ namespace FrameProfiler {
 			"Occ:Begin", "Occ:End", "Occ:Issue",
 			"Hook:Engine", "Hook:SetCT", "Hook:Resolve", "Hook:MidScene", "Hook:ShellWater",
 			"Mid:Resolve", "Mid:Setup", "Mid:Sun", "Mid:Probe", "Mid:ProbeRead", "Mid:Point", "Mid:Restore",
-			"GrassTrail"
+			"GrassTrail",
+			"Pass:Far", "Pass:Shell", "Pass:Reflection"
 		};
 		const char* const GpuBucketNames[Gpu_COUNT] = {
 			"GPU:ShadowMaps", "GPU:ShadowExt", "GPU:ShadowPoint", "GPU:MainPass",
@@ -285,6 +287,7 @@ namespace FrameProfiler {
 			Logger::Log("[FrameProfile]   -- ShaderHook detail (NESTED; not part of the sum above) --");
 			for (int i = TopLevelEnd; i < Buck_COUNT; i++) {
 				if (i == Buck_MidResolve) Logger::Log("[FrameProfile]   -- Hook:MidScene detail (NESTED; Mid:ProbeRead is inside Mid:Probe) --");
+				if (i == Buck_PassFar) Logger::Log("[FrameProfile]   -- pass spans (whole-pass CPU, cull + draws; overlap the buckets above) --");
 				double ms = gAccumMs[i] * inv;
 				Logger::Log("[FrameProfile]   %-18s %8.4f ms  (max %8.4f) %6.2f %%  %9.1f calls/frame",
 					BucketNames[i], ms, gMaxMs[i], ms * pctInv, gCalls[i] * inv);
@@ -372,6 +375,7 @@ namespace FrameProfiler {
 
 	void FrameBegin() {
 		Active = TheSettingManager && TheSettingManager->SettingsMain.Develop.ProfileFrame != 0;
+		HavokStripProfile::SetEnabled(Active);
 		for (int b = 0; b < Gpu_COUNT; b++) gRangeState[b] = 0;
 		if (!Active) return;
 		if (gQpcFreq == 0) { LARGE_INTEGER f; QueryPerformanceFrequency(&f); gQpcFreq = f.QuadPart; }
@@ -431,6 +435,7 @@ namespace FrameProfiler {
 		if (++gFrames < ReportFrames) return;
 		Report();
 		DrawStats::Report(gFrames, gQpcFreq);
+		HavokStripProfile::Report(gFrames);
 		ResetWindow();
 	}
 }
@@ -535,6 +540,7 @@ public:
 	UInt32	TrackSetupShaderPrograms(NiGeometry*, NiSkinInstance*, NiSkinPartition::Partition*, NiGeometryBufferData*, NiPropertyState*, NiDynamicEffectState*, NiTransform*, UInt32);
 	void	TrackCullingBSFadeNode(NiCullingProcess*);
 	void	TrackWaterReflectionCull(NiAVObject*);
+	UInt32	TrackReflectionPass(UInt32, UInt32);
 	float	TrackFarPlane();
 	HRESULT TrackSetSamplerState(UInt32, D3DSAMPLERSTATETYPE, UInt32, UInt8);
 #elif defined(SKYRIM)
@@ -810,6 +816,17 @@ void RenderHook::TrackWaterReflectionCull(NiAVObject* Object) {
 		}
 	}
 	(this->*WaterReflectionCull)(Object);
+
+}
+
+// NiRenderer_ReflectionPass (0x0049BEF0, thiscall, two dword arguments, ret 8), called once a frame
+// from 0x0049E9BF. Hooked only to time the whole reflection pass for the frame profiler.
+UInt32 (__thiscall RenderHook::* ReflectionPass)(UInt32, UInt32);
+UInt32 (__thiscall RenderHook::* TrackReflectionPass)(UInt32, UInt32);
+UInt32 RenderHook::TrackReflectionPass(UInt32 Arg1, UInt32 Arg2) {
+
+	FrameProfiler::Scope ReflectionScope(FrameProfiler::Buck_PassReflection);
+	return (this->*ReflectionPass)(Arg1, Arg2);
 
 }
 #endif
@@ -1579,9 +1596,16 @@ void __cdecl TrackRenderObject(NiCamera* Camera, NiNode* Object, NiCullingProces
 		RenderManager::ApplyPass(RenderManager::PassFar);
 	}
 	if (MainScenePass) FrameProfiler::GpuBegin(FrameProfiler::Gpu_MainPass);
-	if (MainScenePass) BeginOcclusionCull();
-	RenderObject(Camera, Object, CullingProcess, VisibleArray);
-	if (MainScenePass) EndOcclusionCull();
+	if (MainScenePass) {
+		BeginOcclusionCull();
+		{
+			FrameProfiler::Scope FarScope(FrameProfiler::Buck_PassFar);
+			RenderObject(Camera, Object, CullingProcess, VisibleArray);
+		}
+		EndOcclusionCull();
+	}
+	else
+		RenderObject(Camera, Object, CullingProcess, VisibleArray);
 	if (MainScenePass) FrameProfiler::GpuEnd(FrameProfiler::Gpu_MainPass);
 	// Clear before the shell renders: this disarms the mid-scene shadow trigger and
 	// SetCT's depth resolve for the rest of the frame (shell, first-person and
@@ -1620,7 +1644,10 @@ void __cdecl TrackRenderObject(NiCamera* Camera, NiNode* Object, NiCullingProces
 				// The engine's Clear() cannot set the value, hence the device call.
 				TheRenderManager->device->Clear(0, NULL, D3DCLEAR_ZBUFFER, 0, RenderManager::ShellClearDepth, 0);
 				FrameProfiler::GpuBegin(FrameProfiler::Gpu_Shell);
-				RenderObject(Camera, Object, CullingProcess, VisibleArray);
+				{
+					FrameProfiler::Scope ShellScope(FrameProfiler::Buck_PassShell);
+					RenderObject(Camera, Object, CullingProcess, VisibleArray);
+				}
 				FrameProfiler::GpuEnd(FrameProfiler::Gpu_Shell);
 				RestoreShellWaterDepthSamplers();
 				// Flatten only after the last shell draw, since shell water reads the untouched
@@ -1953,6 +1980,8 @@ void CreateRenderHook() {
 	TrackFarPlane							= &RenderHook::TrackFarPlane;
 	*((int*)&WaterReflectionCull)			= 0x0049CBF0;
 	TrackWaterReflectionCull				= &RenderHook::TrackWaterReflectionCull;
+	*((int*)&ReflectionPass)				= 0x0049BEF0;
+	TrackReflectionPass						= &RenderHook::TrackReflectionPass;
 	*((int*)&SetSamplerState)				= 0x0077B610;
 	TrackSetSamplerState					= &RenderHook::TrackSetSamplerState;
 	*((int*)&SetupGrassInstances)			= kSetupGrassInstances;
@@ -1982,6 +2011,7 @@ void CreateRenderHook() {
 	DetourAttach(&(PVOID&)HDRRender,					*((PVOID*)&TrackHDRRender));
 	DetourAttach(&(PVOID&)FarPlane,						*((PVOID*)&TrackFarPlane));
 	DetourAttach(&(PVOID&)WaterReflectionCull,			*((PVOID*)&TrackWaterReflectionCull));
+	DetourAttach(&(PVOID&)ReflectionPass,				*((PVOID*)&TrackReflectionPass));
 	DetourAttach(&(PVOID&)SetSamplerState,				*((PVOID*)&TrackSetSamplerState));
 	DetourAttach(&(PVOID&)SaveGameScreenshot,					  &TrackSaveGameScreenshot);
 	//DetourAttach(&(PVOID&)SetShaderPackage,						  &TrackSetShaderPackage);

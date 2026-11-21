@@ -60,6 +60,11 @@ namespace FrameProfiler {
 		// --- detail, nested inside Buck_UpdateConstants ---
 		Buck_GrassTrail,          // GrassTrail::Update: clock, stamps, dirty-band uploads
 
+		// --- pass spans: a whole pass's CPU time, overlapping ShaderHook and the buckets above ---
+		Buck_PassFar,             // the main pass RenderObject (the far pass when the shell is on)
+		Buck_PassShell,           // the near-shell RenderObject
+		Buck_PassReflection,      // NiRenderer_ReflectionPass 0x49BEF0: the water reflection's cull and draws
+
 		Buck_COUNT
 	};
 	const int TopLevelBegin = Buck_UpdateShaderStates;
