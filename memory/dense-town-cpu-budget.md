@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 5ca85939-0ce7-4885-a0a4-d627c1b78551
-  modified: 2026-11-21T15:33:57.003Z
+  modified: 2026-11-21T15:52:22.802Z
 ---
 
 Dense mod-town spot (same one as [[occlusion-culling]] and [[reflection-occlusion-not-worth-it]]), DXVK.
@@ -44,6 +44,20 @@ p95 25.37 → 24.71; GPU busy unchanged (6.85 / 6.94). That is more than the ~1 
 is likely the fixed-timestep feedback ([[many-actors-havok-cost]]), part crowd variation (the
 cache-on run's 5 s medians ranged 20.2-23.9). The sampler shows the loop rows gone and update phase
 6.47 ms/frame; the resolver is below the report's cutoff.
+
+**The cache assumes a NiTriStripsData's strips never change after it is first looked up.** The
+in-place writers of +0x44/+0x48 all run before that:
+- `Replace` 0x719F40 (only caller 0x8C6008, on newly built data);
+- 0x71A040 via 0x765475 (same strips, clears the index list);
+- ProtoPlugin's StripJoin ([[protoplugin-sibling]]), at NiTriStrips link time on the loader thread.
+  It touches render data only: collision data is never linked by an NiTriStrips, and the town's
+  143-strip collision mesh was still unjoined with StripJoin on.
+
+Any NEW code that rewrites strips in place after load must also queue the data as freed (call the
+destructor hook's push), or the cache will serve a stale table. Never join collision strips:
+the NIF's precomputed MOPP tree addresses triangles by index, and a join renumbers them. If a NIF
+shares one NiTriStripsData between render and collision, StripJoin would renumber its collision
+triangles. That is a ProtoPlugin-side risk, not seen so far, and verify mode can't catch it.
 
 **Main-pass size bins (bound diameter, px of screen height, per frame):** statics <4 px 170,
 4-8 px 77, 8-16 px 257 (of 4,313); actors <4 px 214, <8 px 296 of 735, but these are per GEOMETRY
