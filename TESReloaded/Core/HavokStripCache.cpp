@@ -164,6 +164,7 @@ namespace HavokStripCache {
 	void OnFrame() {
 		if (!gInstalled) return;
 		if (!gMainThread) gMainThread = GetCurrentThreadId();
+		if (gFreedCount != gFreedSeen) DrainFreed();
 		if (!gVerify || ++gFrames < kStatsFrames) return;
 		Logger::Log("[HavokStripCache] %d frames: cached %llu walked %llu mismatches %llu entries %u drains %llu freed %llu",
 			gFrames, gStats.Cached, gStats.Walked, gStats.Mismatches, (UInt32)gEntries.size(), gStats.Drains, gStats.Freed);
