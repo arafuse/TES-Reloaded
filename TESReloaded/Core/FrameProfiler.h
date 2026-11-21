@@ -69,9 +69,9 @@ namespace FrameProfiler {
 	// slower" from "the same work now runs on three times the draws".
 	enum Counter {
 		Cnt_Draws,          // TrackSetupShaderPrograms invocations
-		// Cnt_Draws split by pass. The water reflection map is not flagged by 0xB42E86 on its draw
-		// path, so it lands in Other (with first person and other off-screen renders).
-		Cnt_DrawsFar, Cnt_DrawsShell, Cnt_DrawsOther,
+		// Cnt_Draws split by pass: the water reflection pass (flag 0xB42CE8), the main far pass, the
+		// near shell, and anything else (first person and other off-screen renders).
+		Cnt_DrawsReflection, Cnt_DrawsFar, Cnt_DrawsShell, Cnt_DrawsOther,
 		Cnt_SetCT,          // ShaderRecord::SetCT invocations
 		Cnt_SetPerGeomCT,   // ShaderRecord::SetPerGeomCT invocations
 		Cnt_DepthResolves,  // depth resolves triggered from SetCT
