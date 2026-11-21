@@ -32,3 +32,4 @@ metadata:
 - **Query results:** read them with `GetData(..., 0)` only, and treat S_FALSE as visible. Never read them back through LockRect; see [[d3d9-gpu-readback-stall]].
 - **Candidate types:** statics, containers, doors, furniture, activators and items. Lights, trees, grass, actors and the player are never candidates. Bounds that reach below the water plane are always drawn, because they show through refraction.
 - **Debug modes (`[Develop] OcclusionCullDebug`, read at load):** 1 logs stats each second; 2 freezes the first non-empty hidden set after a load (save at the spot to inspect); 3 measures only and never culls.
+- **The water reflection pass is not culled.** Culling it was tried and shelved: 0.47 ms saved, under the 1 ms bar. See [[reflection-occlusion-not-worth-it]].
