@@ -40,7 +40,7 @@ namespace FrameProfiler {
 			"  (in ShadowExt)", "  (in ShadowExt)", "  (in ShadowExt)", "  (in TreesNear)", "  (in TreesFar)"
 		};
 		const char* const CounterNames[Cnt_COUNT] = {
-			"Draws", "  far pass", "  shell", "  other (reflection)", "SetCT", "SetPerGeomCT", "DepthResolves", "RenderedBlits", "Scenes",
+			"Draws", "  reflection", "  far pass", "  shell", "  other", "SetCT", "SetPerGeomCT", "DepthResolves", "RenderedBlits", "Scenes",
 			"GrassBatches", "GrassInstances", "GrassTris",
 			"Grass <1k", "Grass 1-3k", "Grass 3-6k", "Grass 6-9k", "Grass >9k",
 			"TreeItemsNear", "TreeItemsFar", "ActorItems",
@@ -475,6 +475,9 @@ static const UInt32 kDetectorWindowDumpAttributesReturn = 0x004967CD;
 // Engine global set to 1 around the water-reflection WorldSceneGraph render (0x004D0404/0x004D0413)
 // and read by the game's shader setup to alter behavior during that pass.
 static UInt8* const kIsRenderingWaterReflections = (UInt8*)0x00B42E86;
+/// Set by NiRenderer_ReflectionPass (0x49BEF0) from 0x49C4CC to 0x49C809, around the reflection map's
+/// scene walk and draws. 0xB42E86 is not set on that path.
+static UInt8* const kIsRenderingReflectionPass = (UInt8*)0x00B42CE8;
 #elif defined(SKYRIM)
 #define kRender 0x0069BDF0
 #define kProcessImageSpaceShaders 0x00C70DA0
@@ -1301,7 +1304,8 @@ UInt32 RenderHook::TrackSetupShaderPrograms(NiGeometry* Geometry, NiSkinInstance
 	FrameProfiler::Scope HookScope(FrameProfiler::Buck_ShaderHook);
 	FrameProfiler::Count(FrameProfiler::Cnt_Draws);
 	if (FrameProfiler::Active) {
-		FrameProfiler::Count(TheShaderManager->InMainScenePass ? FrameProfiler::Cnt_DrawsFar :
+		FrameProfiler::Count(*kIsRenderingReflectionPass ? FrameProfiler::Cnt_DrawsReflection :
+			TheShaderManager->InMainScenePass ? FrameProfiler::Cnt_DrawsFar :
 			RenderManager::CurrentPass == RenderManager::PassNear ? FrameProfiler::Cnt_DrawsShell : FrameProfiler::Cnt_DrawsOther);
 	}
 
