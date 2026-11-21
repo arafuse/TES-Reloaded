@@ -40,7 +40,7 @@ namespace FrameProfiler {
 			"  (in ShadowExt)", "  (in ShadowExt)", "  (in ShadowExt)", "  (in TreesNear)", "  (in TreesFar)"
 		};
 		const char* const CounterNames[Cnt_COUNT] = {
-			"Draws", "SetCT", "SetPerGeomCT", "DepthResolves", "RenderedBlits", "Scenes",
+			"Draws", "  far pass", "  shell", "  other (reflection)", "SetCT", "SetPerGeomCT", "DepthResolves", "RenderedBlits", "Scenes",
 			"GrassBatches", "GrassInstances", "GrassTris",
 			"Grass <1k", "Grass 1-3k", "Grass 3-6k", "Grass 6-9k", "Grass >9k",
 			"TreeItemsNear", "TreeItemsFar", "ActorItems",
@@ -1300,6 +1300,10 @@ UInt32 RenderHook::TrackSetupShaderPrograms(NiGeometry* Geometry, NiSkinInstance
 
 	FrameProfiler::Scope HookScope(FrameProfiler::Buck_ShaderHook);
 	FrameProfiler::Count(FrameProfiler::Cnt_Draws);
+	if (FrameProfiler::Active) {
+		FrameProfiler::Count(TheShaderManager->InMainScenePass ? FrameProfiler::Cnt_DrawsFar :
+			RenderManager::CurrentPass == RenderManager::PassNear ? FrameProfiler::Cnt_DrawsShell : FrameProfiler::Cnt_DrawsOther);
+	}
 
 	D3DMATRIX* Proj = &TheRenderManager->projMatrix;
 
