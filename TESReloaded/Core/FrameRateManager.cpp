@@ -9,7 +9,7 @@ FrameRateManager::FrameRateManager() {
 	LARGE_INTEGER PerformanceCounter;
 
 	Time = 0.0;
-	LastTime = 0.0;
+	LastTime = -1.0;
 	ElapsedTime = 0.0;
 	LastPerformance = 0;
 	QueryPerformanceFrequency(&Frequency); PerformanceFrequency = Frequency.QuadPart;
@@ -22,5 +22,14 @@ double FrameRateManager::GetPerformance() {
 
 	QueryPerformanceCounter(&PerformanceCounterEnd);
 	return (double)(PerformanceCounterEnd.QuadPart - TheFrameRateManager->PerformanceCounterStart) * 1000.0 / (double)TheFrameRateManager->PerformanceFrequency;
+
+}
+
+void FrameRateManager::UpdateFrameTime() {
+
+	double Now = GetPerformance() / 1000.0;
+
+	ElapsedTime = LastTime < 0.0 ? 0.0 : min(Now - LastTime, kMaxElapsedTime);
+	LastTime = Now;
 
 }

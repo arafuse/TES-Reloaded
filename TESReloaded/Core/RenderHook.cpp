@@ -712,6 +712,7 @@ void (__thiscall RenderHook::* TrackRender)(BSRenderedTexture*);
 void RenderHook::TrackRender(BSRenderedTexture* RenderedTexture) {
 	FrameProfiler::FrameBegin();
 	FrameProfiler::Scope FrameScope(FrameProfiler::Buck_FrameTotal);
+	TheFrameRateManager->UpdateFrameTime();
 
 	// The sampler's phase boundary is the same envelope FrameProfiler measures,
 	// so "render" means the same thing in both reports.
