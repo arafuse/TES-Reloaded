@@ -46,6 +46,7 @@ GameMenuManager::GameMenuManager() {
 	EditingMode = false;
 	FrameRate = 0;
 	FrameCounter = 0;
+	FrameWindowStartMs = -1.0;
 	SelectedSetting[0] = '\0';
 	InfoText[0] = '\0';
 	SetRect(&RectInfo, InfoPositionX, InfoPositionY, InfoPositionX + InfoColumnSize, InfoPositionY + RowSpace + TextSize * 2);
@@ -448,18 +449,27 @@ void GameMenuManager::Render() {
 			}
 		}
 		if (TheSettingManager->SettingsMain.Main.FPSOverlay) {
-			char Text[4];
+			char Text[16];
+			double NowMs = TheFrameRateManager->GetPerformance();
 
-			FrameCounter++;
-			if (FrameCounter == 10) {
+			if (FrameWindowStartMs < 0.0) {
+				FrameWindowStartMs = NowMs;
 				FrameCounter = 0;
-				FrameRate = 1.0 / TheFrameRateManager->ElapsedTime;
 			}
-			sprintf(Text, "%d", FrameRate);
+			else if (++FrameCounter == kFrameRateWindow) {
+				double WindowMs = NowMs - FrameWindowStartMs;
+				if (WindowMs > 0.0) FrameRate = (int)(kFrameRateWindow * 1000.0 / WindowMs + 0.5);
+				FrameWindowStartMs = NowMs;
+				FrameCounter = 0;
+			}
+			snprintf(Text, sizeof(Text), "%d", FrameRate);
 			SetRect(&Rect, 9, 6, 109, 6 + TextSize);
 			SetRect(&RectShadow, Rect.left + 1, Rect.top + 1, Rect.right + 1, Rect.bottom + 1);
 			FontSelected->DrawTextA(NULL, Text, -1, &RectShadow, DT_LEFT, TextShadowColorSelected);
 			FontSelected->DrawTextA(NULL, Text, -1, &Rect, DT_LEFT, TextColorSelected);
+		}
+		else {
+			FrameWindowStartMs = -1.0;
 		}
 	}
 
