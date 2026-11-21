@@ -1,4 +1,5 @@
 #include "HavokStripProfile.h"
+#include "HavokStripCache.h"
 
 #include <intrin.h>
 #include <algorithm>
@@ -129,6 +130,8 @@ namespace HavokStripProfile {
 		Logger::Log("[FrameProfile]   -- hkNiTriStripsShape triangle lookup (0x915D00; update phase; per frame; recording re-walks the strips) --");
 		Logger::Log("[FrameProfile]   calls %.1f, strips walked %.1f (%.1f per call), off-main-thread calls dropped %.1f, distinct strip data %u",
 			gCalls * Inv, gWalked * Inv, gCalls ? (double)gWalked / gCalls : 0.0, gOffThread * Inv, (UInt32)gData.size());
+		if (HavokStripCache::Installed())
+			Logger::Log("[FrameProfile]   (strip cache installed: the engine no longer walks these; counts are the walk it replaced)");
 
 		std::string Line = "[FrameProfile]   calls by strips walked:";
 		char Buffer[160];

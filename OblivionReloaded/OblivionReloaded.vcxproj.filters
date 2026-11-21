@@ -107,6 +107,12 @@
     <ClInclude Include="..\TESReloaded\Core\HavokStripProfile.h">
       <Filter>Core</Filter>
     </ClInclude>
+    <ClInclude Include="..\TESReloaded\Core\HavokStripCache.h">
+      <Filter>Core</Filter>
+    </ClInclude>
+    <ClInclude Include="..\TESReloaded\Core\HavokStripMath.h">
+      <Filter>Core</Filter>
+    </ClInclude>
     <ClInclude Include="..\TESReloaded\Core\OcclusionCulling.h">
       <Filter>Core</Filter>
     </ClInclude>
@@ -269,6 +275,9 @@
       <Filter>Core</Filter>
     </ClCompile>
     <ClCompile Include="..\TESReloaded\Core\HavokStripProfile.cpp">
+      <Filter>Core</Filter>
+    </ClCompile>
+    <ClCompile Include="..\TESReloaded\Core\HavokStripCache.cpp">
       <Filter>Core</Filter>
     </ClCompile>
     <ClCompile Include="..\TESReloaded\Core\OcclusionCulling.cpp">

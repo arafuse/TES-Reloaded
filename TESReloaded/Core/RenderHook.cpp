@@ -8,6 +8,7 @@
 #include "GrassTrail.h"
 #include "OcclusionCulling.h"
 #include "HavokStripProfile.h"
+#include "HavokStripCache.h"
 
 // --- Whole-frame plugin profiler (Develop.ProfileFrame) -----------------------
 // Definitions for FrameProfiler.h; see that header for the bucket model and for
@@ -736,6 +737,7 @@ void RenderHook::TrackRender(BSRenderedTexture* RenderedTexture) {
 	FrameScope.Close();
 	FrameProfiler::FrameEnd();
 	SampleProfiler::InRender = false;
+	HavokStripCache::OnFrame();
 }
 
 bool (__thiscall RenderHook::* EndTargetGroup)(NiCamera*, NiRenderTargetGroup*);

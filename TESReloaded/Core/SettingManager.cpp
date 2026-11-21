@@ -85,6 +85,7 @@ SettingManager::SettingManager() {
 	GetPrivateProfileStringA("Main", "WaterReflectionCullMinSize", "0.0", value, SettingStringBuffer, Filename);
 	SettingsMain.Main.WaterReflectionCullMinSize = max(0.0f, (float)atof(value));
 	SettingsMain.Main.OcclusionCulling = GetPrivateProfileIntA("Main", "OcclusionCulling", 0, Filename);
+	SettingsMain.Main.HavokStripCache = GetPrivateProfileIntA("Main", "HavokStripCache", 0, Filename);
 	GetPrivateProfileStringA("Main", "OcclusionAlwaysDrawDistance", "1024.0", value, SettingStringBuffer, Filename);
 	SettingsMain.Main.OcclusionAlwaysDrawDistance = max(0.0f, (float)atof(value));
 	GetPrivateProfileStringA("Main", "OcclusionCameraCutDistance", "128.0", value, SettingStringBuffer, Filename);
@@ -458,6 +459,7 @@ SettingManager::SettingManager() {
 	SettingsMain.Develop.ProfileSamplerHz = GetPrivateProfileIntA("Develop", "ProfileSamplerHz", 1000, Filename);
 	SettingsMain.Develop.NearShellDebug = GetPrivateProfileIntA("Develop", "NearShellDebug", 0, Filename);
 	SettingsMain.Develop.OcclusionCullDebug = GetPrivateProfileIntA("Develop", "OcclusionCullDebug", 0, Filename);
+	SettingsMain.Develop.HavokStripCacheVerify = GetPrivateProfileIntA("Develop", "HavokStripCacheVerify", 0, Filename);
 	SettingsMain.Develop.LogSunShadowStealth = GetPrivateProfileIntA("Develop", "LogSunShadowStealth", 0, Filename);
 	SettingsMain.Develop.LogWetActors = GetPrivateProfileIntA("Develop", "LogWetActors", 0, Filename);
 	SettingsMain.Develop.LogAnimationBlending = GetPrivateProfileIntA("Develop", "LogAnimationBlending", 0, Filename);
