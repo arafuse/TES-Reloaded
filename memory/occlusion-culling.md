@@ -5,7 +5,7 @@ metadata:
   type: project
 ---
 
-`OcclusionCulling.cpp` queries each cullable reference's bound as one screen rect, drawn at the bound's nearest depth, against the finished far-pass depth. On the next frame it sets `kFlag_AppCulled` on the roots that came back with zero pixels, for the far pass only. It's on in the user's live INI; the tracked template ships it off. Design: `docs/superpowers/specs/2026-11-20-occlusion-culling-design.md`.
+`OcclusionCulling.cpp` queries each cullable reference's bound as one screen rect, drawn at the bound's nearest depth, against the finished far-pass depth. On the next frame it sets `kFlag_AppCulled` on the roots that came back with zero pixels, for the far pass only. It is on by default (code default and the tracked template INI both 1). Design: `docs/superpowers/specs/2026-11-20-occlusion-culling-design.md`.
 
 **Measured 2026-11-20** (PresentMon, all ProtoPlugin probes off, 60 s standing still, `NearShellEnabled = 1`):
 
