@@ -84,8 +84,8 @@ SettingManager::SettingManager() {
 	SettingsMain.Main.WaterReflectionMapSize = GetPrivateProfileIntA("Main", "WaterReflectionMapSize", 512, Filename);
 	GetPrivateProfileStringA("Main", "WaterReflectionCullMinSize", "0.0", value, SettingStringBuffer, Filename);
 	SettingsMain.Main.WaterReflectionCullMinSize = max(0.0f, (float)atof(value));
-	SettingsMain.Main.OcclusionCulling = GetPrivateProfileIntA("Main", "OcclusionCulling", 0, Filename);
-	SettingsMain.Main.HavokStripCache = GetPrivateProfileIntA("Main", "HavokStripCache", 0, Filename);
+	SettingsMain.Main.OcclusionCulling = GetPrivateProfileIntA("Main", "OcclusionCulling", 1, Filename);
+	SettingsMain.Main.HavokStripCache = GetPrivateProfileIntA("Main", "HavokStripCache", 1, Filename);
 	GetPrivateProfileStringA("Main", "OcclusionAlwaysDrawDistance", "1024.0", value, SettingStringBuffer, Filename);
 	SettingsMain.Main.OcclusionAlwaysDrawDistance = max(0.0f, (float)atof(value));
 	GetPrivateProfileStringA("Main", "OcclusionCameraCutDistance", "128.0", value, SettingStringBuffer, Filename);
