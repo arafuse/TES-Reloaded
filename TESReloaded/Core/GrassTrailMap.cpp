@@ -137,7 +137,8 @@ float Map::AgeOf(uint16_t TimeValue) const {
 
 float Map::Weight(LayerId Id, uint16_t Peak, uint16_t TimeValue) const {
 	if (Peak == 0) return 0.0f;
-	float W = SpringWeight(AgeOf(TimeValue), RecoveryValue, Id == Layer_Ground ? 0.0f : SpringinessValue);
+	float SpringAge = MaxF(AgeOf(TimeValue) - kStampHold, 0.0f);
+	float W = SpringWeight(SpringAge, RecoveryValue, Id == Layer_Ground ? 0.0f : SpringinessValue);
 	return Peak / 65535.0f * W;
 }
 
@@ -151,7 +152,7 @@ void Map::SweepLayer(Layer& L) {
 			int Col = PosMod(Cell);
 			uint16_t* Texel = &L.Cells[((size_t)Row * kSize + Col) * 4];
 			if (Texel[2] == 0) continue;
-			if (AgeOf(Texel[3]) >= RecoveryValue) {
+			if (AgeOf(Texel[3]) >= RecoveryValue + kStampHold) {
 				Texel[0] = kNeutral;
 				Texel[1] = kNeutral;
 				Texel[2] = 0;

@@ -27,4 +27,21 @@ Verified by in-game logging + disassembly (Oblivion 1.2.0.416):
 - Debugging discriminator: log camera ptr + RT dimensions at every WSG render, every apply
   execution, and the water-bind trigger.
 
+**Reflection pass structure** (disassembly plus in-game logging, 2026-11-21):
+- `NiRenderer_ReflectionPass` 0x49BEF0 is called once per frame from 0x49E9BF. Global byte
+  **0xB42CE8** is set for its whole duration, so use it to detect the reflection pass; 0xB42E86 is
+  not set on this path. The profiler's `reflection` draw row keys on it (about 3,200 draws in the
+  dense town).
+- Its per-node cull is 0x49CBF0, detoured as `RenderHook::TrackWaterReflectionCull`. Its
+  `EndScene` is a call at 0x49C81B to 0x7D72D0 (cdecl, no arguments; the caller rewrites
+  eax/ecx/edx afterwards). That call site is the last point where the reflection target is bound.
+- **Depth:** a 1024x1024 colour target and viewport, but the depth surface is the MAIN one
+  (3072x1728 D24S8). The reflection draws only into its top-left 1024x1024 corner.
+- **Camera:** the device's `D3DTS_VIEW` is identity. `TheRenderManager->viewMatrix` is rotation
+  only, because rendering is camera-relative, and the eye is at 0xB3F92C (`kCameraWorldTranslate`).
+  That eye equals the main camera mirrored in the water plane. The projection has near 40
+  (`_33` 1.0001, `_43` -40.004), and it matches on the device and the renderer.
+- To project a world point into the reflection: Translate(-eye) × viewMatrix × projMatrix, as
+  row vectors. Using the device view gives eye (0,0,0) and wrong rects.
+
 Related: [[grass-drawn-after-water]].

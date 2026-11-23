@@ -106,6 +106,11 @@ struct SettingsMainStruct {
 		// times 100, so roughly 100 for a bound filling the view and falling as 1/distance^2.
 		// Useful values are well under 1. 0 disables the cull entirely.
 		float	WaterReflectionCullMinSize;
+		bool	OcclusionCulling;				///< skip references hidden in the last far pass (OcclusionCulling.cpp)
+		float	OcclusionAlwaysDrawDistance;	///< references whose bound is nearer than this are never culled
+		float	OcclusionCameraCutDistance;		///< camera move per frame above which last frame's results are dropped
+		UInt32	OcclusionMaxQueries;			///< occlusion queries issued per frame at most; the rest are drawn
+		bool	HavokStripCache;				///< cache hkNiTriStripsShape strip lookups (HavokStripCache.cpp)
 		float	FarPlaneDistance;
 		float	FoV;
 		bool	NearShellEnabled;
@@ -299,6 +304,8 @@ struct SettingsMainStruct {
 		UInt8	ProfileSampler;		// key code: toggles the main-thread sampling profiler
 		int		ProfileSamplerHz;
 		UInt8	NearShellDebug;
+		UInt8	OcclusionCullDebug;		///< 1 logs occlusion stats each second, 2 freezes the first hidden set after a load, 3 measures without culling
+		UInt8	HavokStripCacheVerify;	///< checks every cached strip lookup against the engine walk and logs stats every 600 frames
 		UInt8	LogSunShadowStealth;	// logs the player sun shadow probe about once a second
 		UInt8	LogWetActors;			// logs player and nearest-NPC wetness about once a second
 		bool	LogAnimationBlending;	// logs every animation transition AnimationBlending lengthens
@@ -444,6 +451,7 @@ struct SettingsGrassStruct {
 	float MinHeight;
 	float MinDistance;
 	float MaxDistance;
+	bool CollisionEnabled;				///< Master switch for all actor collision: tall-grass bending, groundcover press and shrub bending
 	float CollisionRadius;
 	float CollisionStrength;
 	float CollisionFlattenStrength;

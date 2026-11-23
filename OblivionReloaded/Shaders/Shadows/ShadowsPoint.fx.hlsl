@@ -14,14 +14,18 @@
 // compiled effect that still outputs colour), so keep it declared.
 bool ShadowOutputsFactor = true;
 
+// Removing one light's share is a multiply by (total - lost) / total, with the total from
+// SceneLightTotal.hlsl, so a shadow is never darker than the scene without its light. The total does
+// not know the sun shadow, which ran first and kept the point light: where the two overlap this point
+// shadow is a little shallower than exact (by lost * base * (1 - sun) / total^2), never deeper.
+
 float4x4 TESR_ViewTransform;
 float4x4 TESR_ProjectionTransform;
 float4 TESR_ShadowPointData;      // x = shadow strength scale, z = 1 / cube map size, w = depth bias
-float4 TESR_ShadowLightPosition0; // xyz = camera-relative light pos, w = far plane (0 = slot empty)
-float4 TESR_ShadowLightPosition1;
-float4 TESR_ShadowLightPosition2;
-float4 TESR_ShadowLightPosition3;
-float4 TESR_ShadowLightLuminance; // one component per slot (x=0..w=3): luma(Diff) * Dimmer
+float4 TESR_ShadowLightLuminance; // one component per slot (x=0..w=3): luma(Diff) * Dimmer * fade
+float4 TESR_ReciprocalResolution;
+
+#include "SceneLightTotal.hlsl"
 
 // Not sampled any more (the pass outputs a factor), but kept: effect textures bind by ordinal, so
 // removing the first sampler would shift every other one. See ShadowsExteriors.fx.hlsl.
@@ -135,36 +139,58 @@ float CubeLitFraction(samplerCUBE cubeMap, float3 lookup, float receiverDist)
 	return lit / (4.0f * PCF_HALF_WIDTH * PCF_HALF_WIDTH);
 }
 
-// One light's contribution. Returns the factor to multiply scene color by: 1 = unshadowed.
-// Brightness only -- the shadow darkens all three channels equally and never tints them. This is an
-// approximation, not a true light subtraction: the result multiplies the already-composited scene
-// colour, so a shadowed pixel loses a fraction of ambient and of every other light too, not just this
-// one -- it over-darkens where ambient dominates. It also ignores N.L. Still, a dim light casts a
-// correspondingly faint shadow and a bright one a deep shadow.
-float GetPointShadow(samplerCUBE cubeMap, float4 lightPos, float lum, float3 pixelPos)
+// toWorld is affine in the UV, so the view ray one texel over is this pixel's ray plus a constant
+// step. Preshaders: evaluated once per draw, not per pixel.
+static const float3 rayStepX = (2.0f * TESR_ReciprocalResolution.x / TESR_ProjectionTransform[0][0]) *
+	float3(TESR_ViewTransform[0][0], TESR_ViewTransform[1][0], TESR_ViewTransform[2][0]);
+static const float3 rayStepY = (-2.0f * TESR_ReciprocalResolution.y / TESR_ProjectionTransform[1][1]) *
+	float3(TESR_ViewTransform[0][1], TESR_ViewTransform[1][1], TESR_ViewTransform[2][1]);
+
+// World-space geometric normal from the depth derivatives, facing the camera. Per triangle, so it
+// ignores normal maps and smoothing; it only weights each light's N.L.
+float3 GetNormal(float2 UVCoord)
+{
+	float2 texelX = float2(TESR_ReciprocalResolution.x, 0.0f);
+	float2 texelY = float2(0.0f, TESR_ReciprocalResolution.y);
+	float3 ray = toWorld(UVCoord);
+	float3 pos = ray * readDepth(UVCoord);
+
+	float3 left = pos - (ray - rayStepX) * readDepth(UVCoord - texelX);
+	float3 right = (ray + rayStepX) * readDepth(UVCoord + texelX) - pos;
+	float3 up = pos - (ray - rayStepY) * readDepth(UVCoord - texelY);
+	float3 down = (ray + rayStepY) * readDepth(UVCoord + texelY) - pos;
+	// Shorter derivative wins: at a silhouette the far side spans a depth jump.
+	float3 dx = dot(left, left) < dot(right, right) ? left : right;
+	float3 dy = dot(up, up) < dot(down, down) ? up : down;
+
+	float3 N = normalize(cross(dx, dy));
+	return (dot(N, ray) > 0.0f) ? -N : N;
+}
+
+// One slot's light at the pixel: x = light its shadow removes (faded), y = light it adds unshadowed.
+// Brightness only -- the shadow darkens all three channels equally and never tints them.
+float2 SlotLight(samplerCUBE cubeMap, float4 lightPos, float lum, float fullLum, float3 pixelPos, float3 N)
 {
 	float radius = lightPos.w;
-	if (radius == 0.0f) return 1.0f;
+	if (radius == 0.0f) return 0.0f;
 
 	float3 dir = pixelPos - lightPos.xyz;
 	float len = length(dir);
 	float dist = len / radius;
 	// Out of reach, or so close that the cube face lookup below would divide by zero.
-	if (dist >= 1.0f || len < 0.001f) return 1.0f;
+	if (dist >= 1.0f || len < 0.001f) return 0.0f;
+
+	// The radius is the cube far plane: the authored radius, except for carried torches (fixed 257),
+	// whose shadow therefore fades out before their light does.
+	float geometry = PointGeometry(-dir, radius, N);
+	// Facing away from the light: it adds nothing here, so there is nothing to shadow.
+	if (geometry <= 0.0f) return 0.0f;
 
 	// Negate Z to match GetCubeFaceAtUp's swapped Z faces; change both together.
 	float3 lookup = float3(dir.x, dir.y, -dir.z);
 
 	float lit = CubeLitFraction(cubeMap, lookup, dist);
-
-	// The engine's own quadratic falloff. dist is normalized by the cube far plane:
-	// the authored radius, except for carried torches (fixed 257), whose shadow
-	// therefore fades out before their light does.
-	float att = saturate(1.0f - dist * dist);
-	// Clamp lum, not the product: a Dimmer > 1 would flatten unlit to black across
-	// much of the radius.
-	float unlit = 1.0f - saturate(lum) * att;
-	return lerp(unlit, 1.0f, lit);
+	return geometry * float2(lum * (1.0f - lit), fullLum);
 }
 
 float4 Shadow(VSOUT IN) : COLOR0{
@@ -180,10 +206,17 @@ float4 Shadow(VSOUT IN) : COLOR0{
 	float depth = reliefDepth(IN.UVCoord, readDepth(IN.UVCoord));
 	float3 pixelPos = toWorld(IN.UVCoord) * depth; // camera-relative, like the lights
 
-	float shadow = GetPointShadow(TESR_ShadowCubeMapBuffer0, TESR_ShadowLightPosition0, TESR_ShadowLightLuminance.x, pixelPos);
-	shadow *= GetPointShadow(TESR_ShadowCubeMapBuffer1, TESR_ShadowLightPosition1, TESR_ShadowLightLuminance.y, pixelPos);
-	shadow *= GetPointShadow(TESR_ShadowCubeMapBuffer2, TESR_ShadowLightPosition2, TESR_ShadowLightLuminance.z, pixelPos);
-	shadow *= GetPointShadow(TESR_ShadowCubeMapBuffer3, TESR_ShadowLightPosition3, TESR_ShadowLightLuminance.w, pixelPos);
+	float3 N = GetNormal(IN.UVCoord);
+
+	float2 slots = SlotLight(TESR_ShadowCubeMapBuffer0, TESR_ShadowLightPosition0, TESR_ShadowLightLuminance.x, TESR_ShadowSlotLuminance.x, pixelPos, N);
+	slots += SlotLight(TESR_ShadowCubeMapBuffer1, TESR_ShadowLightPosition1, TESR_ShadowLightLuminance.y, TESR_ShadowSlotLuminance.y, pixelPos, N);
+	slots += SlotLight(TESR_ShadowCubeMapBuffer2, TESR_ShadowLightPosition2, TESR_ShadowLightLuminance.z, TESR_ShadowSlotLuminance.z, pixelPos, N);
+	slots += SlotLight(TESR_ShadowCubeMapBuffer3, TESR_ShadowLightPosition3, TESR_ShadowLightLuminance.w, TESR_ShadowSlotLuminance.w, pixelPos, N);
+
+	float total = BaseLightAt(N) + slots.y + FillLightAt(pixelPos, N);
+
+	// lost <= total, since every slot's faded luminance is at most its full one.
+	float shadow = 1.0f - slots.x / max(total, 0.0001f);
 
 	// Scale the combined term (lighter under volumetric fog) so overlapping lights
 	// lighten together.

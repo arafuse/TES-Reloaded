@@ -33,7 +33,10 @@ private:
 	RECT			RectShadow;
 	RECT			RectInfo;
 	RECT			RectInfoShadow;
-	int				FrameRate;
-	int				FrameCounter;
+	static const int kFrameRateWindow = 10;	///< Frames averaged per FPS overlay update
+
+	int				FrameRate;			///< Last averaged frame rate shown by the FPS overlay
+	int				FrameCounter;		///< Frames counted in the current FPS window
+	double			FrameWindowStartMs;	///< FrameRateManager::GetPerformance() at the window start; < 0 restarts the window
 
 };

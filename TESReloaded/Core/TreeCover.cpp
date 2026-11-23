@@ -81,7 +81,7 @@ static float ScanTreeCover(TreeCoverSnapshot& Shrubs) {
 	In.QX = Player->pos.x;
 	In.QY = Player->pos.y;
 	In.QZ = Player->pos.z + kTreeCoverTorsoHeight;
-	bool Bending = Settings->TreeCollision && TheShaderManager->GrassCollisionSourceCount > 0;
+	bool Bending = Settings->CollisionEnabled && Settings->TreeCollision && TheShaderManager->GrassCollisionSourceCount > 0;
 	In.PushStrength = Bending ? Settings->TreeCollisionStrength : 0.0f;
 
 	Shrubs.TorsoX = In.QX;

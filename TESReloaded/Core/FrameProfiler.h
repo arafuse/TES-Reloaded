@@ -37,6 +37,9 @@ namespace FrameProfiler {
 		Buck_EffectsPostHdr,      // ShaderManager::RenderEffectsPostHdr
 		Buck_BeginScene,          // ShaderManager::BeginScene, summed over ALL scenes in the frame
 		Buck_ShaderHook,          // RenderHook::TrackSetupShaderPrograms, summed over all draws
+		Buck_OccBegin,            // BeginOcclusionCull: readback, cell walk, flag set (before the far pass)
+		Buck_OccEnd,              // EndOcclusionCull: flag restore (after the far pass)
+		Buck_OccIssue,            // IssueOcclusionQueries: one bound-rect query per candidate
 
 		// --- detail, nested inside Buck_ShaderHook ---
 		Buck_HookEngine,          // the nested engine SetupShaderPrograms call (game cost, not ours)
@@ -57,6 +60,11 @@ namespace FrameProfiler {
 		// --- detail, nested inside Buck_UpdateConstants ---
 		Buck_GrassTrail,          // GrassTrail::Update: clock, stamps, dirty-band uploads
 
+		// --- pass spans: a whole pass's CPU time, overlapping ShaderHook and the buckets above ---
+		Buck_PassFar,             // the main pass RenderObject (the far pass when the shell is on)
+		Buck_PassShell,           // the near-shell RenderObject
+		Buck_PassReflection,      // NiRenderer_ReflectionPass 0x49BEF0: the water reflection's cull and draws
+
 		Buck_COUNT
 	};
 	const int TopLevelBegin = Buck_UpdateShaderStates;
@@ -66,6 +74,9 @@ namespace FrameProfiler {
 	// slower" from "the same work now runs on three times the draws".
 	enum Counter {
 		Cnt_Draws,          // TrackSetupShaderPrograms invocations
+		// Cnt_Draws split by pass: the water reflection pass (flag 0xB42CE8), the main far pass, the
+		// near shell, and anything else (first person and other off-screen renders).
+		Cnt_DrawsReflection, Cnt_DrawsFar, Cnt_DrawsShell, Cnt_DrawsOther,
 		Cnt_SetCT,          // ShaderRecord::SetCT invocations
 		Cnt_SetPerGeomCT,   // ShaderRecord::SetPerGeomCT invocations
 		Cnt_DepthResolves,  // depth resolves triggered from SetCT
@@ -86,6 +97,10 @@ namespace FrameProfiler {
 		Cnt_TreeBranchesFar, Cnt_TreeBranchGroupsFar, Cnt_TreeLeavesFar, Cnt_TreeLeafGroupsFar,
 		Cnt_TreeInstancedDraws,  // instanced draws issued by the dynamic-tree composites (both maps)
 		Cnt_TreeInstancedPieces, // tree pieces those draws covered
+		Cnt_OccCandidates,  // cullable references in view (occlusion culling)
+		Cnt_OccQueried,     // of those, queried against the far-pass depth
+		Cnt_OccHidden,      // of those, hidden in the last far pass
+		Cnt_OccCulled,      // references skipped by the far pass this frame
 		Cnt_COUNT
 	};
 

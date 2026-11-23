@@ -10,7 +10,7 @@ namespace DrawStats {
 
 	namespace {
 
-		const char* const PassNames[Pass_COUNT] = { "main pass (far pass when the shell is on)", "shell pass" };
+		const char* const PassNames[Pass_COUNT] = { "main pass (far pass when the shell is on)", "shell pass", "water reflection pass" };
 		const char* const ClassNames[Class_COUNT] = {
 			"statics", "distant LOD", "LOD trees", "land", "land LOD", "trees", "grass", "actors", "water", "other"
 		};
@@ -23,6 +23,16 @@ namespace DrawStats {
 		};
 
 		enum Column { Col_Draws, Col_Objects, Col_GeomData, Col_Materials, Col_LightSets, Col_MatLights, Col_Groups, Col_Runs, Col_Lit, Col_COUNT };
+
+		/// Set by NiRenderer_ReflectionPass (0x49BEF0) around the reflection map's scene walk and draws.
+		UInt8* const kIsRenderingReflectionPass = (UInt8*)0x00B42CE8;
+
+		/// Main-pass size bins: the draw's world bound diameter on screen, in pixels of screen height,
+		/// against the scene camera. Bin i holds [2^(i-1), 2^i) px; bin 0 is under 1 px.
+		const int SizeBinCount = 9;
+		const char* const SizeBinNames[SizeBinCount] = { "<1", "1-2", "2-4", "4-8", "8-16", "16-32", "32-64", "64-128", ">=128" };
+		unsigned int gFrameSizeBins[Class_COUNT][SizeBinCount] = {};
+		double       gWindowSizeBins[Class_COUNT][SizeBinCount] = {};
 
 		/// One pass/class this frame: hook calls and the distinct keys they drew with.
 		struct FrameSlot {
@@ -169,13 +179,49 @@ namespace DrawStats {
 				"total", Draws, "", Total[Col_Objects] * Inv, Total[Col_GeomData] * Inv, "", "", "", Total[Col_Groups] * Inv, "",
 				Ms, Draws > 0.0 ? Ms * 1000.0 / Draws : 0.0);
 		}
+
+		int SizeBin(NiGeometry* Geometry) {
+			NiCamera* Camera = WorldSceneGraph ? WorldSceneGraph->camera : NULL;
+			NiBound* Bound = Geometry->GetWorldBound();
+			if (!Camera || !Bound || !TheRenderManager) return SizeBinCount - 1;
+			NiPoint2 Size = { 0.0f, 0.0f };
+			TheRenderManager->GetScreenSpaceBoundSize(&Size, Bound, Camera);
+			float Pixels = Size.y * (float)TheRenderManager->height;
+			int Bin = 0;
+			for (float Edge = 1.0f; Bin < SizeBinCount - 1 && Pixels >= Edge; Edge *= 2.0f) Bin++;
+			return Bin;
+		}
+
+		void LogSizeBins(double Inv) {
+			Logger::Log("[FrameProfile]   -- main-pass draws by bound diameter on screen (px of screen height; per frame) --");
+			std::string Line = "[FrameProfile]   class      ";
+			char Buffer[48];
+			for (int b = 0; b < SizeBinCount; b++) {
+				_snprintf_s(Buffer, _TRUNCATE, " %7s", SizeBinNames[b]);
+				Line += Buffer;
+			}
+			Logger::Log("%s", Line.c_str());
+			for (int c = 0; c < Class_COUNT; c++) {
+				double Draws = 0.0;
+				for (int b = 0; b < SizeBinCount; b++) Draws += gWindowSizeBins[c][b];
+				if (Draws <= 0.0) continue;
+				_snprintf_s(Buffer, _TRUNCATE, "[FrameProfile]   %-11s", ClassNames[c]);
+				Line = Buffer;
+				for (int b = 0; b < SizeBinCount; b++) {
+					_snprintf_s(Buffer, _TRUNCATE, " %7.1f", gWindowSizeBins[c][b] * Inv);
+					Line += Buffer;
+				}
+				Logger::Log("%s", Line.c_str());
+			}
+		}
 	}
 
 	int Record(void* Shader, NiGeometry* Geometry, NiSkinInstance* SkinInstance, NiPropertyState* PropertyState,
 		NiD3DPass* ShaderPass, NiD3DVertexShaderEx* VertexShader, NiD3DPixelShaderEx* PixelShader) {
 
 		if (!FrameProfiler::Active || !Geometry) return -1;
-		int Pass = TheShaderManager->InMainScenePass ? Pass_Main :
+		int Pass = *kIsRenderingReflectionPass ? Pass_Reflection :
+			TheShaderManager->InMainScenePass ? Pass_Main :
 			RenderManager::CurrentPass == RenderManager::PassNear ? Pass_Shell : -1;
 		if (Pass < 0) return -1;
 		if (!gRootsValid) ResolveRoots();
@@ -188,6 +234,7 @@ namespace DrawStats {
 		const char* Top = NULL;
 		int Class = Classify(Geometry, SkinInstance, VertexName, PixelName, Info.SpeedTree, &Top);
 		if (Class == Class_Other) gOtherTops[Top ? Top : "(no anchor)"]++;
+		if (Pass == Pass_Main) gFrameSizeBins[Class][SizeBin(Geometry)]++;
 
 		Mix Material;
 		Material.Add(Shader);
@@ -232,6 +279,12 @@ namespace DrawStats {
 
 	void FrameEnd() {
 		gRootsValid = false;
+		for (int c = 0; c < Class_COUNT; c++) {
+			for (int b = 0; b < SizeBinCount; b++) {
+				gWindowSizeBins[c][b] += gFrameSizeBins[c][b];
+				gFrameSizeBins[c][b] = 0;
+			}
+		}
 		for (int p = 0; p < Pass_COUNT; p++) {
 			gLastGroup[p] = 0;
 			for (int c = 0; c < Class_COUNT; c++) {
@@ -270,6 +323,7 @@ namespace DrawStats {
 			for (int p = 0; p < Pass_COUNT; p++) LogTable(p, Inv, TicksToMs);
 			Logger::Log("[FrameProfile]   columns: geoData/mats/lights/mat+lt/groups are DISTINCT per frame; groups = (geometry data, material, light set),");
 			Logger::Log("[FrameProfile]   the floor of instanced draws; runs = draws whose group differs from the previous draw of the pass; lit%% = draws with a light list.");
+			LogSizeBins(Inv);
 			if (!gOtherTops.empty()) {
 				std::vector<std::pair<std::string, unsigned int>> Sorted(gOtherTops.begin(), gOtherTops.end());
 				std::sort(Sorted.begin(), Sorted.end(), [](const auto& a, const auto& b) { return a.second > b.second; });
@@ -279,11 +333,13 @@ namespace DrawStats {
 					_snprintf_s(Buffer, _TRUNCATE, "%s%.60s %.1f", i ? ", " : "", Sorted[i].first.c_str(), Sorted[i].second * Inv);
 					Line += Buffer;
 				}
-				Logger::Log("[FrameProfile]   'other' draws by top node (per frame, both passes): %s", Line.c_str());
+				Logger::Log("[FrameProfile]   'other' draws by top node (per frame, all passes): %s", Line.c_str());
 			}
 		}
 		for (int p = 0; p < Pass_COUNT; p++)
 			for (int c = 0; c < Class_COUNT; c++) gWindow[p][c] = WindowRow();
+		for (int c = 0; c < Class_COUNT; c++)
+			for (int b = 0; b < SizeBinCount; b++) gWindowSizeBins[c][b] = 0.0;
 		gOtherTops.clear();
 	}
 }

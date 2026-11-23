@@ -8,6 +8,7 @@
 #include <sstream>
 #if defined(OBLIVION)
 #include "TreeCollision.h"
+#include "OcclusionCulling.h"
 #endif
 #if defined(NEWVEGAS)
 #define RenderStateArgs 0, 0
@@ -492,6 +493,7 @@ ShadowManager::ShadowManager() {
 		PointSlots[i].LastFarPlane = 0.0f;
 		PointSlots[i].LastLuminance = 0.0f;
 		PointSlots[i].RetiringLight = NULL;
+		PointSlots[i].ShadedLight = NULL;
 	}
 	PointFadeLastMs = 0.0;
 
@@ -2129,6 +2131,7 @@ void ShadowManager::PublishPointLightConstants() {
 	D3DXVECTOR4* Positions = TheShaderManager->ShaderConst.ShadowMap.ShadowCastLightPosition;
 	// One component per slot, indexed as a float array.
 	float* Luminance = TheShaderManager->ShaderConst.ShadowMap.ShadowCastLightLuminance;
+	float* SlotLuminance = TheShaderManager->ShaderConst.ShadowPoint.SlotLuminance;
 	// Nothing else reads Diff/Dimmer, and a bad value silently kills point
 	// shadows, so log them once per occupant while profiling.
 	static NiPointLight* LastLoggedLight[PointLightMax] = { NULL };
@@ -2146,11 +2149,14 @@ void ShadowManager::PublishPointLightConstants() {
 				Positions[s].z = Slot.BakedLightPos.z - TheRenderManager->CameraPosition.z;
 				Positions[s].w = Slot.LastFarPlane;
 				Luminance[s] = Slot.LastLuminance * Slot.Intensity;
+				SlotLuminance[s] = Slot.LastLuminance;
 				Shaded++;
 			}
 			else {
 				Positions[s] = D3DXVECTOR4(0.0f, 0.0f, 0.0f, 0.0f);
 				Luminance[s] = 0.0f;
+				SlotLuminance[s] = 0.0f;
+				Slot.ShadedLight = NULL;
 			}
 			LastLoggedLight[s] = NULL;
 			continue;
@@ -2169,6 +2175,8 @@ void ShadowManager::PublishPointLightConstants() {
 		Slot.LastFarPlane = FarPlane;
 		Slot.LastLuminance = (0.299f * Light->Diff.r + 0.587f * Light->Diff.g + 0.114f * Light->Diff.b) * Light->Dimmer;
 		Luminance[s] = Slot.LastLuminance * Slot.Intensity;
+		SlotLuminance[s] = Slot.LastLuminance;
+		Slot.ShadedLight = Light;
 		if (ProfilingEnabled && LastLoggedLight[s] != Light) {
 			LastLoggedLight[s] = Light;
 			Logger::Log("[ShadowProfile] point slot %d: Diff=(%.3f, %.3f, %.3f) Dimmer=%.3f Radius=%.1f CanCarry=%d",
@@ -2180,6 +2188,68 @@ void ShadowManager::PublishPointLightConstants() {
 	PointSlotsActive = Active;
 	PointSlotsShaded = Shaded;
 	ProfileCount(Cnt_PointSlotsActive, Active);
+	PublishPointBaseLight();
+}
+
+// Publishes the scene's light for SceneLightTotal.hlsl: the ambient and directional terms and the
+// nearest scene lights that hold no slot. Both shadow applies take each shadow's lost light as a share
+// of this total: the point shadow its own light's, the sun shadow only ambient and directional light.
+// Runs every frame, point shadows on or off, since the sun shadow needs it either way.
+void ShadowManager::PublishPointBaseLight() {
+	ShaderConstants::ShadowPointStruct& Point = TheShaderManager->ShaderConst.ShadowPoint;
+	Point.BaseLight = D3DXVECTOR4(0.0f, 0.0f, 0.0f, 0.0f);
+	Point.DirLight = D3DXVECTOR4(0.0f, 0.0f, 1.0f, 0.0f);
+	NiDirectionalLight* DirLight = Tes ? Tes->niDirectionalLight : NULL;
+	if (DirLight) {
+		// Assumed to feed the shaders' AmbientColor and directional PSLightColor[0] (summed unclamped);
+		// UNVERIFIED in-game, so the profile log below records the values per cell.
+		Point.BaseLight.x = (0.299f * DirLight->Amb.r + 0.587f * DirLight->Amb.g + 0.114f * DirLight->Amb.b) * DirLight->Dimmer;
+		Point.BaseLight.y = (0.299f * DirLight->Diff.r + 0.587f * DirLight->Diff.g + 0.114f * DirLight->Diff.b) * DirLight->Dimmer;
+		// m_direction is the direction the light travels.
+		D3DXVECTOR3 ToLight(-DirLight->m_direction.x, -DirLight->m_direction.y, -DirLight->m_direction.z);
+		float Length = D3DXVec3Length(&ToLight);
+		if (Length > 0.0f) Point.DirLight = D3DXVECTOR4(ToLight.x / Length, ToLight.y / Length, ToLight.z / Length, 0.0f);
+		if (ProfilingEnabled && Player) {
+			static TESObjectCELL* LastLoggedCell = NULL;
+			if (LastLoggedCell != Player->parentCell) {
+				LastLoggedCell = Player->parentCell;
+				Logger::Log("[ShadowProfile] point base light: Amb=(%.3f, %.3f, %.3f) Diff=(%.3f, %.3f, %.3f) Dimmer=%.3f ToLight=(%.2f, %.2f, %.2f)",
+					DirLight->Amb.r, DirLight->Amb.g, DirLight->Amb.b, DirLight->Diff.r, DirLight->Diff.g, DirLight->Diff.b,
+					DirLight->Dimmer, Point.DirLight.x, Point.DirLight.y, Point.DirLight.z);
+			}
+		}
+	}
+
+	const int FillMax = 8;
+	int Fill = 0;
+	memset(Point.FillLights, 0, sizeof(Point.FillLights));
+	memset(Point.FillLuminance, 0, sizeof(Point.FillLuminance));
+	for (auto& [Distance, Light] : SceneLights) {
+		if (Fill >= FillMax) break;
+		bool InSlot = false;
+		for (int s = 0; s < PointLightMax && !InSlot; s++) {
+			const PointLightSlot& Slot = PointSlots[s];
+			InSlot = (Slot.Light || Slot.Intensity > 0.0f) && Slot.ShadedLight == Light;
+		}
+		if (InSlot) continue;
+		float Radius = Light->Spec.r;
+		float Lum = (0.299f * Light->Diff.r + 0.587f * Light->Diff.g + 0.114f * Light->Diff.b) * Light->Dimmer;
+		if (Radius <= 0.0f || Lum <= 0.0f) continue;
+		NiPoint3* LightPos = &Light->m_worldTransform.pos;
+		float* Row = Point.FillLights[Fill / 4].m[Fill % 4];
+		Row[0] = LightPos->x - TheRenderManager->CameraPosition.x;
+		Row[1] = LightPos->y - TheRenderManager->CameraPosition.y;
+		Row[2] = LightPos->z - TheRenderManager->CameraPosition.z;
+		Row[3] = Radius;
+		((float*)&Point.FillLuminance[Fill / 4])[Fill % 4] = Lum;
+		Fill++;
+	}
+
+	bool AnySlot = false;
+	for (int s = 0; s < PointLightMax; s++)
+		if (TheShaderManager->ShaderConst.ShadowMap.ShadowCastLightPosition[s].w > 0.0f) AnySlot = true;
+	// Lets the sun shadow skip the point-light sums on frames without any.
+	Point.BaseLight.z = (Fill > 0 || AnySlot) ? 1.0f : 0.0f;
 }
 
 void ShadowManager::ClearCubeMapNodeLists() {
@@ -2492,11 +2562,17 @@ void ShadowManager::RenderPointShadows() {
 			PointSlots[s].Valid = false;
 			PointSlots[s].Intensity = 0.0f;
 			PointSlots[s].RetiringLight = NULL;
+			PointSlots[s].ShadedLight = NULL;
 			TheShaderManager->ShaderConst.ShadowMap.ShadowCastLightPosition[s] = D3DXVECTOR4(0.0f, 0.0f, 0.0f, 0.0f);
 		}
 		TheShaderManager->ShaderConst.ShadowMap.ShadowCastLightLuminance = D3DXVECTOR4(0.0f, 0.0f, 0.0f, 0.0f);
+		TheShaderManager->ShaderConst.ShadowPoint.SlotLuminance = D3DXVECTOR4(0.0f, 0.0f, 0.0f, 0.0f);
 		// Pin the clock so the disabled gap does not snap the first slot to full.
 		PointFadeLastMs = TheFrameRateManager->GetPerformance();
+		// The sun shadow still spares point light, so every scene light is published as a fill light.
+		if (Player && Player->parentCell) CollectSceneLights();
+		else SceneLights.clear();
+		PublishPointBaseLight();
 		return;
 	}
 	ScopeTimer profile(Phase_PointTotal);
@@ -2557,6 +2633,11 @@ void ShadowManager::RenderPointShadows() {
 
 void ShadowManager::RenderShadowMaps() {
 	Global->RenderShadowMaps(); //Window reflections seem to be rendered here
+	static bool OcclusionFlagsLogged = false;
+	if (!OcclusionFlagsLogged && OcclusionCullFlagsHeld()) {
+		OcclusionFlagsLogged = true;
+		Logger::Log("ERROR: Occlusion cull flags held while shadow maps render");
+	}
 
 	FrameProfiler::Scope ProfileScope(FrameProfiler::Buck_ShadowMaps);
 	AdvanceStitchedStrips();

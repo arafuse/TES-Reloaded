@@ -9,10 +9,11 @@ class NiD3DPixelShaderEx;
 // the shell pass is classified by where its geometry hangs in the scene graph, and the report shows
 // per class how far instancing or same-material merging could collapse the draws, plus the CPU time
 // of the nested engine call. That time excludes the engine's accumulator and sort work before the
-// hook, so it is a floor for the per-draw engine cost, not the whole of it.
+// hook, so it is a floor for the per-draw engine cost, not the whole of it. The water reflection
+// pass gets the same table, and main-pass draws are also binned by their bound's on-screen size.
 namespace DrawStats {
 
-	enum Pass { Pass_Main, Pass_Shell, Pass_COUNT };
+	enum Pass { Pass_Main, Pass_Shell, Pass_Reflection, Pass_COUNT };
 
 	enum DrawClass {
 		Class_Statics,     // loaded-grid geometry that is not an actor, land or a tree
