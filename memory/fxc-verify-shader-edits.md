@@ -11,17 +11,17 @@ Shader-only edits can be fully verified without MSBuild. Two fxc copies are inst
 
 - Effects (`.fx.hlsl`, have `technique{}`): `/T fx_2_0`
 - Raw shaders (`.pso.hlsl`/`.vso.hlsl`): `/T ps_3_0` or `/T vs_3_0` with `/E main`
-- Pass `/I <the shader's own directory>`: the game's D3DX resolves nested relative includes
-  (`../Grass/Includes/...` inside `ExtraShaders/Includes/TreeCollision.hlsl`) from the TOP-LEVEL file's dir
-  (verified 2026-11-17 with a D3DXCompileShaderFromFileA probe), fxc from the including file.
+- Pass `/I <the top-level shader's own directory>`: the game's D3DX resolves nested relative includes
+  (`../Grass/Includes/...` inside `ExtraShaders/Includes/TreeCollision.hlsl`) from the TOP-LEVEL file's
+  dir (probe-verified with D3DXCompileShaderFromFileA), fxc from the including file.
 - `/Fc out.asm` dumps the assembly (check for real `if_*`/`endif` around `texld`, instruction counts).
 
 ```powershell
 & $fxc /T fx_2_0 /D "SOME_FLAG=1" /Fo out.fxo OblivionReloaded\Shaders\Shadows\ShadowsExteriors.fx.hlsl
 ```
 
-ShadowsExteriors.fx.hlsl currently compiles with a few pre-existing `X3206` implicit-truncation
-warnings and no `X3570`; compare against HEAD before attributing a warning to an edit.
+Some shaders (e.g. ShadowsExteriors) compile with pre-existing `X3206` implicit-truncation
+warnings; compile HEAD too before attributing a warning to an edit.
 
 To prove a `#define`-gated debug/feature block is inert when off, compile the HEAD version and
 byte-compare the .fxo:

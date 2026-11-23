@@ -10,23 +10,26 @@ each pushed sunward out of a body capsule) in `RenderShadowsMidScene` right afte
 reads each point's visibility from an occlusion query that counts 16 threshold pixels, so values
 step in sixteenths (see [[d3d9-gpu-readback-stall]]). Results trail rendering by 1–2 frames.
 
-Since 2026-10-28 it has two consumers, each with its own `[Exteriors]` switch in Shadows.ini. The
-probe runs (and holds its resources) while EITHER switch is on, and is released when both are off:
-- **Sun shadow stealth** (`SunShadowStealth`): the sun-term hook at 0x6561FD scales the player's sun
-  term by `lerp(1, Darkness, shadowed)`. The hook reads the switch live.
+It has two consumers, each with its own `[Exteriors]` switch in Shadows.ini. The probe runs (and
+holds its resources) while EITHER switch is on, and is released when both are off:
+- **Sun shadow stealth** (`SunShadowStealth`): the sun-term hook at 0x6561FD
+  ([[actor-light-level-formula]]) scales the player's sun term by `lerp(1, Darkness, shadowed)`. The
+  hook reads the switch live.
 - **OBSE `IsPlayerInSunShadow`** (`IsPlayerInSunShadow`, default 0; off, the command returns 0 even if
   stealth keeps the probe running): returns 1 when the shadowed fraction is at least
   `kInShadowThreshold` (0.5). It ignores Darkness, so it answers "is the player geometrically in
   shade", even in weather where shadows are faint. It returns 0 whenever `SunMapsProbeable()` fails
   (interior, light below the horizon, `UsePostProcessing` off, missing `Shadows\ShadowProbe.fx`).
-  It is registered after `GetWeatherWindDirection`, so it takes opcode 0x3007. Opcodes are assigned
-  from base 0x3000 in registration order, so new commands must be appended.
 
-**Why:** the user wanted both player probes (this one and `IsRainHittingPlayer`'s) opt-in, so they
+OBSE opcodes are assigned from base 0x3000 in `CommandManager::AddCommands` registration order:
+`IsRainHittingPlayer` 0x3005, `GetWeatherWindDirection` 0x3006, `IsPlayerInSunShadow` 0x3007. New
+commands must be appended.
+
+**Why:** the user wants both player probes (this one and `IsRainHittingPlayer`'s) opt-in, so they
 cost nothing when no script needs them.
 
 **How to apply:** a new consumer gets its own switch and joins `ProbeWanted()`; never gate one
 consumer's output on another consumer's switch. The watchdog in `UpdateSunShadowStealth` resets both
 results after ~30 frames without a readback, whether or not a slot is pending. Moon shadows count,
 per [[moon-shadows-no-dusk-fade]]. The rain probe follows the same pattern
-([[engine-wind-has-no-direction]]). Light-term RE: [[actor-light-level-formula]].
+([[engine-wind-has-no-direction]]).

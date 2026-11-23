@@ -1,16 +1,12 @@
 ---
 name: engine-wind-has-no-direction
-description: "Oblivion has NO wind direction anywhere: grass sways on a hardcoded world +Y axis, SpeedTree wind matrices are zero-mean sin/cos wobbles in tree-local space; only wind SPEED exists (Sky+0xC0). Addresses for overriding both."
+description: "Oblivion has NO wind direction anywhere: grass sways on a hardcoded world +Y axis, SpeedTree wind matrices are zero-mean sin/cos wobbles in tree-local space; only wind SPEED exists (Sky+0xC0). Wind.cpp invents a direction and feeds grass, rain, snow and the ortho occlusion map"
 metadata:
-  node_type: memory
   type: project
-  originSessionId: 43d8c7eb-ca8c-4b8d-b6c4-e659d55005e6
-  modified: 2026-10-28T00:02:14.984Z
 ---
 
-Disassembly findings (2026-10-26), asked while scoping directional rain. You can't derive a wind
-direction from vegetation animation, because the engine never has one. The Oblivion WTHR record
-carries only `windSpeed` (Skyrim added a direction).
+**Engine facts (disassembly).** You can't derive a wind direction from vegetation animation, because
+the engine never has one. The Oblivion WTHR record carries only `windSpeed` (Skyrim added a direction).
 
 - **Speed:** `Sky::windSpeed` (+0xC0) is copied to 0xB2C670 in sub_53FF90 (0x540052). It drives both
   grass and trees. Our `ShaderConst.currentwindSpeed` is the same value lerped across transitions.
@@ -30,36 +26,34 @@ carries only `windSpeed` (Skyrim added a direction).
   0xB12538: 0.15/0.17, 0.25/0.15, …) × strength. That is a zero-mean wobble in each tree's own model
   space. The palette is shared by all trees, so a world-space lean can't be put in the matrices.
 
-**Built (2026-10-26), `TESReloaded/Core/Wind.cpp`:** we invent the direction and push it into
-everything that should agree.
+**`TESReloaded/Core/Wind.cpp`** invents the direction and pushes it into everything that should agree:
 - `UpdateWind` writes `ShaderConst.WindData` (`TESR_WindData`) = (dir x, dir y, currentwindSpeed, 0).
   Each new weather turns the heading by up to ±90°, chased over real time (τ 20 s), with ±0.25 rad of
   game-hour drift.
 - Grass: `CreateWindHook` rel-calls 0x7E6807 (the D3DXVec3TransformNormal of (0,1,0) in sub_7E6710,
   TallGrassShader vtable slot 12 at 0xA92060) and substitutes the wind axis. The downwind lean is
-  `Grass/Includes/GrassWind.hlsl` (`sin*0.6 + 0.5`), hardcoded because grass has no free constant
-  ([[grass-vs-constant-budget]]).
+  `Grass/Includes/GrassWind.hlsl` (`sin*0.6 + 0.5`, hardcoded `#define`s).
+- Grass sway clock (`CreateWindHook`): the 0x7E90AE call (6 bytes, NOP the 6th) goes to a naked thunk
+  that passes esi; it returns a double-precision clock wrapped to one cycle of that Rate. The clock
+  advances in `UpdateWind` by frame seconds x 30 (reference timescale) x Grass.ini `SwaySpeed`, so sway
+  no longer follows the timescale.
 - Rain.fx and Snow.fx rotate the view ray by `WindSlantRotation` (`Precipitations/PrecipitationWind.hlsl`,
   Rodrigues: wind-tilted axis onto +Z, folded into the preshader) before `cylindrical()`. Tilt =
   `TESR_PrecipitationSlant` (x = `[Rain] Slant`, y = `[Snow] Slant`) × wind speed.
 - Occlusion matches the slant: `ShadowManager::SetupOrthoMapMatrices` renders the ortho map top-down,
   SHEARED by drift = slant × speed × wind dir (not rotated), so the texel grid stays world-aligned and
-  zero wind is exactly vertical. The old map used a near-vertical (0.05,0.05,1) lookAt to dodge the
-  up=Z degeneracy, which biased occlusion about 4° toward NE. There is one map for all precipitation:
-  `GetOrthoShear` blends the rain and snow slants by RainData.x/SnowData.x, and SnowAccumulation's
-  per-frame mask follows the snow slant, so clear patches slide if the wind turns after snowfall.
+  zero wind is exactly vertical. There is one map for all precipitation: `GetOrthoShear` blends the
+  rain and snow slants by RainData.x/SnowData.x, and SnowAccumulation's per-frame mask follows the snow
+  slant, so clear patches slide if the wind turns after snowfall.
 - OBSE `IsRainHittingPlayer` (`RainProbe.cpp`, `Precipitations/RainProbe.fx`): an 8-point GPU probe of
-  the ortho map, drawn right after RainEffect in RenderEffects and read back via an event-query ring
-  (the SunShadowStealth pattern). Points are pushed up the rain fall line out of a body capsule. The
-  probe runs only with `[Rain] IsRainHittingPlayer = 1` in Precipitations.ini (default 0, which also
-  makes the command return 0). It is
-  registered LAST in AddCommands (opcodes come from base 0x3000 in registration order, so append only).
+  the ortho map, drawn right after RainEffect in RenderEffects and read back through occlusion queries
+  ([[d3d9-gpu-readback-stall]]; the SunShadowStealth pattern, [[sun-shadow-probe-consumers]]). Points
+  are pushed up the rain fall line out of a body capsule. The probe runs while `[Rain]
+  IsRainHittingPlayer = 1` in Precipitations.ini (default 0, which also makes the command return 0)
+  OR wet actors are enabled; it also carries the NPC points for [[wet-actors]].
 - OBSE `GetWeatherWindDirection` returns `GetWindHeading()`: the heading the wind blows TOWARD, in
   degrees like GetAngle Z (`atan2(x, y)`, 0 = north, 90 = east). That is not the meteorological
-  "from" convention.
-- Grass sway clock (`CreateWindHook`): the 0x7E90AE call (6 bytes, NOP the 6th) goes to a naked thunk
-  that passes esi; it returns a double-precision clock wrapped to one cycle of that Rate. The clock
-  advances in `UpdateWind` by frame seconds x 30 (reference timescale) x Grass.ini `SwaySpeed`.
+  "from" convention. Opcodes: see [[sun-shadow-probe-consumers]].
 - Persisted in the OBSE co-save (`CoSave.cpp`, record 'WIND' v1 = `WindState`: heading, target,
   weather refID run through ResolveRefID, last emitted WindData.xy). Without the weather refID, the
   first frame after a load would see a "new" weather and turn up to 90°. A save without the record,

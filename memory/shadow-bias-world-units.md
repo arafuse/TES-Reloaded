@@ -1,6 +1,6 @@
 ---
 name: shadow-bias-world-units
-description: "Exterior sun-shadow depth bias: authored in per-cascade TEXELS under AdaptiveBias (converted to normalized ortho depth = world / 2*FarPlane), why a world-unit bias leaks light at wall contacts, and why there is no far-cascade near-exclusion"
+description: "Exterior sun-shadow depth bias: authored in per-cascade TEXELS under AdaptiveBias (converted to normalized ortho depth = world / 2*FarPlane), why a world-unit bias leaks light at wall contacts, actors' separate skin bias, and why there is no far-cascade near-exclusion"
 metadata:
   type: project
 ---
@@ -19,16 +19,17 @@ On a floor beside a sun-side wall of thickness t at sun elevation e the lit band
 `value * (1 + min(tan(acos|ndl|), BiasMaxSlope))` — `abs(ndl)`, because sun-away faces otherwise hit
 the peak and leak tree shadows through thin walls.
 
-**Actors have their own bias** (`deferredSkinConstBias`, skin-map texels, shipped 8 = ~16 units; missing key
-falls back to `deferredConstBias`) → `TESR_ShadowBiasSkin.x`, used only by the skin-map lookup. Actors are
-only in MapSkin (static bakes skip them). With the 1-texel near bias, bodies a dozen texels wide
-self-shadow along triangle edges near the shadow line, faceting their smooth shading (the regression
-after fe8c4e6; play-test confirmed 8 texels fixes it). Don't fold it back into the near bias.
+**Actors have their own bias** (`deferredSkinConstBias`, skin-map texels, shipped 8 = ~16 units; a
+missing key falls back to `deferredConstBias`) → `TESR_ShadowBiasSkin.x`, used only by the skin-map
+lookup. Actors are only in MapSkin (static bakes skip them). With the 1-texel near bias, bodies a dozen
+texels wide self-shadow along triangle edges near the shadow line, faceting their smooth shading; 8
+texels is play-tested. Don't fold it back into the near bias.
 
-There is deliberately no MapFar "fully inside near frustum" exclusion: it tested far-anchor-relative
-centers against near-anchor-relative planes, and the two cached maps re-anchor independently, so far
-bakes lost casters that receivers later needed. Culling is a single `SphereInShadowFrustum`; far bakes
-draw the near area's >=100-radius casters too. Don't reintroduce the exclusion.
+There is deliberately no MapFar "fully inside near frustum" exclusion: it would test
+far-anchor-relative centers against near-anchor-relative planes, and the two cached maps re-anchor
+independently, so far bakes lose casters that receivers later need. Culling is a single
+`SphereInShadowFrustum`; far bakes draw the near area's >=100-radius casters too. Don't reintroduce
+the exclusion.
 
 Ruled out as a caster filter: record flag 0x200 ("NotCastShadows" in Game.h, UESP says "Casts
 shadows") is set on 1 exterior ref in Oblivion.esm; persistent exterior statics are ~1.9k of 484k,

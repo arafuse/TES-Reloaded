@@ -2,10 +2,7 @@
 name: grass-drawn-after-water
 description: "Oblivion main-pass order: opaque -> LOD water (WATER012+) -> sky -> LOD terrain -> grass -> NEAR water (WATER000-011); discriminate near water by PS number, not alpha flags"
 metadata:
-  node_type: memory
   type: reference
-  originSessionId: ffe84fbd-fb2a-4713-be61-82503f171389
-  modified: 2026-11-09T01:55:05.830Z
 ---
 
 **Engine fact (measured with the `[GrassOrderDbg]` per-pass log + position logging):**

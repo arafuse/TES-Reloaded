@@ -1,11 +1,11 @@
 ---
 name: actor-shader-passes
-description: MEASURED actor draw passes outdoors (base, sun spec SLS2039, rim SLS2075, hair SM3LL*); spec pass only within fSpecularLOD2; NiSkinInstance::RootParent is NOT the actor root; which actor shaders are stock outdoors / swapped for dialog
+description: MEASURED actor draw passes outdoors (base, sun spec SLS2039, rim SLS2075, hair SM3LL*); spec pass only within fSpecularLOD2; NiSkinInstance::RootParent is NOT the actor root; multipass lighting/texture/highlight path; outdoor + dialog shader swaps
 metadata:
   type: project
 ---
 
-Captured 2026-10-29 with the `[ActorDraws]` diagnostic (Develop.LogShaders key, RenderHook.cpp), outdoors in rain, ~40 loaded actors.
+Captured with the `[ActorDraws]` diagnostic (Develop.LogShaders key, RenderHook.cpp), outdoors in rain, ~40 loaded actors.
 
 **Pass order per actor part (main scene), each pass a separate draw:**
 - Base (opaque): PS `SLS2003` (VS SLS2003 rigid / SLS2005 skinned), `SLS2012`/`SLS2013` (VS 2009/2010, when point lights touch it), `SLS2018`/`SLS2019` (VS 2013/2014: horses, creature eyes), exposed skin `SKIN2001`/`SKIN2003`, hair `SM3LL003` (OR) or `SM3LL001` (stock outdoors).
@@ -19,6 +19,6 @@ Captured 2026-10-29 with the `[ActorDraws]` diagnostic (Develop.LogShaders key, 
 
 **Outdoor swaps:** `InteriorShadowShaders` (ShaderManager.cpp) revert to stock outdoors, including `SLS2041` and `SM3LL001`; `SM3LL003` loads from `ExtraShadersExterior`. In exterior dialogue, `ExteriorDialogShaders` (SLS2003/2018/2039, SKIN2001/2003/2007) load from `ExtraShadersDialog`/`SkinDialog` — any actor material change must be made in those copies too. Interiors use the interior-shadow variants, which were not captured.
 
-**Multipass path** (measured 2026-10-30 in Faregyl Inn, a "behave like exterior" interior, so OR's exterior set was loaded): every part is lighting `SLS2031` (opaque, ambient + 3 lights, NO texture) [+ `SLS2035` 2 more lights] → texture `SLS1003`/`SLS1005` (multiplies the lighting) → highlight `SLS2037` (main light) → `SLS2041` once per point light. All stock; skin lighting is OR `SKIN2006`/`SKIN2008`. Passes are sorted by TYPE across objects, so constants a pass doesn't set are another object's leftovers. Overriding a stock PS means overriding every VS it pairs with (OR compiles model 3 only): pairs are 2023/2024→2031, 2023→2032 (glow), 2027/2028→2035, 2031/2032→2037/2038 (2038 = anisotropic highlight), 2035/2036→2041/2042. All of these now have OR rewrites for [[wet-actors]] (loaded in every cell). Regular interiors not captured yet.
+**Multipass path** (measured in a "behave like exterior" inn, so OR's exterior set was loaded): every part is lighting `SLS2031` (opaque, ambient + 3 lights, NO texture) [+ `SLS2035` 2 more lights] → texture `SLS1003`/`SLS1005` (multiplies the lighting) → highlight `SLS2037` (main light) → `SLS2041` once per point light. Skin lighting is OR `SKIN2006`/`SKIN2008`. Passes are sorted by TYPE across objects, so constants a pass doesn't set are another object's leftovers. Overriding a stock PS means overriding every VS it pairs with (OR compiles model 3 only): pairs are 2023/2024→2031, 2023→2032 (glow), 2027/2028→2035, 2031/2032→2037/2038 (2038 = anisotropic highlight), 2035/2036→2041/2042. All of these have OR rewrites for [[wet-actors]] (loaded in every cell). Regular (unflagged) interiors were not captured.
 
-**How to apply:** for per-actor material effects (the planned wet-actors feature: per-draw `TESR_GEOM_*` constant, player gated by RainProbe, NPCs switchable between cheap "outdoors + raining" and accurate per-NPC rain probe points within a configurable radius), edit the base and spec shaders above in every folder variant. Built as [[wet-actors]]. See [[sun-shadow-probe-consumers]], [[shader-pipeline-facts]].
+**How to apply:** per-actor material effects go in the base and spec shaders above, in every folder variant (exterior, dialog, interior-shadow), and in the multipass set. See [[wet-actors]], [[shader-pipeline-facts]].

@@ -31,16 +31,17 @@ neighbour inside the offset band (white outlines at every junction — level mes
 corners). Even bit-exact all-pass depth would make neighbours poke through walls.
 
 **Shadow side channel instead:** the first-pass PSOs (`POMShadowPixelShaders` in ShaderIOHook.cpp:
-2000/2002/2004/2006/2010/2016/2018/2026) output `COLOR1` = (geometric view depth, relief view depth);
-VSOs emit `DepthData : TEXCOORD8` = (clip.w, eye distance). `ShaderManager::BindPOMDepth` puts the
-G32R32F `TESR_POMDepthBuffer` on RT1 only under those draws in the main scene (ZWrite on, no blend) and
-it is cleared per main scene. ShadowsExteriors/ShadowsPoint (`reliefDepth`) use the relief depth for
-the receiver POSITION only where the stored geometric depth matches the pixel's depth within 0.1%;
-normals stay geometric. Relief LIFTS toward the eye (height 1 = `POM.ini ShadowReliefScale` units):
-pushing into the wall would let the flat wall in the shadow map occlude every recess.
+PAR 2000/2002/2004/2006/2010/2016/2018/2026 and land SLS2048) output `COLOR1` = (geometric view depth,
+relief view depth); VSOs emit `DepthData : TEXCOORD8` = (clip.w, eye distance).
+`ShaderManager::BindPOMDepth` puts the G32R32F `TESR_POMDepthBuffer` on RT1 only under those draws in
+the main scene (ZWrite on, no blend) and it is cleared per main scene. ShadowsExteriors/ShadowsPoint
+(`reliefDepth`) use the relief depth for the receiver POSITION only where the stored geometric depth
+matches the pixel's depth within 0.1%; normals stay geometric. Relief LIFTS toward the eye (height 1 =
+`POM.ini ShadowReliefScale` units): pushing into the wall would let the flat wall in the shadow map
+occlude every recess.
 
 **How to apply:** before changing a PAR VSO, check which stock PSOs read its registers. Ground truth:
 extract from `Data/Shaders/shaderpackage019.sdp` (header `<III` ver,count,size; entries = 256-byte
 name + `<I` size + bytecode) and run `fxc /dumpbin /Fc out.asm FILE`. Re-capture pass order with the
-`Develop.LogShaders` key (`[GrassOrderDbg]` log in RenderHook). See [[shader-pipeline-facts]],
-[[fxc-verify-shader-edits]].
+`Develop.LogShaders` key (`[GrassOrderDbg]` log in RenderHook). See [[terrain-land-passes]],
+[[shader-pipeline-facts]], [[fxc-verify-shader-edits]].
