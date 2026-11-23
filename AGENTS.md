@@ -125,7 +125,9 @@ Set `#define WaitForDebugger 1` in `Main.cpp` to spin until a debugger attaches.
 
 The agent's memory directory is a symbolic link to `memory/` in this repo, so agent memory gets committed.
 
-Changes to memory and design documents must be self-contained in their own `docs:` commits.
+Memory should only contain durable facts about the current state of the project. It should not reference any design documents or implementation plans, which are ephemeral.
+
+Changes to memory and design documents must be self-contained in their own separate `docs:` commits.
 
 ## Tooling
 
