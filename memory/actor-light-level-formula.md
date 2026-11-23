@@ -5,8 +5,7 @@ metadata:
   type: project
 ---
 
-Statically RE'd 2026-09-27 for sun shadow stealth (spec
-docs/superpowers/specs/2026-09-27-sun-shadow-stealth-design.md). Complements [[sneak-detection-formula]].
+Statically RE'd. Complements [[sneak-detection-formula]].
 
 **`HighProcess_GetLightLevel` 0x655FE0**: process vfunc **0x3AC** on High/MiddleHigh (Low/MiddleLow/Base:
 0x60D080), thiscall `(Actor*, 0)`, `ret 8`, float 0–100. Game.h's Oblivion block names slot 0xEA
@@ -24,5 +23,6 @@ docs/superpowers/specs/2026-09-27-sun-shadow-stealth-design.md). Complements [[s
 Consumers of vfunc 0x3AC: 0x4F64A9 (`AI_GetDetected`), 0x5E8C3B, 0x5F65E2 (detection), 0x5FCD96 and
 0x5FCE85 (`Actor_ProcessAction` attack/enchant), 0x60A8BE.
 
-**How to apply:** to change how lit the player counts as, wrap 0x6561FD (sun term) or the detection arg
-(see [[sneak-detection-formula]]). Wrapping at the source affects all six consumers.
+**How to apply:** to change how lit the player counts as, wrap 0x6561FD (sun term; SunShadowStealth
+does, see [[sun-shadow-probe-consumers]]) or the detection arg (see [[sneak-detection-formula]]).
+Wrapping at the source affects all six consumers.

@@ -1,6 +1,6 @@
 ---
 name: water-reflection-pass-detection
-description: "Verified Oblivion frame order — water reflection map (1024x1024) renders AFTER the main pass, NOT via RenderObject(WorldSceneGraph); BeginScene re-fires per off-screen render and resets per-scene latches; mid-scene effects must gate on InMainScenePass"
+description: "Verified Oblivion frame order — water reflection map (1024x1024) renders AFTER the main pass, NOT via RenderObject(WorldSceneGraph); BeginScene re-fires per off-screen render and resets per-scene latches; mid-scene effects must gate on InMainScenePass; reflection pass flag 0xB42CE8, EndScene site 0x49C81B, main depth, camera-relative view"
 metadata:
   type: project
 ---
@@ -22,16 +22,16 @@ Verified by in-game logging + disassembly (Oblivion 1.2.0.416):
   mid-scene screen-space effect must be gated on it**, not just on per-scene latch flags.
 - Engine global 0xB42E86 IS a "rendering water reflections" flag (set around the WSG RenderObject
   call at 0x4D040B, restored before the second call 0x4D04A8, read by many shader-setup funcs) but is
-  NOT sufficient for the observed reflection path. The NiSkinInstance::FrameID bone cache is also
-  unrelated (see [[skinning-bone-matrix-cache]]).
+  NOT set on the observed reflection path. The NiSkinInstance::FrameID bone cache is also unrelated
+  (see [[skinning-bone-matrix-cache]]).
 - Debugging discriminator: log camera ptr + RT dimensions at every WSG render, every apply
   execution, and the water-bind trigger.
 
-**Reflection pass structure** (disassembly plus in-game logging, 2026-11-21):
+**Reflection pass structure:**
 - `NiRenderer_ReflectionPass` 0x49BEF0 is called once per frame from 0x49E9BF. Global byte
-  **0xB42CE8** is set for its whole duration, so use it to detect the reflection pass; 0xB42E86 is
-  not set on this path. The profiler's `reflection` draw row keys on it (about 3,200 draws in the
-  dense town).
+  **0xB42CE8** is set for its whole duration, so use it to detect the reflection pass (0xB42E86 is
+  not set on this path). The profiler's per-pass `reflection` draw row keys on it (about 3,200 draws
+  in the dense town); `RenderHook::TrackReflectionPass` wraps 0x49BEF0 for the `Pass:Reflection` timer.
 - Its per-node cull is 0x49CBF0, detoured as `RenderHook::TrackWaterReflectionCull`. Its
   `EndScene` is a call at 0x49C81B to 0x7D72D0 (cdecl, no arguments; the caller rewrites
   eax/ecx/edx afterwards). That call site is the last point where the reflection target is bound.
@@ -44,4 +44,4 @@ Verified by in-game logging + disassembly (Oblivion 1.2.0.416):
 - To project a world point into the reflection: Translate(-eye) × viewMatrix × projMatrix, as
   row vectors. Using the device view gives eye (0,0,0) and wrong rects.
 
-Related: [[grass-drawn-after-water]].
+Related: [[grass-drawn-after-water]], [[reflection-occlusion-not-worth-it]].

@@ -1,12 +1,12 @@
 ---
 name: grass-trail-map
-description: CPU-written grass trail map (replaces the 2-footprint + 3-source-per-batch collision); layout, encodings, time wrap and sweep, ring rule, trail clock, VS sampler binding, core test command
+description: CPU-written grass/shrub trail map (3 RGBA16 textures: tall, ground, shrub); layout, neutral encoding, 256 s time wrap and sweep, hold, ring rule, trail clock, upload, VS sampler binding via the device path, core test command
 metadata:
   type: project
 ---
 
-Grass and shrub collision is a CPU-written trail map of three RGBA16 textures, not per-batch source slots.
-Source: `TESReloaded/Core/GrassTrailMap.{h,cpp}` (pure C++, no D3D), `TESReloaded/Core/GrassTrail.{h,cpp}`
+Grass and shrub collision is a CPU-written trail map of three RGBA16 textures, not per-batch source
+slots. Source: `TESReloaded/Core/GrassTrailMap.{h,cpp}` (pure C++, no D3D), `TESReloaded/Core/GrassTrail.{h,cpp}`
 (engine side), `OblivionReloaded/Shaders/Grass/Includes/GrassTrail.hlsl`.
 
 **Window and cells.** 512 x 512 cells, 8 world units each, 4096 units across, toroidal addressing
@@ -33,9 +33,9 @@ and neutral vectors to avoid this.
 
 **Hold.** A press holds its full peak for `kStampHold` (0.1 s, mirrored as `GrassTrailHold` in
 `GrassTrail.hlsl`) before the spring starts; the sweep expires a cell at `recovery + hold`. Without it a
-standing actor's 33 ms restamp snapped a ~5% recovered bend back to full every other frame, which read
-as wind and collision fighting (fixed 2026-11-18). A `static_assert` in `GrassTrail.cpp` ties the hold to
-the restamp interval; keep it if either changes.
+standing actor's 33 ms restamp snaps a slightly recovered bend back to full every other frame, which
+reads as wind and collision fighting. A `static_assert` in `GrassTrail.cpp` ties the hold to the
+restamp interval; keep it if either changes.
 
 **Sweep.** Per row the map keeps a live flag and the live cell span. Each BeginFrame visits 8 rows per
 layer (`kSweepRowsPerFrame`). In a live row it checks every live cell's own age and neutralises each cell
@@ -52,9 +52,11 @@ blend stays correct.
 
 **Stamping.** A cell takes the new stamp only if its new peak is at least its current weight
 (`peak x spring(age)`). Stampers are the player plus up to 64 living actors within +-2048 units,
-not view-culled, nearest first. A stationary stamper is skipped when it moved less than 2 units and
-its last stamp is under 33 ms old (per-RefId cache, capped at 256 entries). A teleport (over 1024
-units) or a worldspace change resets both layers.
+not view-culled, nearest first (collected in `ShaderManager`'s grass constant update). A stationary
+stamper is skipped when it moved less than 2 units and its last stamp is under 33 ms old (per-RefId
+cache, capped at 256 entries). A teleport (over 1024 units) or a worldspace change resets both layers.
+The separate view-culled `GrassCollisionSources` list (player + nearest NPCs) is read only by GrassCover
+(player slot) and TreeCover (non-empty check).
 
 **Trail clock.** The clock advances per rendered frame by the delta from `FrameRateManager::GetPerformance()`
 clamped to 0.1 s, so hitches and load screens do not age the trail; menus that keep rendering the world do.
@@ -92,28 +94,19 @@ for the format; the ground layer is pixel-side only.
 
 **Profiling.** FrameProfiler detail bucket `GrassTrail` is nested inside `UpdateConstants`.
 
-**Constants.** Grass VS: c248 `TESR_GrassScale`, c249 `TESR_GrassTrailWindow` (origin XY, 4096, 1/4096),
-c250 `TESR_GrassTrailTime` (nowN, 256, 1/recovery, omega), c253 `TESR_GrassCollisionParams` (x unused,
-y push, z flatten, w trail-reaches flag), c254-c255 free. Groundcover PS: c32 `TESR_GroundcoverPressParams`
-(x unused, y strength, z darkening, w model height), c33 `TESR_GrassTrailWindow`, c34 `TESR_GrassTrailTime`.
-See [[grass-vs-constant-budget]] for the full register budget.
+**Constants:** see [[grass-vs-constant-budget]] for the grass VS and groundcover PS registers.
 
 **Tests.** `powershell -File Tools\Tests\Run-GrassTrailMapTest.ps1` builds `GrassTrailMap.cpp` standalone
 with `cl` (vcvars32) and runs `Tools/Tests/GrassTrailMapTest.cpp`. It prints `GrassTrailMap: all tests passed`.
 
-**Why:** the old wake was two footprint points, each planted every recovery/2 seconds (`kGrassStampCount = 2`).
-At walking speed they were about 210 units apart, so trail coverage 80-800 units behind the player was
-14-38%, and 0% at an 8 s recovery. The settings appeared to do nothing. Each batch also had only 3
-collision slots, and actors outranked footprints for them. Storing when a cell was pressed, instead
-of how bent it is now, makes the wake continuous, lets recovery follow the setting, and means a
-scene only uploads what actors keep restamping. The GPU-stamped alternative was rejected because the frame is
-GPU-bound ([[gpu-frame-breakdown]]).
+**Why this design:** storing when a cell was pressed, instead of how bent it is now, makes the wake
+continuous, lets recovery follow the setting, and means a scene only uploads what actors keep
+restamping. Per-batch source slots (a few footprint points per actor) left most of the wake empty at
+walking speed. A GPU-stamped map was rejected because the frame is GPU-bound ([[gpu-frame-breakdown]]).
 
 **How to apply:** do not reintroduce per-batch source packing or cell-0 "cleared" values. Keep the
 neutral encoding, the time-keeping sweep, and the ring when changing the stamp or sweep. Use the device
-sampler path for any new vertex-texture sampler. The player footprint stamps are gone (2026-11-17); the
-live source list (`GrassCollisionSources`) now feeds only GrassCover and TreeCover. Check the core test
-after any change to `GrassTrailMap.cpp`.
+sampler path for any new vertex-texture sampler. Run the core test after any change to `GrassTrailMap.cpp`.
 
-Related: [[grass-vs-constant-budget]], [[grass-batch-footprints]], [[grass-batched-per-geometry-hook]],
-[[d3d9-gpu-readback-stall]], [[game-runs-on-dxvk]].
+Related: [[grass-manager-generation]], [[grass-batched-per-geometry-hook]], [[d3d9-gpu-readback-stall]],
+[[game-runs-on-dxvk]].

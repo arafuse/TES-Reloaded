@@ -5,8 +5,7 @@ metadata:
   type: reference
 ---
 
-Two things about the shared post-processing quad setup in `ShaderManager.cpp`. The first is a trap
-that has already been fallen into once — do not repeat it.
+Two things about the shared post-processing quad setup in `ShaderManager.cpp`.
 
 ## 1. The `+0.5` texel UV offset on EffectQuad is CORRECT. Do NOT "fix" it.
 
@@ -20,9 +19,7 @@ centres** (that changed in D3D10+). So for a quad spanning NDC -1..1 over a view
 pixel i interpolates `u = i/W`, while texel i's centre is `(i+0.5)/W`. The offset closes exactly
 that gap. Removing it makes every fullscreen pass sample on a texel boundary; `LINEAR` then returns a
 2x2 box blur that compounds across the ~15 fullscreen passes per frame, and the whole scene goes soft.
-
-Falsification test for any theory like this: if the offset were wrong, the long-standing pass chain
-would already have been visibly blurry. It never was.
+This trap has already been fallen into once.
 
 Independent corroboration in-tree: `convToImageSpace()` in `Shaders/Water/WaterLens.fx.hlsl`
 builds texcoords from an identical NDC ±1 quad and adds the same half-texel offset.

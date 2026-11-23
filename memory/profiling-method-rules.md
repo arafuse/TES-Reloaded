@@ -1,16 +1,16 @@
 ---
 name: profiling-method-rules
-description: "Rules for profiling Oblivion (from ProtoPlugin's campaigns) - PresentMon GPU-bound check before chasing a driver wait, perception check, wall not CPU, keep a control, count what you drop, C:\\Games is a symlink, Defender scans every loose-file open"
+description: "Rules for profiling Oblivion - PresentMon GPU-bound check before chasing a driver wait, perception check, wall not CPU, keep a control, count what you drop, kill gates, C:\\Games is a symlink, Defender scans every loose-file open"
 metadata:
   type: feedback
 ---
 
-Method rules learned in the ProtoPlugin repo (`memory/profiling-lessons-oblivion.md` there).
+Method rules (ProtoPlugin's `memory/profiling-lessons-oblivion.md` has the long form).
 Read before designing a new instrument or trusting a profile.
 
 **A driver wait is a location, not a cause, until removing it removes the time.**
 **Why:** the native-D3D9 wait under the skinned index Lock looked causal; removing the lock left the
-same 5.6 ms wait, which was the CPU in Present on a GPU-bound frame ([[native-d3d9-skinned-index-stall]]).
+same wait, which was the CPU in Present on a GPU-bound frame ([[native-d3d9-gpu-bound]]).
 **How to apply:** first check whether the frame is GPU-bound. One PresentMon capture answers it:
 MsGPUBusy vs frame time, MsGPUWait, MsInPresentAPI. Then check that the sampler's game frame is a live
 call, not a stale return address ([[sampling-profiler]]).
@@ -39,7 +39,8 @@ invocation count. A dead hook and a quiet session both print zero. Make capture 
 
 **Run a kill gate before building on a premise.**
 **How to apply:** before a large build, name the measurement that would make it pointless and take it
-first (one capture showed the cell-transition frame was CPU-bound and killed a streaming design).
+first, and agree the bar with the user ([[static-draw-instancing-not-worth-it]],
+[[reflection-occlusion-not-worth-it]]).
 
 **FrameProfiler's "FrameTotal GPU" is a timestamp span, not GPU work.**
 **Why:** in CPU-bound market combat it read 11.1 ms while PresentMon showed GPU busy 4.3 ms: the
