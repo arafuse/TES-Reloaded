@@ -87,6 +87,9 @@ public:
 	void					RenderShadowMaps();
 	void					ResetIntervals();
 	bool					IsLightFromMagic(NiPointLight* Light);
+	/// Where a light's point shadow is cast from: a merged cluster leader's real torch, not the
+	/// cluster centre the light itself sits at this frame (LightMerge).
+	NiPoint3				PointShadowOrigin(NiPointLight* Light);
 
 	// --- Helpers ---
 	void					SetupGeoStreams(NiGeometryBufferData* GeoData);
