@@ -53,7 +53,8 @@ namespace FrameProfiler {
 			"TreeBranchesFar", "  groups", "TreeLeavesFar", "  groups",
 			"TreeInstDraws", "TreeInstPieces",
 			"OccCandidates", "OccQueried", "OccHidden", "OccCulled",
-			"LightPasses", "LightWalks", "Lights", "  dynamic", "  visible", "  geom pairs"
+			"LightPasses", "LightWalks", "Lights", "  dynamic", "  visible", "  geom pairs",
+			"MergeClusters", "MergeMembers", "MergeHidden"
 		};
 		const int ReportFrames = 600;
 

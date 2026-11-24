@@ -20,4 +20,15 @@ namespace LightMerge {
 	/// RenderHook::TrackRender exit: restores every light value ApplyFrame changed and publishes the
 	/// frame's light counters (and the LightMergeDebug row).
 	void RestoreFrame();
+
+	/// True when the light is a fully absorbed follower this frame and is kept out of the engine's
+	/// light assignment. Valid between ApplyFrame and RestoreFrame; false otherwise.
+	bool IsHidden(const NiPointLight* Light);
+
+	/// True when the light leads a merged cluster this frame; Out receives its real world position
+	/// (the light itself sits at the cluster's centre until RestoreFrame).
+	bool TruePosition(const NiPointLight* Light, NiPoint3* Out);
+
+	/// How much further a cluster leader reaches than its own radius this frame; 0 for any other light.
+	float ShadowReach(const NiPointLight* Light);
 }

@@ -109,6 +109,9 @@ namespace FrameProfiler {
 		Cnt_LightsDynamic,  // of those, dynamic (carried) lights
 		Cnt_LightsVisible,  // of those, not culled (lightState != 0xFF)
 		Cnt_LightGeomPairs, // geometry-list entries of the visible lights (each costs pass work)
+		Cnt_MergeClusters,  // light clusters merged this frame (LightMerge)
+		Cnt_MergeMembers,   // lights in those clusters, leaders included
+		Cnt_MergeHidden,    // fully absorbed followers
 		Cnt_COUNT
 	};
 
