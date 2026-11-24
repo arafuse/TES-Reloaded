@@ -284,6 +284,17 @@ struct SettingsMainStruct {
 		float	StopBlendTime;		// ease out when a single slot is stopped
 	};
 	
+	/// Merges clusters of matching NPC-carried lights into one light (LightMerge.h).
+	struct LightMergeStruct {
+		bool	Enabled;
+		float	JoinDistance;		// a matching light this close to a cluster's centroid joins it
+		float	LeaveDistance;		// a member leaves only beyond this (> JoinDistance)
+		float	FadeTime;			// seconds a light takes to fade into or out of a cluster
+		float	BrightnessExponent;	// leader brightness = (1 + absorbed)^exponent; 0.5 = sqrt(N)
+		float	ColorTolerance;		// max per-channel diffuse difference for two lights to match
+		float	RadiusTolerance;	// max radius difference for two lights to match
+	};
+	
 	struct FlyCamStruct {
 		bool	Enabled;
 		UInt8	KeyAdd;
@@ -309,6 +320,7 @@ struct SettingsMainStruct {
 		UInt8	LogSunShadowStealth;	// logs the player sun shadow probe about once a second
 		UInt8	LogWetActors;			// logs player and nearest-NPC wetness about once a second
 		bool	LogAnimationBlending;	// logs every animation transition AnimationBlending lengthens
+		UInt8	LightMergeDebug;		///< 1 logs per-frame light cost for 300 frames after each load or cell change
 	};
 
 	MainStruct					Main;
@@ -326,6 +338,7 @@ struct SettingsMainStruct {
 	GravityStruct				Gravity;
 	DodgeStruct					Dodge;
 	AnimationBlendingStruct		AnimationBlending;
+	LightMergeStruct			LightMerge;
 	FlyCamStruct				FlyCam;
 	DevelopStruct				Develop;
 };
