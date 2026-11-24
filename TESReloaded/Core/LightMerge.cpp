@@ -11,10 +11,13 @@ namespace {
 	const UInt32 kShadowSceneNodeTable = 0x00B42F54;
 	const UInt32 kSceneLightProcess    = 0x007C78D0;
 	const UInt32 kLightGeometryWalk    = 0x007C5F60;
+	const UInt32 kLightCullProcess     = 0x007D6390;
 
 	const UInt16 kLightStateCulled     = 0xFF;
 	const double kLoadGapMs            = 1000.0;
 	const int    kDebugWindowFrames    = 300;
+	const int    kDumpEveryFrames      = 30;
+	const int    kMaxTimedLights       = 64;
 
 	/// Light counts sampled from the scene node's list after the last light pass of the frame.
 	struct LightStats {
@@ -23,8 +26,8 @@ namespace {
 
 	/// Per-frame cost of the engine light pass and the dynamic-light scene walks.
 	struct FrameCost {
-		double   ProcessMs, WalkMs;
-		unsigned ProcessCalls, Walks;
+		double   ProcessMs, WalkMs, CullMs;
+		unsigned ProcessCalls, Walks, Culls;
 		LightStats Stats;
 	};
 
@@ -61,6 +64,11 @@ namespace {
 	std::vector<Override>                               gOverrides;
 	std::unordered_map<const NiPointLight*, MergeState> gStates;
 	std::unordered_set<const void*>                     gLastLeaders;
+
+	/// Per-light time in the engine's per-light cull (0x7D6390) this frame, for the debug dump.
+	struct LightCullTime { ShadowSceneLight* Light; double Ms; unsigned Calls; };
+	LightCullTime  gCullTimes[kMaxTimedLights];
+	int            gCullTimeCount = 0;
 
 	inline ShadowSceneNode* SceneNode() { return *(ShadowSceneNode**)kShadowSceneNodeTable; }
 
@@ -108,6 +116,53 @@ namespace {
 		}
 		gFrame.WalkMs += QpcMs(FrameProfiler::QpcNow() - Start);
 		gFrame.Walks++;
+	}
+
+	void AddCullTime(ShadowSceneLight* Light, double Ms) {
+		for (int i = 0; i < gCullTimeCount; i++)
+			if (gCullTimes[i].Light == Light) { gCullTimes[i].Ms += Ms; gCullTimes[i].Calls++; return; }
+		if (gCullTimeCount < kMaxTimedLights) gCullTimes[gCullTimeCount++] = { Light, Ms, 1 };
+	}
+
+	void (__fastcall* LightCullProcess)(ShadowSceneLight*, void*, void*) = (void (__fastcall*)(ShadowSceneLight*, void*, void*))kLightCullProcess;
+	void __fastcall TrackLightCullProcess(ShadowSceneLight* This, void* Edx, void* Arg) {
+		LONGLONG Start = FrameProfiler::QpcNow();
+		LightCullProcess(This, Edx, Arg);
+		double Ms = QpcMs(FrameProfiler::QpcNow() - Start);
+		gFrame.CullMs += Ms;
+		gFrame.Culls++;
+		AddCullTime(This, Ms);
+	}
+
+	const char* NodeName(NiNode* Node) {
+		return Node && Node->m_pcName ? Node->m_pcName : "-";
+	}
+
+	/// One line per scene light: the flags the merge filters on, and where the light hangs.
+	void DumpLights() {
+		ShadowSceneNode* Node = SceneNode();
+		if (!Node) return;
+		for (NiTList<ShadowSceneLight>::Entry* E = Node->lights.start; E; E = E->next) {
+			ShadowSceneLight* Scene = E->data;
+			if (!Scene) continue;
+			UInt8* B = (UInt8*)Scene;
+			NiPointLight* L = Scene->sourceLight;
+			double Ms = 0.0; unsigned Calls = 0;
+			for (int i = 0; i < gCullTimeCount; i++)
+				if (gCullTimes[i].Light == Scene) { Ms = gCullTimes[i].Ms; Calls = gCullTimes[i].Calls; }
+			if (!L) {
+				Logger::Log("[LightMerge]   ssl %p no source light, cull %u %.3f ms", Scene, Calls, Ms);
+				continue;
+			}
+			NiNode* P1 = L->m_parent;
+			NiNode* P2 = P1 ? P1->m_parent : NULL;
+			NiNode* P3 = P2 ? P2->m_parent : NULL;
+			Logger::Log("[LightMerge]   ssl %p F4 %u FC %u 104 %u state %u geom %u | carry %u ref %u r %.0f diff (%.2f %.2f %.2f) dim %.2f pos (%.0f %.0f %.0f) | cull %u %.3f ms | %s < %s < %s",
+				Scene, B[0xF4], B[0xFC], B[0x104], (unsigned)Scene->lightState, Scene->unkE4.numItems,
+				(unsigned)L->CanCarry, (unsigned)L->m_uiRefCount, L->Spec.r, L->Diff.r, L->Diff.g, L->Diff.b, L->Dimmer,
+				L->m_worldTransform.pos.x, L->m_worldTransform.pos.y, L->m_worldTransform.pos.z,
+				Calls, Ms, NodeName(P1), NodeName(P2), NodeName(P3));
+		}
 	}
 
 	/// True on the first frame after a load screen, a long pause or a cell change.
@@ -217,8 +272,8 @@ namespace {
 
 	void LogDebugRow() {
 		const FrameCost& F = gFrame;
-		Logger::Log("[LightMerge] frame %3u  %7.2f ms | walks %3u %6.3f ms | process %u %6.3f ms | lights %u dyn %u vis %u geom %u | merged %u in %u, hidden %u",
-			gDebugFrameIndex, gFrameMs, F.Walks, F.WalkMs, F.ProcessCalls, F.ProcessMs,
+		Logger::Log("[LightMerge] frame %3u  %7.2f ms | walks %3u %6.3f ms | process %u %6.3f ms | light culls %3u %6.3f ms | lights %u dyn %u vis %u geom %u | merged %u in %u, hidden %u",
+			gDebugFrameIndex, gFrameMs, F.Walks, F.WalkMs, F.ProcessCalls, F.ProcessMs, F.Culls, F.CullMs,
 			F.Stats.Lights, F.Stats.Dynamic, F.Stats.Visible, F.Stats.GeomPairs, gMembers, gClusters, gHidden);
 	}
 }
@@ -229,6 +284,7 @@ void CreateLightMergeHook() {
 	DetourUpdateThread(GetCurrentThread());
 	DetourAttach(&(PVOID&)SceneLightProcess, &TrackSceneLightProcess);
 	DetourAttach(&(PVOID&)LightGeometryWalk, &TrackLightGeometryWalk);
+	if (TheSettingManager->SettingsMain.Develop.LightMergeDebug) DetourAttach(&(PVOID&)LightCullProcess, &TrackLightCullProcess);
 	if (DetourTransactionCommit() != NO_ERROR) {
 		Logger::Log("[LightMerge] light pass hooks failed; not installed");
 		return;
@@ -248,6 +304,7 @@ namespace LightMerge {
 		gFrameMs = gLastApplyMs < 0.0 ? 0.0 : NowMs - gLastApplyMs;
 		gLastApplyMs = NowMs;
 		gFrame = FrameCost();
+		gCullTimeCount = 0;
 		gClusters = gMembers = gHidden = 0;
 		if (Discontinuity && TheSettingManager->SettingsMain.Develop.LightMergeDebug) {
 			gDebugFramesLeft = kDebugWindowFrames;
@@ -281,6 +338,7 @@ namespace LightMerge {
 		FrameProfiler::Count(FrameProfiler::Cnt_MergeHidden, gHidden);
 		if (gDebugFramesLeft > 0) {
 			LogDebugRow();
+			if (gDebugFrameIndex % kDumpEveryFrames == 0) DumpLights();
 			gDebugFramesLeft--;
 			gDebugFrameIndex++;
 		}
