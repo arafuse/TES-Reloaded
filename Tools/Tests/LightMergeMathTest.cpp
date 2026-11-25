@@ -244,6 +244,47 @@ static void TrueLightViewSurvivesNextPublish() {
 	CHECK(T.Read().Find(&KeyA) == nullptr);
 }
 
+static void SanitizeKeepsLeaveAtLeastJoin() {
+	Params Bad = { 200.0f, 150.0f, 0.5f, 0.5f, 0.02f, 1.0f };
+	CHECK_NEAR(Sanitize(Bad).LeaveDistance, 200.0, 1e-6);
+	CHECK_NEAR(Sanitize(Bad).JoinDistance, 200.0, 1e-6);
+	CHECK_NEAR(Sanitize(P).LeaveDistance, 192.0, 1e-6);
+}
+
+static void SnapsForASecondAfterABreak() {
+	CHECK(IsSnapWindow(0.0, 1000.0));
+	CHECK(IsSnapWindow(300.0, 1000.0));
+	CHECK(!IsSnapWindow(1000.0, 1000.0));
+	CHECK(!IsSnapWindow(5000.0, 1000.0));
+}
+
+static void LateLightSnapsInsideWindow() {
+	Clusterer C;
+	LightInput One[] = { Torch(&KeyA, 0) };
+	C.Update(One, 1, P, 0.0f, true);
+	LightInput Two[] = { Torch(&KeyA, 0), Torch(&KeyB, 100) };
+	C.Update(Two, 2, P, 0.016f, IsSnapWindow(300.0, 1000.0));
+	CHECK(Out(C, 1).Hidden);
+}
+
+static void TrueLightReachMatchesEngine() {
+	TrueLight L = { &KeyA, &KeyB, { 0.0f, 0.0f, 0.0f }, 200.0f, 0.8f, true };
+	float Near[3] = { 250.0f, 0.0f, 0.0f };
+	CHECK(ReachesSphere(L, Near, 60.0f));
+	float Far[3] = { 300.0f, 0.0f, 0.0f };
+	CHECK(!ReachesSphere(L, Far, 60.0f));
+	L.PlanesActive = true;
+	L.PlaneMask = 1;
+	L.Planes[0][0] = 1.0f;
+	float Behind[3] = { -100.0f, 0.0f, 0.0f };
+	CHECK(!ReachesSphere(L, Behind, 50.0f));
+	float Straddle[3] = { -20.0f, 0.0f, 0.0f };
+	CHECK(ReachesSphere(L, Straddle, 50.0f));
+	CHECK(ReachesSphere(L, Far, 60.0f));
+	L.PlaneMask = 0;
+	CHECK(ReachesSphere(L, Behind, 50.0f));
+}
+
 int main() {
 	TwoMatchingSnap();
 	ThreeMatchingLeaderNearestCentroid();
@@ -261,6 +302,10 @@ int main() {
 	SceneBreakOnlyOnRealChange();
 	TrueLightShareMatchesEngine();
 	TrueLightViewSurvivesNextPublish();
+	SanitizeKeepsLeaveAtLeastJoin();
+	SnapsForASecondAfterABreak();
+	LateLightSnapsInsideWindow();
+	TrueLightReachMatchesEngine();
 	if (Failures) { std::printf("LightMergeMath: %d check(s) failed\n", Failures); return 1; }
 	std::printf("LightMergeMath: all tests passed\n");
 	return 0;

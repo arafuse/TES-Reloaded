@@ -16,6 +16,19 @@ namespace LightMergeMath {
 		float JoinDistance, LeaveDistance, FadeTime, BrightnessExponent, ColorTolerance, RadiusTolerance;
 	};
 
+	/// Params made safe to cluster with: LeaveDistance below JoinDistance would make a member between
+	/// the two flip its target every frame, so Leave is raised to Join.
+	inline Params Sanitize(Params P) {
+		if (P.LeaveDistance < P.JoinDistance) P.LeaveDistance = P.JoinDistance;
+		return P;
+	}
+
+	/// True while a scene break is recent enough that lights still appearing (torches NPCs equip a few
+	/// frames after a load) should snap into their groups instead of fading in.
+	inline bool IsSnapWindow(double MsSinceBreak, double WindowMs) {
+		return MsSinceBreak < WindowMs;
+	}
+
 	/// One scene light this frame. Key identifies it across frames; Eligible is false for lights that
 	/// must never merge (the player's light, magic lights, non-carried lights).
 	struct LightInput {
@@ -75,7 +88,23 @@ namespace LightMergeMath {
 		float       Radius;
 		float       MaxDiffuse;
 		bool        Hidden;
+		bool        PlanesActive;    // SSL +0x14C: the light is clipped by planes instead of its radius
+		unsigned    PlaneMask;       // SSL +0x1B0: which of the six planes are tested
+		float       Planes[6][4];    // SSL +0x150: normal xyz, constant
 	};
+
+	/// The engine's "light reaches object" test (0x7D2EA0) on a bounding sphere. With planes, the
+	/// sphere is out when it lies wholly behind any tested plane (n.c - k <= -r); otherwise it is in
+	/// when the light's radius exceeds the distance to the sphere's surface.
+	inline bool ReachesSphere(const TrueLight& L, const float Center[3], float Radius) {
+		if (!L.PlanesActive) return L.Radius > Distance(L.Pos, Center) - Radius;
+		for (int i = 0; i < 6; i++) {
+			if (!(L.PlaneMask & (1u << i))) continue;
+			const float* N = L.Planes[i];
+			if (N[0] * Center[0] + N[1] * Center[1] + N[2] * Center[2] - N[3] <= -Radius) return false;
+		}
+		return true;
+	}
 
 	/// The engine's light-level share (0x7D31B0): (1 - clamp(d/r)^2) * max diffuse; 0 for the
 	/// excluded light (the actor's own).

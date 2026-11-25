@@ -275,6 +275,7 @@ public:
 	struct PointLightSlot {
 		NiPointLight*	Light;			// NULL = slot empty, or retiring if Intensity > 0
 		D3DXVECTOR3		BakedLightPos;	// world-space light position at last bake
+		float			BakedFarPlane;	// far plane the depths were normalized by (a merged torch group widens it)
 		UInt64			Checksum;		// sum of in-radius refs' RefLightInfo::PoseHash at last bake
 		bool			Valid;			// false => cube must be (re)baked
 		bool			ViewCulled;		// last bake left out casters the camera could not see: valid for that frame only

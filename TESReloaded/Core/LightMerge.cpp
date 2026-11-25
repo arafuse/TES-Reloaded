@@ -16,9 +16,12 @@ namespace {
 	const UInt32 kLightAffectsObject   = 0x007D2EA0;
 	const UInt32 kActorLightLevel      = 0x00655FE0;
 	const UInt32 kLightLevelFalloff    = 0x007D31B0;
+	const UInt32 kActorOwnLight        = 0x004D7FC0;
 
 	const UInt16 kLightStateCulled     = 0xFF;
 	const double kLoadGapMs            = 1000.0;
+	const double kSnapWindowMs         = 1000.0;
+	const int    kMaxSkeletonDepth     = 32;
 	const int    kDebugWindowFrames    = 300;
 	const int    kDumpEveryFrames      = 30;
 	const int    kMaxTimedLights       = 64;
@@ -56,6 +59,7 @@ namespace {
 
 	FrameCost      gFrame = {};
 	double         gLastApplyMs = -1.0;
+	double         gBreakMs = -1.0e12;
 	double         gFrameMs = 0.0;
 	const void*    gLastScene = NULL;
 	int            gDebugFramesLeft = 0;
@@ -79,7 +83,6 @@ namespace {
 	struct LightLevelProbe {
 		bool                    Active, Captured, Overflow;
 		float                   X, Y, Z;
-		const void*             Exclude;
 		int                     Seen;
 		const ShadowSceneLight* SeenLights[kMaxProbeLights];
 	};
@@ -174,7 +177,6 @@ namespace {
 		if (P.Active) {
 			P.Captured = true;
 			P.X = X; P.Y = Y; P.Z = Z;
-			P.Exclude = Exclude;
 			if (P.Seen < kMaxProbeLights) P.SeenLights[P.Seen++] = This;
 			else P.Overflow = true;
 		}
@@ -191,6 +193,38 @@ namespace {
 	/// lighting property, which the refused followers have left, so their share is added back from
 	/// the true values; adding before the 100 clamp equals adding after it, as every share is >= 0.
 	float (__fastcall* ActorLightLevel)(void*, void*, Actor*, UInt32) = (float (__fastcall*)(void*, void*, Actor*, UInt32))kActorLightLevel;
+
+	/// The light 0x655FE0 leaves out of an actor's level: with its flag set, the actor's own carried
+	/// light (0x4D7FC0 on the actor), else none. Read here because the sun call that ends the
+	/// engine's sum passes no exclude, so the probe cannot be trusted for it.
+	const void* ActorOwnLight(Actor* Subject, UInt32 Flag) {
+		if (!(UInt8)Flag) return NULL;
+		void** Own = (void**)ThisCall(kActorOwnLight, Subject);
+		return Own ? *Own : NULL;
+	}
+
+	/// On the main thread only (where the scene node's list cannot change underneath): is this scene
+	/// light still live, so the engine's own falloff can be called on it?
+	bool IsLiveOnMainThread(const void* Scene) {
+		if (GetCurrentThreadId() != gMainThread || gApplied) return false;
+		ShadowSceneNode* Node = SceneNode();
+		if (!Node) return false;
+		for (NiTList<ShadowSceneLight>::Entry* E = Node->lights.start; E; E = E->next)
+			if (E->data == Scene) return true;
+		return false;
+	}
+
+	/// A hidden follower's share as vanilla would have summed it: only if it would have been linked
+	/// to the actor (the reach test on the actor's bound, planes included); through the engine's own
+	/// falloff when it is safe to call (so its +0xD0 cache is written as in vanilla), else from the
+	/// true values.
+	float HiddenFollowerShare(const LightMergeMath::TrueLight& H, const NiBound& Bound, const float At[3], const void* Own) {
+		float Center[3] = { Bound.Center.x, Bound.Center.y, Bound.Center.z };
+		if (!LightMergeMath::ReachesSphere(H, Center, Bound.Radius)) return 0.0f;
+		if (IsLiveOnMainThread(H.Key))
+			return LightLevelFalloff((ShadowSceneLight*)H.Key, NULL, At[0], At[1], At[2], Own);
+		return LightMergeMath::LightLevelShare(H, At, Own);
+	}
 	float __fastcall TrackActorLightLevel(void* Process, void* Edx, Actor* Subject, UInt32 Flag) {
 		if (gApplied && GetCurrentThreadId() != gMainThread && !InterlockedExchange(&gLoggedOffThreadLevel, 1))
 			Logger::Log("[LightMerge] an actor light level ran on another thread during the render (answered from true values)");
@@ -204,14 +238,16 @@ namespace {
 		float Level = ActorLightLevel(Process, Edx, Subject, Flag);
 		P.Active = false;
 		float Added = 0.0f;
-		if (P.Captured && !P.Overflow) {
+		NiNode* Root = Subject->GetNode();
+		if (P.Captured && !P.Overflow && Root) {
 			float At[3] = { P.X, P.Y, P.Z };
+			const void* Own = ActorOwnLight(Subject, Flag);
 			for (int h = 0; h < Merged.Count; h++) {
 				const LightMergeMath::TrueLight& H = Merged.Lights[h];
 				if (!H.Hidden) continue;
 				bool Summed = false;
 				for (int i = 0; i < P.Seen && !Summed; i++) Summed = P.SeenLights[i] == H.Key;
-				if (!Summed) Added += LightMergeMath::LightLevelShare(H, At, P.Exclude);
+				if (!Summed) Added += HiddenFollowerShare(H, Root->m_kWorldBound, At, Own);
 			}
 		}
 		tProbe = Outer;
@@ -240,6 +276,8 @@ namespace {
 		return Node && Node->m_pcName ? Node->m_pcName : "-";
 	}
 
+	bool IsCarriedByActor(NiPointLight* Light);
+
 	/// One line per scene light: the flags the merge filters on, and where the light hangs.
 	void DumpLights() {
 		ShadowSceneNode* Node = SceneNode();
@@ -259,9 +297,9 @@ namespace {
 			NiNode* P1 = L->m_parent;
 			NiNode* P2 = P1 ? P1->m_parent : NULL;
 			NiNode* P3 = P2 ? P2->m_parent : NULL;
-			Logger::Log("[LightMerge]   ssl %p F4 %u FC %u 104 %u state %u geom %u | carry %u ref %u r %.0f diff (%.2f %.2f %.2f) dim %.2f pos (%.0f %.0f %.0f) | cull %u %.3f ms | %s < %s < %s",
+			Logger::Log("[LightMerge]   ssl %p F4 %u FC %u 104 %u state %u geom %u | carry %u actor %u ref %u r %.0f diff (%.2f %.2f %.2f) dim %.2f pos (%.0f %.0f %.0f) | cull %u %.3f ms | %s < %s < %s",
 				Scene, B[0xF4], B[0xFC], B[0x104], (unsigned)Scene->lightState, Scene->unkE4.numItems,
-				(unsigned)L->CanCarry, (unsigned)L->m_uiRefCount, L->Spec.r, L->Diff.r, L->Diff.g, L->Diff.b, L->Dimmer,
+				(unsigned)L->CanCarry, IsCarriedByActor(L) ? 1u : 0u, (unsigned)L->m_uiRefCount, L->Spec.r, L->Diff.r, L->Diff.g, L->Diff.b, L->Dimmer,
 				L->m_worldTransform.pos.x, L->m_worldTransform.pos.y, L->m_worldTransform.pos.z,
 				Calls, Ms, NodeName(P1), NodeName(P2), NodeName(P3));
 		}
@@ -285,6 +323,15 @@ namespace {
 	bool IsMagicLight(NiPointLight* Light) {
 		NiNode* Parent = Light->m_parent;
 		return Parent && Parent->m_pcName && strstr(Parent->m_pcName, "agic") != NULL;
+	}
+
+	/// True when the light hangs under a skeleton bone ("Bip01 ..."), i.e. an actor carries it; a
+	/// carryable light placed in the world or dropped on the ground has no skeleton above it.
+	bool IsCarriedByActor(NiPointLight* Light) {
+		int Depth = 0;
+		for (NiNode* Node = Light->m_parent; Node && Depth < kMaxSkeletonDepth; Node = Node->m_parent, Depth++)
+			if (Node->m_pcName && !strncmp(Node->m_pcName, "Bip01", 5)) return true;
+		return false;
 	}
 
 	bool IsPlayerLight(NiPointLight* Light) {
@@ -314,7 +361,7 @@ namespace {
 			In.Color[1] = Light->Diff.g;
 			In.Color[2] = Light->Diff.b;
 			In.Radius = Light->Spec.r;
-			In.Eligible = Light->CanCarry && !IsMagicLight(Light) && !IsPlayerLight(Light);
+			In.Eligible = Light->CanCarry && !IsMagicLight(Light) && !IsPlayerLight(Light) && IsCarriedByActor(Light);
 			gInputs.push_back(In);
 			gInputScene.push_back(Scene);
 		}
@@ -323,7 +370,7 @@ namespace {
 	LightMergeMath::Params CurrentParams() {
 		const SettingsMainStruct::LightMergeStruct& S = TheSettingManager->SettingsMain.LightMerge;
 		LightMergeMath::Params P = { S.JoinDistance, S.LeaveDistance, S.FadeTime, S.BrightnessExponent, S.ColorTolerance, S.RadiusTolerance };
-		return P;
+		return LightMergeMath::Sanitize(P);
 	}
 
 	/// Publishes the true values of every light this frame's merge changes, before it changes them.
@@ -341,6 +388,10 @@ namespace {
 			T.Radius = In.Radius;
 			T.MaxDiffuse = std::fmax(In.Color[0], std::fmax(In.Color[1], In.Color[2]));
 			T.Hidden = O.Hidden;
+			const UInt8* B = (const UInt8*)gInputScene[i];
+			T.PlanesActive = *(const UInt32*)(B + 0x14C) != 0;
+			T.PlaneMask = *(const UInt32*)(B + 0x1B0);
+			memcpy(T.Planes, B + 0x150, sizeof(T.Planes));
 		}
 		gTrueLights.Publish(Count);
 	}
@@ -481,10 +532,14 @@ namespace LightMerge {
 			return;
 		}
 		// Keys are scene-light pointers, whose addresses a load or cell change may reuse.
-		if (Discontinuity) gClusterer.Reset();
+		if (Discontinuity) {
+			gClusterer.Reset();
+			gBreakMs = NowMs;
+		}
 		CollectInputs(Node);
-		float Delta = Discontinuity ? 0.0f : (float)(gFrameMs / 1000.0);
-		gClusterer.Update(gInputs.data(), (int)gInputs.size(), CurrentParams(), Delta, Discontinuity);
+		bool Snap = Discontinuity || LightMergeMath::IsSnapWindow(NowMs - gBreakMs, kSnapWindowMs);
+		float Delta = Snap ? 0.0f : (float)(gFrameMs / 1000.0);
+		gClusterer.Update(gInputs.data(), (int)gInputs.size(), CurrentParams(), Delta, Snap);
 		ApplyMerge();
 	}
 

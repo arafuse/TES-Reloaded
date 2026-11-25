@@ -487,6 +487,7 @@ ShadowManager::ShadowManager() {
 	for (int i = 0; i < PointLightMax; i++) {
 		PointSlots[i].Light = NULL;
 		PointSlots[i].BakedLightPos = D3DXVECTOR3(0.0f, 0.0f, 0.0f);
+		PointSlots[i].BakedFarPlane = 0.0f;
 		PointSlots[i].Checksum = 0;
 		PointSlots[i].Valid = false;
 		PointSlots[i].ViewCulled = false;
@@ -2491,6 +2492,8 @@ bool ShadowManager::PointSlotNeedsRebake(int Slot, UInt64 Checksum) {
 	// Covers carried torches too: a moving light is simply a moved light.
 	D3DXVECTOR3 Moved = Pos - Slot_.BakedLightPos;
 	if (D3DXVec3Length(&Moved) > PointLightMoveEpsilon) return true;
+	float FarPlane = TheShaderManager->ShaderConst.ShadowMap.ShadowCastLightPosition[Slot].w;
+	if (std::fabs(FarPlane - Slot_.BakedFarPlane) > PointLightMoveEpsilon) return true;
 	return Checksum != Slot_.Checksum;      // a caster within reach moved
 }
 
@@ -2551,6 +2554,7 @@ void ShadowManager::BakePointCube(int Slot) {
 	// Record what this cube was baked against, to detect staleness.
 	NiPoint3 Origin = PointShadowOrigin(PointSlots[Slot].Light);
 	PointSlots[Slot].BakedLightPos = D3DXVECTOR3(Origin.x, Origin.y, Origin.z);
+	PointSlots[Slot].BakedFarPlane = TheShaderManager->ShaderConst.ShadowMap.ShadowCastLightPosition[Slot].w;
 	PointSlots[Slot].Valid = true;
 }
 
