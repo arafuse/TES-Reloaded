@@ -440,9 +440,9 @@ SettingManager::SettingManager() {
 	SettingsMain.AnimationBlending.StopBlendTime = atof(value);
 
 	SettingsMain.LightMerge.Enabled = GetPrivateProfileIntA("LightMerge", "Enabled", 0, Filename);
-	GetPrivateProfileStringA("LightMerge", "JoinDistance", "128.0", value, SettingStringBuffer, Filename);
+	GetPrivateProfileStringA("LightMerge", "JoinDistance", "192.0", value, SettingStringBuffer, Filename);
 	SettingsMain.LightMerge.JoinDistance = atof(value);
-	GetPrivateProfileStringA("LightMerge", "LeaveDistance", "192.0", value, SettingStringBuffer, Filename);
+	GetPrivateProfileStringA("LightMerge", "LeaveDistance", "256.0", value, SettingStringBuffer, Filename);
 	SettingsMain.LightMerge.LeaveDistance = atof(value);
 	GetPrivateProfileStringA("LightMerge", "FadeTime", "0.5", value, SettingStringBuffer, Filename);
 	SettingsMain.LightMerge.FadeTime = atof(value);
