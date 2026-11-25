@@ -22,7 +22,6 @@ namespace {
 	const int    kDebugWindowFrames    = 300;
 	const int    kDumpEveryFrames      = 30;
 	const int    kMaxTimedLights       = 64;
-	const int    kMaxHidden            = 64;
 	const int    kMaxProbeLights       = 64;
 
 	/// Light counts sampled from the scene node's list after the last light pass of the frame.
@@ -58,29 +57,23 @@ namespace {
 	FrameCost      gFrame = {};
 	double         gLastApplyMs = -1.0;
 	double         gFrameMs = 0.0;
-	TESObjectCELL* gLastCell = NULL;
+	const void*    gLastScene = NULL;
 	int            gDebugFramesLeft = 0;
 	unsigned       gDebugFrameIndex = 0;
 	int            gDepth = 0;
 	bool           gAutoSampling = false;
 	unsigned       gAffectTests = 0, gAffectRejects = 0;
 
-	/// Fully absorbed followers from the last ApplyFrame. Kept until the next one, because the engine
-	/// also links lights to objects in the update phase, outside the render; written on the main
-	/// thread only, count last, so a reader on another thread never sees a half-written entry.
-	ShadowSceneLight* gHiddenScene[kMaxHidden];
-	volatile LONG     gHiddenCount = 0;
+	/// Every merged light's real values from the last ApplyFrame, keyed by scene light; its Hidden
+	/// entries are the refused followers. Kept until the next ApplyFrame, because the engine also
+	/// links lights to objects in the update phase, outside the render.
+	LightMergeMath::TrueLightTable gTrueLights;
 
-	/// A hidden follower's real values, for the actor light level (which may run on the AI thread
-	/// while the render has the light dimmed and refused).
-	struct HiddenLight {
-		const ShadowSceneLight* Scene;
-		const NiPointLight*     Source;
-		NiPoint3                Pos;
-		float                   Radius;
-		float                   MaxDiffuse;
-	};
-	HiddenLight gHiddenLights[kMaxHidden];
+	/// Set while ApplyFrame's values are in the engine lights (until RestoreFrame), so a light level
+	/// taken meanwhile, possibly on the AI thread, reads the true values instead.
+	volatile LONG gApplied = 0;
+	DWORD         gMainThread = 0;
+	volatile LONG gLoggedOffThreadLevel = 0;
 
 	/// What the engine's light-level loop summed for one actor, seen through its falloff calls.
 	struct LightLevelProbe {
@@ -155,10 +148,8 @@ namespace {
 	}
 
 	bool IsHiddenScene(const ShadowSceneLight* Light) {
-		LONG Count = gHiddenCount;
-		for (LONG i = 0; i < Count; i++)
-			if (gHiddenScene[i] == Light) return true;
-		return false;
+		const LightMergeMath::TrueLight* L = gTrueLights.Read().Find(Light);
+		return L && L->Hidden;
 	}
 
 	/// 0x7D2EA0, "does this light reach this object": the cull re-asks it for every light on every
@@ -175,7 +166,8 @@ namespace {
 	}
 
 	/// 0x7D31B0, one light's share of an actor's light level: (1 - clamp(d/r)^2) * max(diffuse),
-	/// skipped for the actor's own light. Watched only to learn what the NPC loop summed.
+	/// skipped for the actor's own light. Only the light level calls it. Records what the NPC loop
+	/// summed, and while a frame's merge is applied answers for merged lights from their true values.
 	float (__fastcall* LightLevelFalloff)(ShadowSceneLight*, void*, float, float, float, const void*) = (float (__fastcall*)(ShadowSceneLight*, void*, float, float, float, const void*))kLightLevelFalloff;
 	float __fastcall TrackLightLevelFalloff(ShadowSceneLight* This, void* Edx, float X, float Y, float Z, const void* Exclude) {
 		LightLevelProbe& P = tProbe;
@@ -186,25 +178,26 @@ namespace {
 			if (P.Seen < kMaxProbeLights) P.SeenLights[P.Seen++] = This;
 			else P.Overflow = true;
 		}
-		return LightLevelFalloff(This, Edx, X, Y, Z, Exclude);
-	}
-
-	float HiddenShare(const HiddenLight& H, const LightLevelProbe& P) {
-		if (H.Source == P.Exclude || H.Radius <= 0.0f) return 0.0f;
-		float DX = P.X - H.Pos.x, DY = P.Y - H.Pos.y, DZ = P.Z - H.Pos.z;
-		float T = std::sqrt(DX * DX + DY * DY + DZ * DZ) / H.Radius;
-		if (T > 1.0f) T = 1.0f;
-		return (1.0f - T * T) * H.MaxDiffuse;
+		float Share = LightLevelFalloff(This, Edx, X, Y, Z, Exclude);
+		if (!gApplied) return Share;
+		const LightMergeMath::TrueLight* L = gTrueLights.Read().Find(This);
+		if (!L || L->Source == Exclude) return Share;
+		float At[3] = { X, Y, Z };
+		return LightMergeMath::LightLevelShare(*L, At, Exclude);
 	}
 
 	/// 0x655FE0, an actor's light level (0-100) for detection. The player's path sums the scene
 	/// node's own light list, which keeps hidden followers. An NPC's sums the lights linked to its
 	/// lighting property, which the refused followers have left, so their share is added back from
-	/// the snapshot; adding before the 100 clamp equals adding after it, as every share is >= 0.
+	/// the true values; adding before the 100 clamp equals adding after it, as every share is >= 0.
 	float (__fastcall* ActorLightLevel)(void*, void*, Actor*, UInt32) = (float (__fastcall*)(void*, void*, Actor*, UInt32))kActorLightLevel;
 	float __fastcall TrackActorLightLevel(void* Process, void* Edx, Actor* Subject, UInt32 Flag) {
-		LONG Hidden = gHiddenCount;
-		if (Hidden == 0 || (void*)Subject == (void*)Player) return ActorLightLevel(Process, Edx, Subject, Flag);
+		if (gApplied && GetCurrentThreadId() != gMainThread && !InterlockedExchange(&gLoggedOffThreadLevel, 1))
+			Logger::Log("[LightMerge] an actor light level ran on another thread during the render (answered from true values)");
+		LightMergeMath::TrueLightTable::View Merged = gTrueLights.Read();
+		bool AnyHidden = false;
+		for (int h = 0; h < Merged.Count && !AnyHidden; h++) AnyHidden = Merged.Lights[h].Hidden;
+		if (!AnyHidden || (void*)Subject == (void*)Player) return ActorLightLevel(Process, Edx, Subject, Flag);
 		LightLevelProbe Outer = tProbe;
 		LightLevelProbe& P = tProbe;
 		P.Active = true; P.Captured = false; P.Overflow = false; P.Seen = 0;
@@ -212,11 +205,13 @@ namespace {
 		P.Active = false;
 		float Added = 0.0f;
 		if (P.Captured && !P.Overflow) {
-			for (LONG h = 0; h < Hidden && h < kMaxHidden; h++) {
-				const HiddenLight& H = gHiddenLights[h];
+			float At[3] = { P.X, P.Y, P.Z };
+			for (int h = 0; h < Merged.Count; h++) {
+				const LightMergeMath::TrueLight& H = Merged.Lights[h];
+				if (!H.Hidden) continue;
 				bool Summed = false;
-				for (int i = 0; i < P.Seen && !Summed; i++) Summed = P.SeenLights[i] == H.Scene;
-				if (!Summed) Added += HiddenShare(H, P);
+				for (int i = 0; i < P.Seen && !Summed; i++) Summed = P.SeenLights[i] == H.Key;
+				if (!Summed) Added += LightMergeMath::LightLevelShare(H, At, P.Exclude);
 			}
 		}
 		tProbe = Outer;
@@ -272,13 +267,19 @@ namespace {
 		}
 	}
 
-	/// True on the first frame after a load screen, a long pause or a cell change.
+	/// True on the first frame after a load screen, a long pause, or a move to another worldspace or
+	/// interior. Crossing an exterior cell border keeps the groups (and their fades) going.
 	bool DetectDiscontinuity(double NowMs) {
-		bool Gap = gLastApplyMs < 0.0 || NowMs - gLastApplyMs > kLoadGapMs;
 		TESObjectCELL* Cell = Player ? Player->parentCell : NULL;
-		bool CellChanged = Cell != gLastCell;
-		gLastCell = Cell;
-		return Gap || CellChanged;
+		const void* Scene = Cell && Cell->worldSpace ? (const void*)Cell->worldSpace : (const void*)Cell;
+		if (!Scene) {
+			gLastScene = NULL;
+			return false;
+		}
+		double GapMs = gLastApplyMs < 0.0 ? kLoadGapMs + 1.0 : NowMs - gLastApplyMs;
+		bool Break = LightMergeMath::IsSceneBreak(gLastScene, Scene, GapMs, kLoadGapMs);
+		gLastScene = Scene;
+		return Break;
 	}
 
 	bool IsMagicLight(NiPointLight* Light) {
@@ -325,12 +326,31 @@ namespace {
 		return P;
 	}
 
+	/// Publishes the true values of every light this frame's merge changes, before it changes them.
+	void PublishTrueLights(const std::vector<LightMergeMath::LightOutput>& Outputs) {
+		LightMergeMath::TrueLight* Out = gTrueLights.BeginWrite();
+		int Count = 0;
+		for (size_t i = 0; i < Outputs.size() && Count < LightMergeMath::TrueLightTable::Capacity; i++) {
+			const LightMergeMath::LightOutput& O = Outputs[i];
+			if (O.Role == LightMergeMath::Role_Solo) continue;
+			const LightMergeMath::LightInput& In = gInputs[i];
+			LightMergeMath::TrueLight& T = Out[Count++];
+			T.Key = gInputScene[i];
+			T.Source = gInputScene[i]->sourceLight;
+			for (int k = 0; k < 3; k++) T.Pos[k] = In.Pos[k];
+			T.Radius = In.Radius;
+			T.MaxDiffuse = std::fmax(In.Color[0], std::fmax(In.Color[1], In.Color[2]));
+			T.Hidden = O.Hidden;
+		}
+		gTrueLights.Publish(Count);
+	}
+
 	/// Writes this frame's merge into the engine lights, remembering every original value.
 	void ApplyMerge() {
 		const std::vector<LightMergeMath::LightOutput>& Outputs = gClusterer.Outputs();
 		std::unordered_set<const void*> Leaders;
-		LONG Hidden = 0;
-		InterlockedExchange(&gHiddenCount, 0);
+		PublishTrueLights(Outputs);
+		InterlockedExchange(&gApplied, 1);
 		for (size_t i = 0; i < Outputs.size(); i++) {
 			const LightMergeMath::LightOutput& O = Outputs[i];
 			if (O.Role == LightMergeMath::Role_Solo) continue;
@@ -344,14 +364,7 @@ namespace {
 			Light->Diff.g *= O.ColorScale;
 			Light->Diff.b *= O.ColorScale;
 			gMembers++;
-			if (O.Hidden) {
-				gHidden++;
-				if (Hidden < kMaxHidden) {
-					gHiddenLights[Hidden] = { gInputScene[i], Light, Saved.Pos, Saved.Radius,
-						std::fmax(Saved.Diff.r, std::fmax(Saved.Diff.g, Saved.Diff.b)) };
-					gHiddenScene[Hidden++] = gInputScene[i];
-				}
-			}
+			if (O.Hidden) gHidden++;
 			if (!Leader) continue;
 			gClusters++;
 			Leaders.insert(O.Key);
@@ -367,7 +380,6 @@ namespace {
 				if (!Leaders.count(Key)) Logger::Log("[LightMerge] cluster ended: leader %p", Key);
 		}
 		gLastLeaders.swap(Leaders);
-		InterlockedExchange(&gHiddenCount, Hidden);
 	}
 
 	/// Puts back every value ApplyMerge changed, for lights still in the scene node's list.
@@ -446,6 +458,7 @@ namespace LightMerge {
 	void ApplyFrame() {
 		// The save thumbnail re-enters kRender; only the outermost frame applies and restores.
 		if (++gDepth > 1) return;
+		gMainThread = GetCurrentThreadId();
 		double NowMs = TheFrameRateManager->GetPerformance();
 		bool Discontinuity = DetectDiscontinuity(NowMs);
 		gFrameMs = gLastApplyMs < 0.0 ? 0.0 : NowMs - gLastApplyMs;
@@ -454,17 +467,17 @@ namespace LightMerge {
 		gCullTimeCount = 0;
 		gClusters = gMembers = gHidden = 0;
 		if (Discontinuity && TheSettingManager->SettingsMain.Develop.LightMergeDebug) {
-			StopAutoSampler("load or cell change");
+			StopAutoSampler("load or scene change");
 			gDebugFramesLeft = kDebugWindowFrames;
 			gDebugFrameIndex = 0;
-			Logger::Log("[LightMerge] ---- load or cell change: logging %d frames ----", kDebugWindowFrames);
+			Logger::Log("[LightMerge] ---- load or scene change: logging %d frames ----", kDebugWindowFrames);
 		}
 
 		if (!TheSettingManager->SettingsMain.LightMerge.Enabled) return;
 		ShadowSceneNode* Node = SceneNode();
 		if (!Node || !Player || !Player->parentCell) {
 			gClusterer.Reset();
-			InterlockedExchange(&gHiddenCount, 0);
+			gTrueLights.Publish(0);
 			return;
 		}
 		// Keys are scene-light pointers, whose addresses a load or cell change may reuse.
@@ -479,6 +492,7 @@ namespace LightMerge {
 		if (--gDepth > 0) return;
 		gDepth = 0;
 		RestoreMerge();
+		InterlockedExchange(&gApplied, 0);
 		FrameProfiler::Count(FrameProfiler::Cnt_LightProcessCalls, gFrame.ProcessCalls);
 		FrameProfiler::Count(FrameProfiler::Cnt_LightWalks, gFrame.Walks);
 		FrameProfiler::Count(FrameProfiler::Cnt_Lights, gFrame.Stats.Lights);

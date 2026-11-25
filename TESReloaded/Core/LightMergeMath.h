@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <unordered_map>
 #include <vector>
@@ -58,6 +59,70 @@ namespace LightMergeMath {
 		return std::pow(1.0f + FollowerWeightSum, Exponent);
 	}
 
+	/// True when merge state must start over: the first frame, a different worldspace or interior
+	/// (Scene is the worldspace, or the cell when interior), or a gap long enough to be a load. An
+	/// exterior cell border is not a break.
+	inline bool IsSceneBreak(const void* PrevScene, const void* Scene, double GapMs, double LoadGapMs) {
+		return !PrevScene || PrevScene != Scene || GapMs > LoadGapMs;
+	}
+
+	/// One merged light's real values, as the actor light level must see them while the render has
+	/// the light moved, dimmed or hidden. Source is the engine light the level code excludes by.
+	struct TrueLight {
+		const void* Key;
+		const void* Source;
+		float       Pos[3];
+		float       Radius;
+		float       MaxDiffuse;
+		bool        Hidden;
+	};
+
+	/// The engine's light-level share (0x7D31B0): (1 - clamp(d/r)^2) * max diffuse; 0 for the
+	/// excluded light (the actor's own).
+	inline float LightLevelShare(const TrueLight& L, const float At[3], const void* Exclude) {
+		if (L.Source == Exclude || L.Radius <= 0.0f) return 0.0f;
+		float T = Distance(L.Pos, At) / L.Radius;
+		if (T > 1.0f) T = 1.0f;
+		return (1.0f - T * T) * L.MaxDiffuse;
+	}
+
+	/// Double-buffered table of TrueLights: one writer (the main thread, once a frame) and readers on
+	/// any thread. A View taken before a Publish stays intact through the next one.
+	class TrueLightTable {
+	public:
+		static const int Capacity = 64;
+
+		struct View {
+			const TrueLight* Lights;
+			int              Count;
+			const TrueLight* Find(const void* Key) const {
+				for (int i = 0; i < Count; i++)
+					if (Lights[i].Key == Key) return &Lights[i];
+				return nullptr;
+			}
+		};
+
+		/// The buffer readers are not using; fill up to Capacity entries, then Publish.
+		TrueLight* BeginWrite() { return Buffers[1 - Front.load(std::memory_order_acquire)]; }
+
+		void Publish(int Count) {
+			int Back = 1 - Front.load(std::memory_order_relaxed);
+			Counts[Back] = Count < Capacity ? Count : Capacity;
+			Front.store(Back, std::memory_order_release);
+		}
+
+		View Read() const {
+			int F = Front.load(std::memory_order_acquire);
+			View V = { Buffers[F], Counts[F] };
+			return V;
+		}
+
+	private:
+		TrueLight        Buffers[2][Capacity] = {};
+		int              Counts[2] = { 0, 0 };
+		std::atomic<int> Front{ 0 };
+	};
+
 	/// Keeps clusters stable across frames: hysteresis between JoinDistance and LeaveDistance, fade
 	/// weights stepped by elapsed time, and a leader kept for the cluster's whole life.
 	class Clusterer {
@@ -102,16 +167,17 @@ namespace LightMergeMath {
 		void UpdateExistingClusters(const LightInput* Lights, const Params& P) {
 			for (size_t c = 0; c < Clusters.size(); ) {
 				Cluster& C = Clusters[c];
-				int Leader = Find(C.Leader);
-				if (Leader < 0 || !Lights[Leader].Eligible) {
-					Clusters.erase(Clusters.begin() + c);
-					continue;
-				}
-				Assigned[Leader] = 1;
 				for (size_t f = 0; f < C.Followers.size(); ) {
 					if (Find(C.Followers[f].Key) < 0) C.Followers.erase(C.Followers.begin() + f);
 					else f++;
 				}
+				int Leader = Find(C.Leader);
+				if ((Leader < 0 || !Lights[Leader].Eligible) && !PromoteFollower(C, Lights)) {
+					Clusters.erase(Clusters.begin() + c);
+					continue;
+				}
+				Leader = Find(C.Leader);
+				Assigned[Leader] = 1;
 				if (C.Followers.empty()) {
 					Clusters.erase(Clusters.begin() + c);
 					continue;
@@ -129,6 +195,25 @@ namespace LightMergeMath {
 				}
 				c++;
 			}
+		}
+
+		/// The leader's light is gone or ineligible: the most absorbed eligible follower (nearest the
+		/// centre on a tie) leads instead, so the others stay merged and the group's brightness does not
+		/// jump. False when no follower is left to lead.
+		bool PromoteFollower(Cluster& C, const LightInput* Lights) {
+			int Best = -1;
+			float BestDist = 0.0f;
+			for (size_t f = 0; f < C.Followers.size(); f++) {
+				const LightInput& L = Lights[Find(C.Followers[f].Key)];
+				if (!L.Eligible) continue;
+				float Dist = Distance(L.Pos, C.Centroid);
+				float W = C.Followers[f].Weight, BestW = Best < 0 ? -1.0f : C.Followers[Best].Weight;
+				if (W > BestW || (W == BestW && Dist < BestDist)) { Best = (int)f; BestDist = Dist; }
+			}
+			if (Best < 0) return false;
+			C.Leader = C.Followers[Best].Key;
+			C.Followers.erase(C.Followers.begin() + Best);
+			return !C.Followers.empty();
 		}
 
 		/// The leader has walked beyond LeaveDistance of the cluster's last centre (the same test a

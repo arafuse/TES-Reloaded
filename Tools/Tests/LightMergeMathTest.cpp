@@ -193,6 +193,57 @@ static void LeaderScaleExponent() {
 	CHECK_NEAR(LeaderScale(3.0f, 1.0f), 4.0, 1e-6);
 }
 
+static void LeaderVanishesKeepsGroup() {
+	Clusterer C;
+	LightInput L[] = { Torch(&KeyA, 0), Torch(&KeyB, 100), Torch(&KeyC, 50), Torch(&KeyD, 60) };
+	C.Update(L, 4, P, 0.0f, true);
+	CHECK(Out(C, 2).Role == Role_Leader);
+	LightInput Rest[] = { Torch(&KeyA, 0), Torch(&KeyB, 100), Torch(&KeyD, 60) };
+	C.Update(Rest, 3, P, 0.016f, false);
+	CHECK(Out(C, 2).Role == Role_Leader);
+	CHECK(Out(C, 0).Role == Role_Follower);
+	CHECK(Out(C, 1).Role == Role_Follower);
+	CHECK_NEAR(Out(C, 0).Weight, 1.0, 1e-6);
+	CHECK_NEAR(Out(C, 1).Weight, 1.0, 1e-6);
+	CHECK(Out(C, 0).Hidden);
+	CHECK_NEAR(Out(C, 2).ColorScale, 1.73205, 1e-4);
+}
+
+static void SceneBreakOnlyOnRealChange() {
+	int WorldA, WorldB;
+	CHECK(IsSceneBreak(nullptr, &WorldA, 16.0, 1000.0));
+	CHECK(!IsSceneBreak(&WorldA, &WorldA, 16.0, 1000.0));
+	CHECK(IsSceneBreak(&WorldA, &WorldB, 16.0, 1000.0));
+	CHECK(IsSceneBreak(&WorldA, &WorldA, 1500.0, 1000.0));
+}
+
+static void TrueLightShareMatchesEngine() {
+	TrueLight L = { &KeyA, &KeyB, { 0.0f, 0.0f, 0.0f }, 200.0f, 0.8f, false };
+	float At[3] = { 100.0f, 0.0f, 0.0f };
+	CHECK_NEAR(LightLevelShare(L, At, nullptr), 0.6, 1e-6);
+	float Far[3] = { 300.0f, 0.0f, 0.0f };
+	CHECK_NEAR(LightLevelShare(L, Far, nullptr), 0.0, 1e-6);
+	CHECK_NEAR(LightLevelShare(L, At, &KeyB), 0.0, 1e-6);
+}
+
+static void TrueLightViewSurvivesNextPublish() {
+	TrueLightTable T;
+	TrueLight* W = T.BeginWrite();
+	W[0] = { &KeyA, &KeyB, { 0.0f, 0.0f, 0.0f }, 200.0f, 0.8f, true };
+	T.Publish(1);
+	TrueLightTable::View V = T.Read();
+	CHECK(V.Count == 1);
+	CHECK(V.Find(&KeyA) != nullptr);
+	CHECK(V.Find(&KeyC) == nullptr);
+	W = T.BeginWrite();
+	W[0] = { &KeyC, &KeyD, { 9.0f, 9.0f, 9.0f }, 50.0f, 0.1f, false };
+	T.Publish(1);
+	CHECK(V.Find(&KeyA) != nullptr);
+	CHECK_NEAR(V.Find(&KeyA)->Radius, 200.0, 1e-6);
+	CHECK(T.Read().Find(&KeyC) != nullptr);
+	CHECK(T.Read().Find(&KeyA) == nullptr);
+}
+
 int main() {
 	TwoMatchingSnap();
 	ThreeMatchingLeaderNearestCentroid();
@@ -206,6 +257,10 @@ int main() {
 	SnapOnGap();
 	LeaderWalksAwayDissolves();
 	LeaderScaleExponent();
+	LeaderVanishesKeepsGroup();
+	SceneBreakOnlyOnRealChange();
+	TrueLightShareMatchesEngine();
+	TrueLightViewSurvivesNextPublish();
 	if (Failures) { std::printf("LightMergeMath: %d check(s) failed\n", Failures); return 1; }
 	std::printf("LightMergeMath: all tests passed\n");
 	return 0;
