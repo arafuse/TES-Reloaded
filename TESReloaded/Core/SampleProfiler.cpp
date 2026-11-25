@@ -655,4 +655,8 @@ namespace SampleProfiler {
 
 	bool IsRunning() { return InterlockedCompareExchange(&gRunning, 1, 1) == 1; }
 
+	void Begin() { if (!IsRunning()) Start(); }
+
+	void End() { if (IsRunning()) Stop(); }
+
 }

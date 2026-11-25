@@ -1,5 +1,6 @@
 #include "LightMerge.h"
 #include "FrameProfiler.h"
+#include "SampleProfiler.h"
 #include "LightMergeMath.h"
 
 #include <unordered_map>
@@ -56,6 +57,7 @@ namespace {
 	int            gDebugFramesLeft = 0;
 	unsigned       gDebugFrameIndex = 0;
 	int            gDepth = 0;
+	bool           gAutoSampling = false;
 	unsigned       gClusters = 0, gMembers = 0, gHidden = 0;
 
 	LightMergeMath::Clusterer                           gClusterer;
@@ -187,13 +189,14 @@ namespace {
 		return false;
 	}
 
-	/// Live dynamic point lights of the scene node; carried NPC lights are the eligible ones.
+	/// Live point lights of the scene node; carried NPC lights are the eligible ones. Carried torches
+	/// leave +0x104 clear, so it is not a filter.
 	void CollectInputs(ShadowSceneNode* Node) {
 		gInputs.clear();
 		gInputScene.clear();
 		for (NiTList<ShadowSceneLight>::Entry* E = Node->lights.start; E; E = E->next) {
 			ShadowSceneLight* Scene = E->data;
-			if (!Scene || !IsDynamic(Scene) || !IsPointLight(Scene)) continue;
+			if (!Scene || !IsPointLight(Scene)) continue;
 			NiPointLight* Light = Scene->sourceLight;
 			if (!Light || Light->m_uiRefCount <= 1) continue;
 			LightMergeMath::LightInput In = {};
@@ -270,6 +273,30 @@ namespace {
 		gStates.clear();
 	}
 
+	/// LightMergeDebug >= 2: samples the main thread from a load until the scene's lights go out.
+	/// The report's own time is kept out of the next frame's gap so it is not taken for a load.
+	void StopAutoSampler(const char* Why) {
+		if (!gAutoSampling) return;
+		gAutoSampling = false;
+		Logger::Log("[LightMerge] sampler stopped (%s) at debug frame %u", Why, gDebugFrameIndex);
+		double Before = TheFrameRateManager->GetPerformance();
+		SampleProfiler::End();
+		gLastApplyMs += TheFrameRateManager->GetPerformance() - Before;
+	}
+
+	void UpdateAutoSampler(bool WindowStart) {
+		if (TheSettingManager->SettingsMain.Develop.LightMergeDebug < 2) return;
+		if (gAutoSampling) {
+			if (gFrame.Stats.Lights == 0) StopAutoSampler("lights out");
+			else if (gDebugFramesLeft <= 1) StopAutoSampler("window end");
+			return;
+		}
+		if (!WindowStart || gFrame.Stats.Lights == 0 || SampleProfiler::IsRunning()) return;
+		Logger::Log("[LightMerge] sampler started with %u lights", gFrame.Stats.Lights);
+		SampleProfiler::Begin();
+		gAutoSampling = SampleProfiler::IsRunning();
+	}
+
 	void LogDebugRow() {
 		const FrameCost& F = gFrame;
 		Logger::Log("[LightMerge] frame %3u  %7.2f ms | walks %3u %6.3f ms | process %u %6.3f ms | light culls %3u %6.3f ms | lights %u dyn %u vis %u geom %u | merged %u in %u, hidden %u",
@@ -307,6 +334,7 @@ namespace LightMerge {
 		gCullTimeCount = 0;
 		gClusters = gMembers = gHidden = 0;
 		if (Discontinuity && TheSettingManager->SettingsMain.Develop.LightMergeDebug) {
+			StopAutoSampler("load or cell change");
 			gDebugFramesLeft = kDebugWindowFrames;
 			gDebugFrameIndex = 0;
 			Logger::Log("[LightMerge] ---- load or cell change: logging %d frames ----", kDebugWindowFrames);
@@ -337,6 +365,7 @@ namespace LightMerge {
 		FrameProfiler::Count(FrameProfiler::Cnt_MergeMembers, gMembers);
 		FrameProfiler::Count(FrameProfiler::Cnt_MergeHidden, gHidden);
 		if (gDebugFramesLeft > 0) {
+			UpdateAutoSampler(gDebugFrameIndex == 0);
 			LogDebugRow();
 			if (gDebugFrameIndex % kDumpEveryFrames == 0) DumpLights();
 			gDebugFramesLeft--;
