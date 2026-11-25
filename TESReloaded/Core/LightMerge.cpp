@@ -14,6 +14,8 @@ namespace {
 	const UInt32 kLightGeometryWalk    = 0x007C5F60;
 	const UInt32 kLightCullProcess     = 0x007D6390;
 	const UInt32 kLightAffectsObject   = 0x007D2EA0;
+	const UInt32 kActorLightLevel      = 0x00655FE0;
+	const UInt32 kLightLevelFalloff    = 0x007D31B0;
 
 	const UInt16 kLightStateCulled     = 0xFF;
 	const double kLoadGapMs            = 1000.0;
@@ -21,6 +23,7 @@ namespace {
 	const int    kDumpEveryFrames      = 30;
 	const int    kMaxTimedLights       = 64;
 	const int    kMaxHidden            = 64;
+	const int    kMaxProbeLights       = 64;
 
 	/// Light counts sampled from the scene node's list after the last light pass of the frame.
 	struct LightStats {
@@ -67,6 +70,28 @@ namespace {
 	/// thread only, count last, so a reader on another thread never sees a half-written entry.
 	ShadowSceneLight* gHiddenScene[kMaxHidden];
 	volatile LONG     gHiddenCount = 0;
+
+	/// A hidden follower's real values, for the actor light level (which may run on the AI thread
+	/// while the render has the light dimmed and refused).
+	struct HiddenLight {
+		const ShadowSceneLight* Scene;
+		const NiPointLight*     Source;
+		NiPoint3                Pos;
+		float                   Radius;
+		float                   MaxDiffuse;
+	};
+	HiddenLight gHiddenLights[kMaxHidden];
+
+	/// What the engine's light-level loop summed for one actor, seen through its falloff calls.
+	struct LightLevelProbe {
+		bool                    Active, Captured, Overflow;
+		float                   X, Y, Z;
+		const void*             Exclude;
+		int                     Seen;
+		const ShadowSceneLight* SeenLights[kMaxProbeLights];
+	};
+	thread_local LightLevelProbe tProbe;
+	unsigned gLevelFixes = 0;
 	unsigned       gClusters = 0, gMembers = 0, gHidden = 0;
 
 	LightMergeMath::Clusterer                           gClusterer;
@@ -147,6 +172,57 @@ namespace {
 			return false;
 		}
 		return LightAffectsObject(This, Edx, Object, Light);
+	}
+
+	/// 0x7D31B0, one light's share of an actor's light level: (1 - clamp(d/r)^2) * max(diffuse),
+	/// skipped for the actor's own light. Watched only to learn what the NPC loop summed.
+	float (__fastcall* LightLevelFalloff)(ShadowSceneLight*, void*, float, float, float, const void*) = (float (__fastcall*)(ShadowSceneLight*, void*, float, float, float, const void*))kLightLevelFalloff;
+	float __fastcall TrackLightLevelFalloff(ShadowSceneLight* This, void* Edx, float X, float Y, float Z, const void* Exclude) {
+		LightLevelProbe& P = tProbe;
+		if (P.Active) {
+			P.Captured = true;
+			P.X = X; P.Y = Y; P.Z = Z;
+			P.Exclude = Exclude;
+			if (P.Seen < kMaxProbeLights) P.SeenLights[P.Seen++] = This;
+			else P.Overflow = true;
+		}
+		return LightLevelFalloff(This, Edx, X, Y, Z, Exclude);
+	}
+
+	float HiddenShare(const HiddenLight& H, const LightLevelProbe& P) {
+		if (H.Source == P.Exclude || H.Radius <= 0.0f) return 0.0f;
+		float DX = P.X - H.Pos.x, DY = P.Y - H.Pos.y, DZ = P.Z - H.Pos.z;
+		float T = std::sqrt(DX * DX + DY * DY + DZ * DZ) / H.Radius;
+		if (T > 1.0f) T = 1.0f;
+		return (1.0f - T * T) * H.MaxDiffuse;
+	}
+
+	/// 0x655FE0, an actor's light level (0-100) for detection. The player's path sums the scene
+	/// node's own light list, which keeps hidden followers. An NPC's sums the lights linked to its
+	/// lighting property, which the refused followers have left, so their share is added back from
+	/// the snapshot; adding before the 100 clamp equals adding after it, as every share is >= 0.
+	float (__fastcall* ActorLightLevel)(void*, void*, Actor*, UInt32) = (float (__fastcall*)(void*, void*, Actor*, UInt32))kActorLightLevel;
+	float __fastcall TrackActorLightLevel(void* Process, void* Edx, Actor* Subject, UInt32 Flag) {
+		LONG Hidden = gHiddenCount;
+		if (Hidden == 0 || (void*)Subject == (void*)Player) return ActorLightLevel(Process, Edx, Subject, Flag);
+		LightLevelProbe Outer = tProbe;
+		LightLevelProbe& P = tProbe;
+		P.Active = true; P.Captured = false; P.Overflow = false; P.Seen = 0;
+		float Level = ActorLightLevel(Process, Edx, Subject, Flag);
+		P.Active = false;
+		float Added = 0.0f;
+		if (P.Captured && !P.Overflow) {
+			for (LONG h = 0; h < Hidden && h < kMaxHidden; h++) {
+				const HiddenLight& H = gHiddenLights[h];
+				bool Summed = false;
+				for (int i = 0; i < P.Seen && !Summed; i++) Summed = P.SeenLights[i] == H.Scene;
+				if (!Summed) Added += HiddenShare(H, P);
+			}
+		}
+		tProbe = Outer;
+		if (Added <= 0.0f) return Level;
+		gLevelFixes++;
+		return std::fmin(100.0f, Level + Added * 100.0f);
 	}
 
 	void AddCullTime(ShadowSceneLight* Light, double Ms) {
@@ -270,7 +346,11 @@ namespace {
 			gMembers++;
 			if (O.Hidden) {
 				gHidden++;
-				if (Hidden < kMaxHidden) gHiddenScene[Hidden++] = gInputScene[i];
+				if (Hidden < kMaxHidden) {
+					gHiddenLights[Hidden] = { gInputScene[i], Light, Saved.Pos, Saved.Radius,
+						std::fmax(Saved.Diff.r, std::fmax(Saved.Diff.g, Saved.Diff.b)) };
+					gHiddenScene[Hidden++] = gInputScene[i];
+				}
 			}
 			if (!Leader) continue;
 			gClusters++;
@@ -334,9 +414,9 @@ namespace {
 
 	void LogDebugRow() {
 		const FrameCost& F = gFrame;
-		Logger::Log("[LightMerge] frame %3u  %7.2f ms | walks %3u %6.3f ms | process %u %6.3f ms | light culls %3u %6.3f ms | lights %u dyn %u vis %u geom %u | merged %u in %u, hidden %u | reach tests %u, refused %u",
+		Logger::Log("[LightMerge] frame %3u  %7.2f ms | walks %3u %6.3f ms | process %u %6.3f ms | light culls %3u %6.3f ms | lights %u dyn %u vis %u geom %u | merged %u in %u, hidden %u | reach tests %u, refused %u | npc light fixes %u",
 			gDebugFrameIndex, gFrameMs, F.Walks, F.WalkMs, F.ProcessCalls, F.ProcessMs, F.Culls, F.CullMs,
-			F.Stats.Lights, F.Stats.Dynamic, F.Stats.Visible, F.Stats.GeomPairs, gMembers, gClusters, gHidden, gAffectTests, gAffectRejects);
+			F.Stats.Lights, F.Stats.Dynamic, F.Stats.Visible, F.Stats.GeomPairs, gMembers, gClusters, gHidden, gAffectTests, gAffectRejects, gLevelFixes);
 	}
 }
 
@@ -347,7 +427,11 @@ void CreateLightMergeHook() {
 	DetourAttach(&(PVOID&)SceneLightProcess, &TrackSceneLightProcess);
 	DetourAttach(&(PVOID&)LightGeometryWalk, &TrackLightGeometryWalk);
 	if (TheSettingManager->SettingsMain.Develop.LightMergeDebug) DetourAttach(&(PVOID&)LightCullProcess, &TrackLightCullProcess);
-	if (TheSettingManager->SettingsMain.LightMerge.Enabled) DetourAttach(&(PVOID&)LightAffectsObject, &TrackLightAffectsObject);
+	if (TheSettingManager->SettingsMain.LightMerge.Enabled) {
+		DetourAttach(&(PVOID&)LightAffectsObject, &TrackLightAffectsObject);
+		DetourAttach(&(PVOID&)ActorLightLevel, &TrackActorLightLevel);
+		DetourAttach(&(PVOID&)LightLevelFalloff, &TrackLightLevelFalloff);
+	}
 	if (DetourTransactionCommit() != NO_ERROR) {
 		Logger::Log("[LightMerge] light pass hooks failed; not installed");
 		return;
@@ -411,7 +495,7 @@ namespace LightMerge {
 			gDebugFramesLeft--;
 			gDebugFrameIndex++;
 		}
-		gAffectTests = gAffectRejects = 0;
+		gAffectTests = gAffectRejects = gLevelFixes = 0;
 	}
 
 	bool IsHidden(const NiPointLight* Light) {
