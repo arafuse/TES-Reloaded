@@ -13,12 +13,14 @@ namespace {
 	const UInt32 kSceneLightProcess    = 0x007C78D0;
 	const UInt32 kLightGeometryWalk    = 0x007C5F60;
 	const UInt32 kLightCullProcess     = 0x007D6390;
+	const UInt32 kLightAffectsObject   = 0x007D2EA0;
 
 	const UInt16 kLightStateCulled     = 0xFF;
 	const double kLoadGapMs            = 1000.0;
 	const int    kDebugWindowFrames    = 300;
 	const int    kDumpEveryFrames      = 30;
 	const int    kMaxTimedLights       = 64;
+	const int    kMaxHidden            = 64;
 
 	/// Light counts sampled from the scene node's list after the last light pass of the frame.
 	struct LightStats {
@@ -58,6 +60,13 @@ namespace {
 	unsigned       gDebugFrameIndex = 0;
 	int            gDepth = 0;
 	bool           gAutoSampling = false;
+	unsigned       gAffectTests = 0, gAffectRejects = 0;
+
+	/// Fully absorbed followers from the last ApplyFrame. Kept until the next one, because the engine
+	/// also links lights to objects in the update phase, outside the render; written on the main
+	/// thread only, count last, so a reader on another thread never sees a half-written entry.
+	ShadowSceneLight* gHiddenScene[kMaxHidden];
+	volatile LONG     gHiddenCount = 0;
 	unsigned       gClusters = 0, gMembers = 0, gHidden = 0;
 
 	LightMergeMath::Clusterer                           gClusterer;
@@ -118,6 +127,26 @@ namespace {
 		}
 		gFrame.WalkMs += QpcMs(FrameProfiler::QpcNow() - Start);
 		gFrame.Walks++;
+	}
+
+	bool IsHiddenScene(const ShadowSceneLight* Light) {
+		LONG Count = gHiddenCount;
+		for (LONG i = 0; i < Count; i++)
+			if (gHiddenScene[i] == Light) return true;
+		return false;
+	}
+
+	/// 0x7D2EA0, "does this light reach this object": the cull re-asks it for every light on every
+	/// visible object each frame (0x7C6100), and the light's update-phase scene walk prunes on it.
+	/// Answering no for an absorbed follower drops it from every object, which is what saves the time.
+	bool (__fastcall* LightAffectsObject)(ShadowSceneLight*, void*, NiAVObject*, void*) = (bool (__fastcall*)(ShadowSceneLight*, void*, NiAVObject*, void*))kLightAffectsObject;
+	bool __fastcall TrackLightAffectsObject(ShadowSceneLight* This, void* Edx, NiAVObject* Object, void* Light) {
+		gAffectTests++;
+		if (IsHiddenScene(This)) {
+			gAffectRejects++;
+			return false;
+		}
+		return LightAffectsObject(This, Edx, Object, Light);
 	}
 
 	void AddCullTime(ShadowSceneLight* Light, double Ms) {
@@ -224,6 +253,8 @@ namespace {
 	void ApplyMerge() {
 		const std::vector<LightMergeMath::LightOutput>& Outputs = gClusterer.Outputs();
 		std::unordered_set<const void*> Leaders;
+		LONG Hidden = 0;
+		InterlockedExchange(&gHiddenCount, 0);
 		for (size_t i = 0; i < Outputs.size(); i++) {
 			const LightMergeMath::LightOutput& O = Outputs[i];
 			if (O.Role == LightMergeMath::Role_Solo) continue;
@@ -237,7 +268,10 @@ namespace {
 			Light->Diff.g *= O.ColorScale;
 			Light->Diff.b *= O.ColorScale;
 			gMembers++;
-			if (O.Hidden) gHidden++;
+			if (O.Hidden) {
+				gHidden++;
+				if (Hidden < kMaxHidden) gHiddenScene[Hidden++] = gInputScene[i];
+			}
 			if (!Leader) continue;
 			gClusters++;
 			Leaders.insert(O.Key);
@@ -253,6 +287,7 @@ namespace {
 				if (!Leaders.count(Key)) Logger::Log("[LightMerge] cluster ended: leader %p", Key);
 		}
 		gLastLeaders.swap(Leaders);
+		InterlockedExchange(&gHiddenCount, Hidden);
 	}
 
 	/// Puts back every value ApplyMerge changed, for lights still in the scene node's list.
@@ -299,9 +334,9 @@ namespace {
 
 	void LogDebugRow() {
 		const FrameCost& F = gFrame;
-		Logger::Log("[LightMerge] frame %3u  %7.2f ms | walks %3u %6.3f ms | process %u %6.3f ms | light culls %3u %6.3f ms | lights %u dyn %u vis %u geom %u | merged %u in %u, hidden %u",
+		Logger::Log("[LightMerge] frame %3u  %7.2f ms | walks %3u %6.3f ms | process %u %6.3f ms | light culls %3u %6.3f ms | lights %u dyn %u vis %u geom %u | merged %u in %u, hidden %u | reach tests %u, refused %u",
 			gDebugFrameIndex, gFrameMs, F.Walks, F.WalkMs, F.ProcessCalls, F.ProcessMs, F.Culls, F.CullMs,
-			F.Stats.Lights, F.Stats.Dynamic, F.Stats.Visible, F.Stats.GeomPairs, gMembers, gClusters, gHidden);
+			F.Stats.Lights, F.Stats.Dynamic, F.Stats.Visible, F.Stats.GeomPairs, gMembers, gClusters, gHidden, gAffectTests, gAffectRejects);
 	}
 }
 
@@ -312,6 +347,7 @@ void CreateLightMergeHook() {
 	DetourAttach(&(PVOID&)SceneLightProcess, &TrackSceneLightProcess);
 	DetourAttach(&(PVOID&)LightGeometryWalk, &TrackLightGeometryWalk);
 	if (TheSettingManager->SettingsMain.Develop.LightMergeDebug) DetourAttach(&(PVOID&)LightCullProcess, &TrackLightCullProcess);
+	if (TheSettingManager->SettingsMain.LightMerge.Enabled) DetourAttach(&(PVOID&)LightAffectsObject, &TrackLightAffectsObject);
 	if (DetourTransactionCommit() != NO_ERROR) {
 		Logger::Log("[LightMerge] light pass hooks failed; not installed");
 		return;
@@ -342,7 +378,11 @@ namespace LightMerge {
 
 		if (!TheSettingManager->SettingsMain.LightMerge.Enabled) return;
 		ShadowSceneNode* Node = SceneNode();
-		if (!Node || !Player || !Player->parentCell) { gClusterer.Reset(); return; }
+		if (!Node || !Player || !Player->parentCell) {
+			gClusterer.Reset();
+			InterlockedExchange(&gHiddenCount, 0);
+			return;
+		}
 		// Keys are scene-light pointers, whose addresses a load or cell change may reuse.
 		if (Discontinuity) gClusterer.Reset();
 		CollectInputs(Node);
@@ -371,10 +411,12 @@ namespace LightMerge {
 			gDebugFramesLeft--;
 			gDebugFrameIndex++;
 		}
+		gAffectTests = gAffectRejects = 0;
 	}
 
 	bool IsHidden(const NiPointLight* Light) {
-		return false;
+		auto It = gStates.find(Light);
+		return It != gStates.end() && It->second.Hidden;
 	}
 
 	bool TruePosition(const NiPointLight* Light, NiPoint3* Out) {
