@@ -439,7 +439,7 @@ SettingManager::SettingManager() {
 	GetPrivateProfileStringA("AnimationBlending", "StopBlendTime", "0.2", value, SettingStringBuffer, Filename);
 	SettingsMain.AnimationBlending.StopBlendTime = atof(value);
 
-	SettingsMain.LightMerge.Enabled = GetPrivateProfileIntA("LightMerge", "Enabled", 0, Filename);
+	SettingsMain.LightMerge.Enabled = GetPrivateProfileIntA("LightMerge", "Enabled", 1, Filename);
 	GetPrivateProfileStringA("LightMerge", "JoinDistance", "192.0", value, SettingStringBuffer, Filename);
 	SettingsMain.LightMerge.JoinDistance = atof(value);
 	GetPrivateProfileStringA("LightMerge", "LeaveDistance", "256.0", value, SettingStringBuffer, Filename);
