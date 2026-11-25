@@ -5,7 +5,7 @@ metadata:
   type: project
 ---
 
-`TESReloaded/Core/LightMerge.{h,cpp}` + engine-free `LightMergeMath.h` (harness `Tools/Tests/Run-LightMergeMathTest.ps1`). INI `[LightMerge]` (Enabled, JoinDistance 192, LeaveDistance 256, FadeTime, BrightnessExponent 0.5, Color/RadiusTolerance); off by default.
+`TESReloaded/Core/LightMerge.{h,cpp}` + engine-free `LightMergeMath.h` (harness `Tools/Tests/Run-LightMergeMathTest.ps1`). INI `[LightMerge]` (Enabled, JoinDistance 192, LeaveDistance 256, FadeTime, BrightnessExponent 0.5, Color/RadiusTolerance); on by default.
 
 - **Inputs**: scene-node point lights (`+0xFC`) whose source NiPointLight has `CanCarry`, refcount > 1, not a magic light, not under the player's nodes. Lights match on diffuse color and radius (the guard repro had a mod torch r 1280 and vanilla r 512, which never merge with each other).
 - **Per frame** (RenderHook::TrackRender): `ApplyFrame` clusters (hysteresis, time-based fade) and writes Diff ×scale, and the leader's world pos (centroid) and Spec.r (+reach); `RestoreFrame` puts everything back, so the update phase and saves see real values. Depth counter: the save thumbnail re-enters the render.

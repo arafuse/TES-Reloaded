@@ -59,4 +59,4 @@
 - [Reflection occlusion culling shelved](reflection-occlusion-not-worth-it.md) — kill gate: culling the water reflection saved 0.47 ms in the dense town (<1 ms bar); 253 skipped roots removed only 29 of ~3,250 draws
 - [Dense town CPU budget](dense-town-cpu-budget.md) — CPU-bound ~21 ms (GPU 7.0); far pass 11.2 ms, water reflection 4.73 ms (3,242 loaded-cell statics), OR shadow maps 1.4 ms; size bins
 - [Havok strip cache](havok-strip-cache.md) — HavokStripCache (on by default) makes hkNiTriStripsShape's child lookup O(1) per NiTriStripsData; assumes strips never change after first lookup (new in-place writers must invalidate); never join collision strips (MOPP indices)
-- [Light cluster merge](light-cluster-merge.md) — LightMerge: matching carried torches → one sqrt(N) leader, followers refused in 0x7D2EA0, NPC light level re-adds them; 34.4 → 21.8 ms in the guard repro; off by default; LightMergeDebug 1/2
+- [Light cluster merge](light-cluster-merge.md) — LightMerge: matching carried torches → one sqrt(N) leader, followers refused in 0x7D2EA0, NPC light level re-adds them; 34.4 → 21.8 ms in the guard repro; on by default; LightMergeDebug 1/2
