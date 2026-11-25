@@ -64,6 +64,8 @@ namespace FrameProfiler {
 		Buck_PassFar,             // the main pass RenderObject (the far pass when the shell is on)
 		Buck_PassShell,           // the near-shell RenderObject
 		Buck_PassReflection,      // NiRenderer_ReflectionPass 0x49BEF0: the water reflection's cull and draws
+		Buck_LightProcess,        // ShadowSceneNode light pass 0x7C78D0, inclusive (inside a pass span)
+		Buck_LightWalk,           // dynamic-light geometry list rebuild 0x7C5F60 (whole-scene walk), inclusive
 
 		Buck_COUNT
 	};
@@ -101,6 +103,15 @@ namespace FrameProfiler {
 		Cnt_OccQueried,     // of those, queried against the far-pass depth
 		Cnt_OccHidden,      // of those, hidden in the last far pass
 		Cnt_OccCulled,      // references skipped by the far pass this frame
+		Cnt_LightProcessCalls, // ShadowSceneNode light passes (0x7C78D0) this frame
+		Cnt_LightWalks,     // dynamic-light whole-scene walks (0x7C5F60) this frame
+		Cnt_Lights,         // lights in ShadowSceneNode::lights after the last light pass
+		Cnt_LightsDynamic,  // of those, dynamic (carried) lights
+		Cnt_LightsVisible,  // of those, not culled (lightState != 0xFF)
+		Cnt_LightGeomPairs, // geometry-list entries of the visible lights (each costs pass work)
+		Cnt_MergeClusters,  // light clusters merged this frame (LightMerge)
+		Cnt_MergeMembers,   // lights in those clusters, leaders included
+		Cnt_MergeHidden,    // fully absorbed followers
 		Cnt_COUNT
 	};
 

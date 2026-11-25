@@ -1,4 +1,4 @@
-- [Engine light-attach addresses](engine-light-attach-addresses.md) — RE'd ShadowSceneNode per-frame light processing: vtable 0xA904B4, entry 0x7C78D0 (slot 31) walks all lights; the heavy path 0x7D6390 never runs in this fork
+- [Engine light-attach addresses](engine-light-attach-addresses.md) — 0x7C78D0 holds the scene cull; the real light cost is the per-object re-link in the cull (0x7C6100 → linear search 0x7D5F80), reach test 0x7D2EA0; 0x7D6390 runs for every light but is cheap; +0x104 is 0 on carried torches
 - [Multi-game struct blocks](gameh-multigame-blocks.md) — Game.h AND GameNi.h define structs 3× (NV/OBLIVION/SKYRIM); OBLIVION is the MIDDLE block; layouts differ (e.g. BSShaderProperty)
 - [Shader pipeline facts](shader-pipeline-facts.md) — preshaders in .fx effects, recompile gate (Develop.CompileShaders), effect vs raw-shader split, tex2D-in-branch silently flattened; read before optimizing HLSL
 - [PAR shader interpolator layout](par-shader-interpolator-layout.md) — PAR VSO overrides must keep STOCK output registers; stock parallax formula; PAR follow-up passes test ZFUNC EQUAL, so POM shadow relief goes through a COLOR1 side channel, NEVER the main depth; extracting stock shaders from the .sdp
@@ -59,3 +59,4 @@
 - [Reflection occlusion culling shelved](reflection-occlusion-not-worth-it.md) — kill gate: culling the water reflection saved 0.47 ms in the dense town (<1 ms bar); 253 skipped roots removed only 29 of ~3,250 draws
 - [Dense town CPU budget](dense-town-cpu-budget.md) — CPU-bound ~21 ms (GPU 7.0); far pass 11.2 ms, water reflection 4.73 ms (3,242 loaded-cell statics), OR shadow maps 1.4 ms; size bins
 - [Havok strip cache](havok-strip-cache.md) — HavokStripCache (on by default) makes hkNiTriStripsShape's child lookup O(1) per NiTriStripsData; assumes strips never change after first lookup (new in-place writers must invalidate); never join collision strips (MOPP indices)
+- [Light cluster merge](light-cluster-merge.md) — LightMerge: matching carried torches → one sqrt(N) leader, followers refused in 0x7D2EA0, NPC light level re-adds them; 34.4 → 21.8 ms in the guard repro; on by default; LightMergeDebug 1/2

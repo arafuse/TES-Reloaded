@@ -159,6 +159,7 @@ copy "$(TargetDir)$(TargetName).pdb" "C:\Games\Steam\steamapps\common\Oblivion\D
     <ClInclude Include="..\TESReloaded\Core\CoSave.h" />
     <ClInclude Include="..\TESReloaded\Core\RainProbe.h" />
     <ClInclude Include="..\TESReloaded\Core\OcclusionCulling.h" />
+    <ClInclude Include="..\TESReloaded\Core\LightMerge.h" />
     <ClInclude Include="..\TESReloaded\Core\OcclusionCullMath.h" />
     <ClInclude Include="..\TESReloaded\Core\WetActors.h" />
     <ClInclude Include="..\TESReloaded\Core\WeatherSmoothing.h" />
@@ -216,6 +217,7 @@ copy "$(TargetDir)$(TargetName).pdb" "C:\Games\Steam\steamapps\common\Oblivion\D
     <ClCompile Include="..\TESReloaded\Core\CoSave.cpp" />
     <ClCompile Include="..\TESReloaded\Core\RainProbe.cpp" />
     <ClCompile Include="..\TESReloaded\Core\OcclusionCulling.cpp" />
+    <ClCompile Include="..\TESReloaded\Core\LightMerge.cpp" />
     <ClCompile Include="..\TESReloaded\Core\WetActors.cpp" />
     <ClCompile Include="..\TESReloaded\Core\WeatherSmoothing.cpp" />
     <ClCompile Include="..\TESReloaded\Core\MountedCombat.cpp" />

@@ -43,4 +43,11 @@ namespace SampleProfiler {
 
 	bool IsRunning();
 
+	/// Starts a run from code, as the key does (a module's own diagnostic window). Main thread only;
+	/// no-op while running.
+	void Begin();
+
+	/// Stops and reports the current run, however it was started. Main thread only; no-op when idle.
+	void End();
+
 }

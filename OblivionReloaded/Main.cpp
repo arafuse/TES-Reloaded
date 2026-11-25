@@ -10,6 +10,7 @@
 #include "WeatherMode.h"
 #include "Animation.h"
 #include "AnimationBlending.h"
+#include "LightMerge.h"
 #include "Dodge.h"
 #include "FlyCam.h"
 #include "PluginVersion.h"
@@ -61,6 +62,7 @@ extern "C" {
 			if (TheSettingManager->SettingsMain.Main.MemoryManagement) CreateMemoryManagementHook();
 			if (TheSettingManager->SettingsMain.Main.RagdollActorCollision) CreateRagdollCollisionHook();
 			if (TheSettingManager->SettingsMain.Main.HavokStripCache) CreateHavokStripCacheHook();
+			if (TheSettingManager->SettingsMain.LightMerge.Enabled || TheSettingManager->SettingsMain.Develop.LightMergeDebug) CreateLightMergeHook();
 			if (TheSettingManager->SettingsMain.Main.WeatherMinTransitionTime > 0.0f) CreateWeatherSmoothingHook();
 			if (TheSettingManager->SettingsMain.GrassMode.Enabled) CreateGrassHook();
 			CreateTreeCollisionHook();

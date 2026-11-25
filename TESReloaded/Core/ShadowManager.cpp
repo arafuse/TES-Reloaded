@@ -9,6 +9,7 @@
 #if defined(OBLIVION)
 #include "TreeCollision.h"
 #include "OcclusionCulling.h"
+#include "LightMerge.h"
 #endif
 #if defined(NEWVEGAS)
 #define RenderStateArgs 0, 0
@@ -486,6 +487,7 @@ ShadowManager::ShadowManager() {
 	for (int i = 0; i < PointLightMax; i++) {
 		PointSlots[i].Light = NULL;
 		PointSlots[i].BakedLightPos = D3DXVECTOR3(0.0f, 0.0f, 0.0f);
+		PointSlots[i].BakedFarPlane = 0.0f;
 		PointSlots[i].Checksum = 0;
 		PointSlots[i].Valid = false;
 		PointSlots[i].ViewCulled = false;
@@ -1935,7 +1937,7 @@ void ShadowManager::CollectSceneLights() {
 	NiTList<ShadowSceneLight>::Entry* Entry = SceneNode->lights.start;
 	while (Entry) {
 		NiPointLight* Light = Entry->data->sourceLight;
-		if (Light) {
+		if (Light && !LightMerge::IsHidden(Light)) {
 			int distance = (int)Light->GetDistance(&Player->pos);
 			SceneLights.emplace_back(distance, Light);
 		}
@@ -1970,7 +1972,7 @@ bool ShadowManager::PointShadowsNeeded() {
 bool ShadowManager::IsPointLightCandidate(NiPointLight* Light, SettingsShadowStruct::PointStruct* Settings, bool TorchOnBeltEnabled) {
 	if (!Light->CastShadows) return false;
 	if (IsLightFromMagic(Light)) return false;
-	float Radius = Light->Spec.r; // NiPointLight stores light radius in Spec.rgb
+	float Radius = Light->Spec.r - LightMerge::ShadowReach(Light); // NiPointLight stores light radius in Spec.rgb
 	if (Radius < Settings->LightRadiusMin || Radius > Settings->LightRadiusMax) return false;
 	// With EquipmentMode's torch on the belt, the stowed torch would cast from
 	// inside the player's body.
@@ -2161,10 +2163,11 @@ void ShadowManager::PublishPointLightConstants() {
 			LastLoggedLight[s] = NULL;
 			continue;
 		}
-		NiPoint3* LightPos = &Light->m_worldTransform.pos;
+		NiPoint3 Origin = PointShadowOrigin(Light);
+		NiPoint3* LightPos = &Origin;
 		// Carried torches use a fixed far plane: their large authored radius would
 		// waste the cube's precision on range the torch never lights.
-		float FarPlane = Light->CanCarry ? 257.0f : Light->Spec.r;
+		float FarPlane = Light->CanCarry ? 257.0f + LightMerge::ShadowReach(Light) : Light->Spec.r;
 		Positions[s].x = LightPos->x - TheRenderManager->CameraPosition.x;
 		Positions[s].y = LightPos->y - TheRenderManager->CameraPosition.y;
 		Positions[s].z = LightPos->z - TheRenderManager->CameraPosition.z;
@@ -2287,7 +2290,8 @@ static UInt64 RefLightPoseHash(const ShadowManager::RefLightInfo& Info) {
 // can step inside it before the next rebake.
 void ShadowManager::ClassifyRefForPointSlot(RefLightInfo& Info, int Slot, UInt64* Checksums) {
 	NiPointLight* Light = PointSlots[Slot].Light;
-	NiPoint3* LightPos = &Light->m_worldTransform.pos;
+	NiPoint3 Origin = PointShadowOrigin(Light);
+	NiPoint3* LightPos = &Origin;
 	float FarPlane = TheShaderManager->ShaderConst.ShadowMap.ShadowCastLightPosition[Slot].w;
 	float Radius = (Light->CanCarry || Info.IsActorType) ? FarPlane * 1.2f : FarPlane;
 
@@ -2483,11 +2487,13 @@ bool ShadowManager::PointSlotNeedsRebake(int Slot, UInt64 Checksum) {
 	if (!Slot_.Valid) return true;          // never baked, or reassigned to a different light
 	if (Slot_.ViewCulled) return true;      // baked for last frame's view only
 	if (!EnableStaticMaps) return true;     // post-cell-change warmup: havok still settling
-	NiPoint3* P = &Slot_.Light->m_worldTransform.pos;
-	D3DXVECTOR3 Pos(P->x, P->y, P->z);
+	NiPoint3 Origin = PointShadowOrigin(Slot_.Light);
+	D3DXVECTOR3 Pos(Origin.x, Origin.y, Origin.z);
 	// Covers carried torches too: a moving light is simply a moved light.
 	D3DXVECTOR3 Moved = Pos - Slot_.BakedLightPos;
 	if (D3DXVec3Length(&Moved) > PointLightMoveEpsilon) return true;
+	float FarPlane = TheShaderManager->ShaderConst.ShadowMap.ShadowCastLightPosition[Slot].w;
+	if (std::fabs(FarPlane - Slot_.BakedFarPlane) > PointLightMoveEpsilon) return true;
 	return Checksum != Slot_.Checksum;      // a caster within reach moved
 }
 
@@ -2546,8 +2552,9 @@ void ShadowManager::BakePointCube(int Slot) {
 	}
 
 	// Record what this cube was baked against, to detect staleness.
-	NiPoint3* P = &PointSlots[Slot].Light->m_worldTransform.pos;
-	PointSlots[Slot].BakedLightPos = D3DXVECTOR3(P->x, P->y, P->z);
+	NiPoint3 Origin = PointShadowOrigin(PointSlots[Slot].Light);
+	PointSlots[Slot].BakedLightPos = D3DXVECTOR3(Origin.x, Origin.y, Origin.z);
+	PointSlots[Slot].BakedFarPlane = TheShaderManager->ShaderConst.ShadowMap.ShadowCastLightPosition[Slot].w;
 	PointSlots[Slot].Valid = true;
 }
 
@@ -2679,6 +2686,12 @@ void ShadowManager::ResetIntervals() {
 	GameTime = -1;
 }
 
+
+NiPoint3 ShadowManager::PointShadowOrigin(NiPointLight* Light) {
+	NiPoint3 Origin;
+	if (LightMerge::TruePosition(Light, &Origin)) return Origin;
+	return Light->m_worldTransform.pos;
+}
 
 bool ShadowManager::IsLightFromMagic(NiPointLight* light) {
 	//TODO: a better way to check this

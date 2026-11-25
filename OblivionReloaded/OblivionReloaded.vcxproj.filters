@@ -116,6 +116,9 @@
     <ClInclude Include="..\TESReloaded\Core\OcclusionCulling.h">
       <Filter>Core</Filter>
     </ClInclude>
+    <ClInclude Include="..\TESReloaded\Core\LightMerge.h">
+      <Filter>Core</Filter>
+    </ClInclude>
     <ClInclude Include="..\TESReloaded\Core\OcclusionCullMath.h">
       <Filter>Core</Filter>
     </ClInclude>
@@ -281,6 +284,9 @@
       <Filter>Core</Filter>
     </ClCompile>
     <ClCompile Include="..\TESReloaded\Core\OcclusionCulling.cpp">
+      <Filter>Core</Filter>
+    </ClCompile>
+    <ClCompile Include="..\TESReloaded\Core\LightMerge.cpp">
       <Filter>Core</Filter>
     </ClCompile>
     <ClCompile Include="..\TESReloaded\Core\WetActors.cpp">

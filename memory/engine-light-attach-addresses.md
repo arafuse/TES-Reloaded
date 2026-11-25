@@ -1,19 +1,16 @@
 ---
 name: engine-light-attach-addresses
-description: "Reverse-engineered Oblivion.exe addresses for the ShadowSceneNode per-frame light processing (the \"unoptimized lights\" hotspot)"
+description: "RE'd + MEASURED ShadowSceneNode light processing: 0x7C78D0 holds the scene cull; the real per-light cost is the per-object light re-link in the cull (0x7C6100 → linear list search 0x7D5F80), quadratic in lights × objects each light reaches"
 metadata:
   type: reference
 ---
 
-From disassembling `Oblivion.exe` (1.2.0.416, ImageBase 0x400000).
+From disassembling `Oblivion.exe` (1.2.0.416) and measuring with the sampler ([[sampling-profiler]]); offsets are the OBLIVION block of GameNi.h (NiAVObject world pos +0x88, NiLight Diff +0xEC, Spec.r = radius +0xF8).
 
-- Scene-graph pointer table: `0x00B42F54` is `table[index*4]`, not a single pointer. Getter `0x007B4280`, setter `0x007B4270`. The plugin's `kShadowSceneNode` reads index 0. (So there are NO direct-global refs to hook — the attach code takes the node by pointer.)
-- **ShadowSceneNode vtable: `0x00A904B4`** (39 virtuals; RTTI TypeDescriptor `0x00B2D16C`). Impl cluster: `0x0070A000–0x0070C200` (inherited/overridden NiNode) + `0x007C7000–0x007C8300` (SSN-specific).
-- **Per-frame processing entry: `0x007C78D0`** (vtable slot 31, ~1255 B, SEH frame). Takes a NiCamera arg. Walks the ENTIRE `lights` NiTList (`ShadowSceneNode+0xE4`, entry: [0]=next,[8]=data=ShadowSceneLight), dispatches per-light, then sets up cull bounds/matrices (globals `0xB46638+`). Called ONLY through the vtable (no direct callers).
-- Per-light dispatch inside 0x7C78D0:
-  - `[SSL+0x104]!=0` → `0x007C6020` (211 B)
-  - `[SSL+0xF4]!=0` (shadow-casting flag) → `0x007D6390` — the heavy path: 1379 B, 4 nested loops, 25 geometry-list traversals (per-shadow-light × geometry association).
-  - else (ordinary light) → `0x007C77C0` (cheap, 184 B, no geometry loop; calls 0x7D5F80)
-  - finalize → `0x007C71B0` (390 B, 2 loops)
-
-Takeaway: Oblivion's light cost is LIGHT-centric, not O(objects×lights) per-object attach. MEASURED with in-game counters: the light flags at +0xF4/+0x104 are zero everywhere in this fork (engine shadows are off), so 0x7D6390 never runs and only the cheap path 0x7C77C0 -> 0x7D5F80 executes over ~19 lights/frame. Engine light processing is NOT a bottleneck here; do not re-derive.
+- Scene-graph pointer table `0x00B42F54` (`table[index*4]`, getter `0x7B4280`); index 0 = ShadowSceneNode, vtable `0xA904B4`. `lights` NiTList at SSN+0xE4 (start +0xE8).
+- **`0x7C78D0`** (vtable slot 31, thiscall 1 arg, `ret 4`, ~3 calls/frame) walks `lights` and then runs the **scene cull** itself (`NiNode::OnVisible` into a BSShaderAccumulator), so its inclusive time is mostly culling (~3.5 ms with no lights in the test scene).
+- Per-light dispatch inside it: source light missing or refcount ≤ 1 → `0x7C77C0` (teardown); else `+0x104 != 0` → `0x7C6020` (+ whole-scene walk 0x7C5F60); then unless (`+0xF4` shadow flag and `0x405A80`) → **`0x7D6390` ShadowSceneLight_CullProcess** for every live light. 0x7D6390 is CHEAP: ~0.1 ms/frame for 10 torches.
+- **Carried torches**: `+0xF4 = 0`, `+0xFC = 1` (point), `+0x104 = 0`, `CanCarry = 1`. +0x104 is NOT a "dynamic/moving" flag for them.
+- **The hotspot**: for every visible object the cull calls **`0x7C6100`** (via sub_7AD270): `0x7C5750` unlinks every non-shadow light from the object's lighting property (prop ID 4) through `0x7D6940`, whose `0x7D5F80` **linear-searches that light's object list** (SSL+0xE4, ~600–770 entries per torch in a town); then it asks **`0x7D2EA0`** ("light reaches object": thiscall(SSL, object, NiLight) `ret 8`, sphere test on world pos and Spec.r) for every scene light and re-links through `0x7D5790`. Cost ∝ lights per object × list length, every frame.
+- The update phase also walks each light's scene via `ShadowSceneLight_UpdateLightingProperty 0x7D59E0` (from `ShadowSceneLight_AddToScene`), pruned on the same 0x7D2EA0.
+- MEASURED: 10 guard torches in a town after load cost ~24 ms/frame CPU (34.4 vs ~10.5 ms frames; GPU idle). Refusing a light in 0x7D2EA0 drops it from every object within one cull and is the hook [[light-cluster-merge]] uses.

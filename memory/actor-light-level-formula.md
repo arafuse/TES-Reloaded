@@ -11,7 +11,7 @@ Statically RE'd. Complements [[sneak-detection-formula]].
 0x60D080), thiscall `(Actor*, 0)`, `ret 8`, float 0–100. Game.h's Oblivion block names slot 0xEA
 `GetLightAmount`, which is off by one (0xEA×4 = 0x3A8).
 - Point lights: the player path uses `sub_7C6570` (ShadowSceneNode `lights` list at +0xE4, first entry
-  +0xE8); NPCs walk the process's own list at +0x184 (`sub_7ED160`/`sub_7ED180`). Each light is
+  +0xE8); NPCs walk the process's own list at +0x184 (`sub_7ED160`/`sub_7ED180`). That +0x184 is a lighting property whose light list the cull re-links every frame (0x7C6100), so a light refused by the reach test 0x7D2EA0 drops out of NPC light levels but not the player's (see [[light-cluster-merge]]). Each light is
   `sub_7D31B0(SSL, x, y, z, exclude)`, thiscall `ret 0x10`: `(1 − clamp(dist/radius)²) × max(diffuse rgb)`
   when SSL `+0xFC` is set (point light), else just `max(diffuse rgb)`. There is **no occlusion** anywhere.
 - Then T: an interior (`TESObjectCELL_IsInterior`) adds max(ambient rgb) of the sun NiLight. An exterior adds

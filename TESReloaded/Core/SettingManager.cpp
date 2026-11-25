@@ -439,6 +439,19 @@ SettingManager::SettingManager() {
 	GetPrivateProfileStringA("AnimationBlending", "StopBlendTime", "0.2", value, SettingStringBuffer, Filename);
 	SettingsMain.AnimationBlending.StopBlendTime = atof(value);
 
+	SettingsMain.LightMerge.Enabled = GetPrivateProfileIntA("LightMerge", "Enabled", 1, Filename);
+	GetPrivateProfileStringA("LightMerge", "JoinDistance", "192.0", value, SettingStringBuffer, Filename);
+	SettingsMain.LightMerge.JoinDistance = atof(value);
+	GetPrivateProfileStringA("LightMerge", "LeaveDistance", "256.0", value, SettingStringBuffer, Filename);
+	SettingsMain.LightMerge.LeaveDistance = atof(value);
+	GetPrivateProfileStringA("LightMerge", "FadeTime", "0.5", value, SettingStringBuffer, Filename);
+	SettingsMain.LightMerge.FadeTime = atof(value);
+	GetPrivateProfileStringA("LightMerge", "BrightnessExponent", "0.5", value, SettingStringBuffer, Filename);
+	SettingsMain.LightMerge.BrightnessExponent = atof(value);
+	GetPrivateProfileStringA("LightMerge", "ColorTolerance", "0.02", value, SettingStringBuffer, Filename);
+	SettingsMain.LightMerge.ColorTolerance = atof(value);
+	GetPrivateProfileStringA("LightMerge", "RadiusTolerance", "1.0", value, SettingStringBuffer, Filename);
+	SettingsMain.LightMerge.RadiusTolerance = atof(value);
 	SettingsMain.FlyCam.Enabled = GetPrivateProfileIntA("FlyCam", "Enabled", 0, Filename);
 	GetPrivateProfileStringA("FlyCam", "ScrollMultiplier", "5.0", value, SettingStringBuffer, Filename);
 	SettingsMain.FlyCam.ScrollMultiplier = atof(value);
@@ -463,6 +476,7 @@ SettingManager::SettingManager() {
 	SettingsMain.Develop.LogSunShadowStealth = GetPrivateProfileIntA("Develop", "LogSunShadowStealth", 0, Filename);
 	SettingsMain.Develop.LogWetActors = GetPrivateProfileIntA("Develop", "LogWetActors", 0, Filename);
 	SettingsMain.Develop.LogAnimationBlending = GetPrivateProfileIntA("Develop", "LogAnimationBlending", 0, Filename);
+	SettingsMain.Develop.LightMergeDebug = GetPrivateProfileIntA("Develop", "LightMergeDebug", 0, Filename);
 
 	GameLoading = false;
 

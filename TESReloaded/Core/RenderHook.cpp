@@ -7,6 +7,7 @@
 #include "WetActors.h"
 #include "GrassTrail.h"
 #include "OcclusionCulling.h"
+#include "LightMerge.h"
 #include "HavokStripProfile.h"
 #include "HavokStripCache.h"
 
@@ -30,7 +31,8 @@ namespace FrameProfiler {
 			"Hook:Engine", "Hook:SetCT", "Hook:Resolve", "Hook:MidScene", "Hook:ShellWater",
 			"Mid:Resolve", "Mid:Setup", "Mid:Sun", "Mid:Probe", "Mid:ProbeRead", "Mid:Point", "Mid:Restore",
 			"GrassTrail",
-			"Pass:Far", "Pass:Shell", "Pass:Reflection"
+			"Pass:Far", "Pass:Shell", "Pass:Reflection",
+			"Light:Process", "Light:Walk"
 		};
 		const char* const GpuBucketNames[Gpu_COUNT] = {
 			"GPU:ShadowMaps", "GPU:ShadowExt", "GPU:ShadowPoint", "GPU:MainPass",
@@ -50,7 +52,9 @@ namespace FrameProfiler {
 			"TreeBranchesNear", "  groups", "TreeLeavesNear", "  groups",
 			"TreeBranchesFar", "  groups", "TreeLeavesFar", "  groups",
 			"TreeInstDraws", "TreeInstPieces",
-			"OccCandidates", "OccQueried", "OccHidden", "OccCulled"
+			"OccCandidates", "OccQueried", "OccHidden", "OccCulled",
+			"LightPasses", "LightWalks", "Lights", "  dynamic", "  visible", "  geom pairs",
+			"MergeClusters", "MergeMembers", "MergeHidden"
 		};
 		const int ReportFrames = 600;
 
@@ -713,6 +717,7 @@ void RenderHook::TrackRender(BSRenderedTexture* RenderedTexture) {
 	FrameProfiler::FrameBegin();
 	FrameProfiler::Scope FrameScope(FrameProfiler::Buck_FrameTotal);
 	TheFrameRateManager->UpdateFrameTime();
+	LightMerge::ApplyFrame();
 
 	// The sampler's phase boundary is the same envelope FrameProfiler measures,
 	// so "render" means the same thing in both reports.
@@ -731,6 +736,7 @@ void RenderHook::TrackRender(BSRenderedTexture* RenderedTexture) {
 	}
 	if (TheSettingManager->SettingsMain.Develop.LogShaders && TheKeyboardManager->OnKeyPressed(TheSettingManager->SettingsMain.Develop.LogShaders)) Logger::Log("START FRAME LOG");
 	(this->*Render)(RenderedTexture);
+	LightMerge::RestoreFrame();
 
 	// Close the envelope before FrameEnd, so the residual FrameEnd computes covers
 	// everything the engine's nested Render() did and the report is not timed into
