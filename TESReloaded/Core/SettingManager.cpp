@@ -94,7 +94,6 @@ SettingManager::SettingManager() {
 	SettingsMain.Main.RemoveUnderwater = GetPrivateProfileIntA("Main", "RemoveUnderwater", 1, Filename);
 	SettingsMain.Main.RemovePrecipitations = GetPrivateProfileIntA("Main", "RemovePrecipitations", 0, Filename);
 	SettingsMain.Main.MemoryManagement = GetPrivateProfileIntA("Main", "MemoryManagement", 0, Filename);
-	SettingsMain.Main.RagdollActorCollision = GetPrivateProfileIntA("Main", "RagdollActorCollision", 0, Filename);
 	GetPrivateProfileStringA("Main", "WeatherMinTransitionTime", "1.0", value, SettingStringBuffer, Filename);
 	SettingsMain.Main.WeatherMinTransitionTime = atof(value);
 	SettingsMain.Main.AnisotropicFilter = GetPrivateProfileIntA("Main", "AnisotropicFilter", 0, Filename);
