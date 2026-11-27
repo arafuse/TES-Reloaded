@@ -84,7 +84,6 @@ struct SettingsMainStruct {
 		bool	RemovePrecipitations;
 		bool	MemoryManagement;
 		// Lets character controllers collide with ragdoll bones (the engine disables the pair).
-		bool	RagdollActorCollision;
 		// Minimum real-time weather transition in seconds; 0 leaves transitions to the engine.
 		float	WeatherMinTransitionTime;
 		bool	FPSOverlay;

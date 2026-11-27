@@ -15,7 +15,6 @@
 #include "FlyCam.h"
 #include "PluginVersion.h"
 #include "MemoryManagement.h"
-#include "RagdollCollision.h"
 #include "TreeCollision.h"
 #include "TreeCover.h"
 #include "SunShadowStealth.h"
@@ -59,7 +58,6 @@ extern "C" {
 			CreateAnimationHook();
 			if (TheSettingManager->SettingsMain.AnimationBlending.Enabled) CreateAnimationBlendingHook();
 			if (TheSettingManager->SettingsMain.Main.MemoryManagement) CreateMemoryManagementHook();
-			if (TheSettingManager->SettingsMain.Main.RagdollActorCollision) CreateRagdollCollisionHook();
 			if (TheSettingManager->SettingsMain.LightMerge.Enabled || TheSettingManager->SettingsMain.Develop.LightMergeDebug) CreateLightMergeHook();
 			if (TheSettingManager->SettingsMain.Main.WeatherMinTransitionTime > 0.0f) CreateWeatherSmoothingHook();
 			if (TheSettingManager->SettingsMain.GrassMode.Enabled) CreateGrassHook();
