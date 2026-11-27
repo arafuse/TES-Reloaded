@@ -51,7 +51,7 @@ namespace FrameProfiler {
 			"TreeBranchesNear", "  groups", "TreeLeavesNear", "  groups",
 			"TreeBranchesFar", "  groups", "TreeLeavesFar", "  groups",
 			"TreeInstDraws", "TreeInstPieces",
-			"OccCandidates", "OccQueried", "OccHidden", "OccCulled",
+			"OccCandidates", "OccQueried", "OccHidden", "OccCulled", "OccActors", "  hidden", "  culled",
 			"LightPasses", "LightWalks", "Lights", "  dynamic", "  visible", "  geom pairs",
 			"MergeClusters", "MergeMembers", "MergeHidden"
 		};

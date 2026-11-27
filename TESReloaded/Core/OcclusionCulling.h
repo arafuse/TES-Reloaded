@@ -5,6 +5,9 @@
 /// finished far-pass depth. The next frame's far pass skips the references that came back with no
 /// pixels by setting AppCulled on their roots for that pass only. Hidden objects that come back into
 /// view are drawn one frame late. Oblivion only; inert while [Main] OcclusionCulling is 0.
+/// Actors (characters and creatures) follow [Main] OcclusionCullActors: 0 leaves them out, 1 queries
+/// and counts them without culling, 2 (default) culls them; their query bound grows by
+/// OcclusionActorMargin because they move during the frame of latency.
 /// All functions run on the main thread, from RenderHook's TrackRenderObject.
 
 /// Before the far pass: reads last frame's queries, walks the loaded cells for candidates and sets

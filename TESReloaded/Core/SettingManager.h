@@ -109,6 +109,8 @@ struct SettingsMainStruct {
 		float	OcclusionAlwaysDrawDistance;	///< references whose bound is nearer than this are never culled
 		float	OcclusionCameraCutDistance;		///< camera move per frame above which last frame's results are dropped
 		UInt32	OcclusionMaxQueries;			///< occlusion queries issued per frame at most; the rest are drawn
+		UInt8	OcclusionCullActors;			///< 0 actors are never queried, 1 queried and counted but never culled, 2 culled like statics
+		float	OcclusionActorMargin;			///< world units added to an actor's query bound for its movement while results are a frame late
 		float	FarPlaneDistance;
 		float	FoV;
 		bool	NearShellEnabled;

@@ -103,6 +103,9 @@ namespace FrameProfiler {
 		Cnt_OccQueried,     // of those, queried against the far-pass depth
 		Cnt_OccHidden,      // of those, hidden in the last far pass
 		Cnt_OccCulled,      // references skipped by the far pass this frame
+		Cnt_OccActors,      // of the candidates, actors ([Main] OcclusionCullActors 1 or 2)
+		Cnt_OccActorsHidden, // of those, hidden in the last far pass
+		Cnt_OccActorsCulled, // of those, skipped by the far pass this frame (OcclusionCullActors 2)
 		Cnt_LightProcessCalls, // ShadowSceneNode light passes (0x7C78D0) this frame
 		Cnt_LightWalks,     // dynamic-light whole-scene walks (0x7C5F60) this frame
 		Cnt_Lights,         // lights in ShadowSceneNode::lights after the last light pass

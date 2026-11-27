@@ -8,6 +8,8 @@ static const int	kRingSize			= 3;
 static const UInt32	kNoQuery			= 0xFFFFFFFF;
 static const UInt32	kRectVertexSize		= 16;
 static const DWORD	kStatsIntervalMs	= 1000;
+static const UInt32	kVtblCharacter		= 0x00A6FC9C;
+static const UInt32	kVtblCreature		= 0x00A710F4;
 
 /// One queried reference: its (reference, root node) key and the index of its query in the slot.
 struct QueryEntry {
@@ -29,6 +31,7 @@ struct Candidate {
 	NiNode*			Node;
 	UInt64			Key;
 	NiBound*		Bound;
+	bool			Actor;
 };
 
 /// Per-far-pass counts, summed between stats lines.
@@ -41,6 +44,10 @@ struct Stats {
 	UInt32	NotReady;
 	UInt32	Hidden;
 	UInt32	Culled;
+	UInt32	ActorsNear;
+	UInt32	Actors;
+	UInt32	ActorsHidden;
+	UInt32	ActorsCulled;
 	UInt32	Dropped;
 	UInt32	Overflow;
 };
@@ -88,6 +95,12 @@ static bool IsCandidateType(UInt8 TypeID) {
 	default:
 		return false;
 	}
+}
+
+/// Characters and creatures, by exact vtable: the actor lists also hold spell projectiles.
+static bool IsActorRef(TESObjectREFR* Ref) {
+	UInt32 Vtable = *(UInt32*)Ref;
+	return Vtable == kVtblCharacter || Vtable == kVtblCreature;
 }
 
 static NiCamera* SceneCamera() {
@@ -162,7 +175,8 @@ static bool ReadPreviousResults(const float CameraPos[3], const void* WorldKey, 
 /// Appends one cell's candidates, counting the references that are always drawn instead. With Cull
 /// set, a candidate hidden in the last far pass gets AppCulled on its root, remembered in CulledNodes.
 /// Roots already AppCulled (disabled, or culled by the engine) are never candidates, so End never
-/// clears a flag the engine set.
+/// clears a flag the engine set. Actors are candidates only when OcclusionCullActors is set, and
+/// culled only when it is 2.
 static void CollectCell(TESObjectCELL* Cell, const CullCamera& Camera, bool Cull, Stats& Frame) {
 	if (!Cell) return;
 	SettingsMainStruct::MainStruct* Settings = &TheSettingManager->SettingsMain.Main;
@@ -173,7 +187,8 @@ static void CollectCell(TESObjectCELL* Cell, const CullCamera& Camera, bool Cull
 		NiNode* Node;
 		if (!Ref || Ref == Player || !(Node = Ref->GetNode())) continue;
 		if (Node->m_flags & NiAVObject::kFlag_AppCulled) continue;
-		if (!Ref->baseForm || !IsCandidateType(Ref->baseForm->formType)) continue;
+		bool Actor = IsActorRef(Ref);
+		if (Actor ? !Settings->OcclusionCullActors : (!Ref->baseForm || !IsCandidateType(Ref->baseForm->formType))) continue;
 		NiBound* Bound = Node->GetWorldBound();
 		if (!Bound || Bound->Radius <= 0.0f) continue;
 		float Center[3] = { Bound->Center.x, Bound->Center.y, Bound->Center.z };
@@ -182,16 +197,20 @@ static void CollectCell(TESObjectCELL* Cell, const CullCamera& Camera, bool Cull
 		float DistToSurface = std::sqrt(Dot3(D, D)) - Bound->Radius;
 		if (ClassifyCandidate(DistToSurface, Settings->OcclusionAlwaysDrawDistance, HasWater, Center[2] - Bound->Radius, WaterHeight) == Mode_AlwaysDraw) {
 			Frame.AlwaysDrawn++;
+			if (Actor) Frame.ActorsNear++;
 			continue;
 		}
 		UInt64 Key = MakeKey(Ref, Node);
-		Candidates.push_back({ Ref, Node, Key, Bound });
+		Candidates.push_back({ Ref, Node, Key, Bound, Actor });
+		if (Actor) Frame.Actors++;
 		if (!HiddenSet.count(Key)) continue;
 		Frame.Hidden++;
-		if (!Cull) continue;
+		if (Actor) Frame.ActorsHidden++;
+		if (!Cull || (Actor && Settings->OcclusionCullActors != 2)) continue;
 		Node->m_flags |= NiAVObject::kFlag_AppCulled;
 		CulledNodes.push_back(Node);
 		Frame.Culled++;
+		if (Actor) Frame.ActorsCulled++;
 	}
 }
 
@@ -204,6 +223,10 @@ static void LogStats(const Stats& Frame) {
 	Totals.Hidden += Frame.Hidden;
 	Totals.Culled += Frame.Culled;
 	Totals.Dropped += Frame.Dropped;
+	Totals.ActorsNear += Frame.ActorsNear;
+	Totals.Actors += Frame.Actors;
+	Totals.ActorsHidden += Frame.ActorsHidden;
+	Totals.ActorsCulled += Frame.ActorsCulled;
 	DWORD Now = GetTickCount();
 	if (!StatsStart) StatsStart = Now;
 	if (Now - StatsStart < kStatsIntervalMs) return;
@@ -211,6 +234,9 @@ static void LogStats(const Stats& Frame) {
 	Logger::Log("[Occlusion] per far pass over %u: candidates %.0f, always drawn %.0f, queried %.0f, ready %.0f, not ready %.0f, hidden %.0f, culled %.0f; dropped frames %u, overflow frames %u",
 		Totals.Frames, Totals.Candidates / N, Totals.AlwaysDrawn / N, Totals.Queried / N, Totals.Ready / N, Totals.NotReady / N,
 		Totals.Hidden / N, Totals.Culled / N, Totals.Dropped, Totals.Overflow);
+	if (TheSettingManager->SettingsMain.Main.OcclusionCullActors)
+		Logger::Log("[Occlusion]   actors: always drawn %.1f, candidates %.1f, hidden %.1f, culled %.1f",
+			Totals.ActorsNear / N, Totals.Actors / N, Totals.ActorsHidden / N, Totals.ActorsCulled / N);
 	Totals = {};
 	StatsStart = Now;
 }
@@ -252,6 +278,9 @@ void BeginOcclusionCull() {
 	FrameProfiler::Count(FrameProfiler::Cnt_OccCandidates, Frame.Candidates);
 	FrameProfiler::Count(FrameProfiler::Cnt_OccHidden, Frame.Hidden);
 	FrameProfiler::Count(FrameProfiler::Cnt_OccCulled, Frame.Culled);
+	FrameProfiler::Count(FrameProfiler::Cnt_OccActors, Frame.Actors);
+	FrameProfiler::Count(FrameProfiler::Cnt_OccActorsHidden, Frame.ActorsHidden);
+	FrameProfiler::Count(FrameProfiler::Cnt_OccActorsCulled, Frame.ActorsCulled);
 	if (Debug) LogStats(Frame);
 
 }
@@ -325,7 +354,8 @@ void IssueOcclusionQueries() {
 		if (Current.Entries.size() >= Capacity) { Overflow = true; break; }
 		float Center[3] = { C.Bound->Center.x, C.Bound->Center.y, C.Bound->Center.z };
 		QueryRect Rect;
-		if (ProjectBoundRect(Cam, Center, C.Bound->Radius + Move, (float)Viewport.X, (float)Viewport.Y, (float)Viewport.Width, (float)Viewport.Height, &Rect) != Rect_Ok) continue;
+		float Margin = Move + (C.Actor ? Settings->OcclusionActorMargin : 0.0f);
+		if (ProjectBoundRect(Cam, Center, C.Bound->Radius + Margin,(float)Viewport.X, (float)Viewport.Y, (float)Viewport.Width, (float)Viewport.Height, &Rect) != Rect_Ok) continue;
 		UInt32 Index = (UInt32)Current.Entries.size();
 		if (Index == Current.Queries.size()) {
 			IDirect3DQuery9* Query = NULL;

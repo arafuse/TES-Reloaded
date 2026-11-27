@@ -91,6 +91,9 @@ SettingManager::SettingManager() {
 	SettingsMain.Main.OcclusionCameraCutDistance = (float)atof(value);
 	if (SettingsMain.Main.OcclusionCameraCutDistance <= 0.0f) SettingsMain.Main.OcclusionCameraCutDistance = 128.0f;
 	SettingsMain.Main.OcclusionMaxQueries = min(65536u, max(256u, (UInt32)GetPrivateProfileIntA("Main", "OcclusionMaxQueries", 8192, Filename)));
+	SettingsMain.Main.OcclusionCullActors = (UInt8)min(2u, (UInt32)max(0, (int)GetPrivateProfileIntA("Main", "OcclusionCullActors", 2, Filename)));
+	GetPrivateProfileStringA("Main", "OcclusionActorMargin", "48.0", value, SettingStringBuffer, Filename);
+	SettingsMain.Main.OcclusionActorMargin = max(0.0f, (float)atof(value));
 	SettingsMain.Main.RemoveUnderwater = GetPrivateProfileIntA("Main", "RemoveUnderwater", 1, Filename);
 	SettingsMain.Main.RemovePrecipitations = GetPrivateProfileIntA("Main", "RemovePrecipitations", 0, Filename);
 	SettingsMain.Main.MemoryManagement = GetPrivateProfileIntA("Main", "MemoryManagement", 0, Filename);
