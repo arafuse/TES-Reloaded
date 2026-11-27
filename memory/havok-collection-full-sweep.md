@@ -24,8 +24,15 @@ From disassembly of Oblivion.exe 1.2.416 (`petool.py`) and the dense-town strip-
 - The exe has the MOPP query VMs (`hkMoppBvTreeShape`, `hkMopp*VirtualMachine`) but no MOPP compiler,
   so a runtime fix needs its own spatial index (e.g. filter the keys that slots 8/9 return while one
   of the five sweeps is running). Content fix: give the mesh packed strips under a MOPP (NifSkope).
-- NOT yet measured: the ms/frame inside the sweeps (strip lookup + per-triangle narrowphase).
+- **MEASURED, shelved (kill gate < 1 ms):** `HavokStripProfile` times each sweep (slot 8 to the -1
+  key, net of its recording) under `[Develop] ProfileFrame`. Dense town: 25 sweeps, **0.68 ms/frame**
+  in total (agent 9050F0 0.37, agent 905370 0.21, castRay 0.09, getAabb 0.01); the 407-triangle mesh
+  took 0.66 of it. A BV tree (MOPP content fix or a runtime key filter) could save at most that, or
+  ~1.3 ms if the ~2x fixed-timestep feedback seen for the strip cache holds.
+- Its owner search (pointer graph from each loaded reference's collision object) returns false
+  matches: one shape matched several unrelated NIFs. The 407-triangle mesh is likely
+  `Anequina\Architecture\Corinthe\Palace\Temple.nif` (ElsweyrAnequina.esp), not confirmed.
 
-**How to apply:** "many actors" Havok cost in a natural scene is often actors standing on such a
-mesh, not actor count. Time the five sweeps (target vtable 0xA9D010) before building anything. Havok
-work belongs in ProtoPlugin ([[protoplugin-sibling]]). See [[many-actors-havok-cost]].
+**How to apply:** don't build a collision BV tree for this town; reopen only if a scene's sweep total
+reaches ~1 ms. Havok work belongs in ProtoPlugin ([[protoplugin-sibling]]). See
+[[many-actors-havok-cost]].
