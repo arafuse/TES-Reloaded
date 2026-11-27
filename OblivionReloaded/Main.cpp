@@ -9,7 +9,6 @@
 #include "SleepingMode.h"
 #include "WeatherMode.h"
 #include "Animation.h"
-#include "AnimationBlending.h"
 #include "LightMerge.h"
 #include "Dodge.h"
 #include "FlyCam.h"
@@ -56,7 +55,6 @@ extern "C" {
 			CreateShadowsHook();
 			CreateWeatherModeHook();
 			CreateAnimationHook();
-			if (TheSettingManager->SettingsMain.AnimationBlending.Enabled) CreateAnimationBlendingHook();
 			if (TheSettingManager->SettingsMain.Main.MemoryManagement) CreateMemoryManagementHook();
 			if (TheSettingManager->SettingsMain.LightMerge.Enabled || TheSettingManager->SettingsMain.Develop.LightMergeDebug) CreateLightMergeHook();
 			if (TheSettingManager->SettingsMain.Main.WeatherMinTransitionTime > 0.0f) CreateWeatherSmoothingHook();

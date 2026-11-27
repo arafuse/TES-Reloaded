@@ -273,14 +273,6 @@ struct SettingsMainStruct {
 		UInt8	AcrobaticsLevel;
 		float	DoubleTapTime;
 	};
-
-	/// Minimum actor animation transition times in seconds (AnimationBlending.h); 0 leaves a kind to the engine.
-	struct AnimationBlendingStruct {
-		bool	Enabled;
-		float	MinBlendTime;		// starting any non-action group
-		float	ActionMinBlendTime;	// starting attacks, blocks, recoils, casts, dodges, jumps, equips, death
-		float	StopBlendTime;		// ease out when a single slot is stopped
-	};
 	
 	/// Merges clusters of matching NPC-carried lights into one light (LightMerge.h).
 	struct LightMergeStruct {
@@ -316,7 +308,6 @@ struct SettingsMainStruct {
 		UInt8	OcclusionCullDebug;		///< 1 logs occlusion stats each second, 2 freezes the first hidden set after a load, 3 measures without culling
 		UInt8	LogSunShadowStealth;	// logs the player sun shadow probe about once a second
 		UInt8	LogWetActors;			// logs player and nearest-NPC wetness about once a second
-		bool	LogAnimationBlending;	// logs every animation transition AnimationBlending lengthens
 		UInt8	LightMergeDebug;		///< 1 logs per-frame light cost for 300 frames after each load or cell change
 	};
 
@@ -334,7 +325,6 @@ struct SettingsMainStruct {
 	PurgerStruct				Purger;
 	GravityStruct				Gravity;
 	DodgeStruct					Dodge;
-	AnimationBlendingStruct		AnimationBlending;
 	LightMergeStruct			LightMerge;
 	FlyCamStruct				FlyCam;
 	DevelopStruct				Develop;
