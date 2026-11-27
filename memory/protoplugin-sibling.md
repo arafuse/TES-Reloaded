@@ -23,6 +23,8 @@ Oblivion Reloaded (INI `Data\OBSE\Plugins\ProtoPlugin.ini`). It also vendors a p
   from OR; see [[havok-strip-cache]])
 - Havok layer matrix 0xBA7DB0, pair Biped<->CharController set at GameInitialized, data only
   (RagdollCollision, moved here from OR; see [[havok-layer-collision-matrix]])
+- blend time site 0x4748D3 in PlaySequence (jump) and the entry of StopSequence 0x470FC0
+  (AnimationBlending, moved here from OR; see [[animation-transition-engine]])
 
 **Tools** in its `tools/` (usage in `tools/README.md`):
 - `petool.py`: static disassembly and caller search on Oblivion.exe. Stack offsets it prints are
