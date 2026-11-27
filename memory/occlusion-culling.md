@@ -23,6 +23,13 @@ and the tracked template INI both 1). Pure math lives in `OcclusionCullMath.h`
   `Occ:Issue` 0.18 ms (1255 queries), `Occ:End` 0.001 ms. About 5 % of the saving, so a CHC++-style
   re-query interval isn't worth it.
 - The town is still CPU-bound after culling ([[dense-town-cpu-budget]]).
+- **Actors** (`[Main] OcclusionCullActors`: 0 off, 1 query and count only, **2 cull, the default**;
+  `OcclusionActorMargin` 48 world units added to the query bound for movement during the frame of
+  lag). Dense town, `ProfileFrame` + census, same session, mode 1 vs 2: ~29 of 32 queried actors
+  hidden (4-5 more inside 1024 always drawn); far-pass actor draws 718 -> 160 and 688 -> 226;
+  `Pass:Far` 12.29 -> 8.56 and 11.99 -> 8.85 ms; FrameTotal ~19.5 -> ~16.3. A hidden actor costs
+  ~6.8 us per draw (~110 us per actor), ~3x a static draw. PresentMon with mode 2: median 19.18 ms
+  (CPU-bound, GPU busy 7.8); no same-session mode-1 capture. User saw no visual problems.
 - **Visual behaviour:** nothing pops in while walking or turning normally. Objects within
   `OcclusionAlwaysDrawDistance` (1024) are never culled. A camera jump of more than
   `OcclusionCameraCutDistance` (128), a world change, or a load draws everything for one frame.
@@ -34,6 +41,6 @@ and the tracked template INI both 1). Pure math lives in `OcclusionCullMath.h`
 - **Depth row:** the query depth is computed from the far pass's [M=15, F=400000] frustum with `FarPassDepth`, not from the NiCamera matrix (it matches the device's: `_33 1.000038`, `_43 -15.0006`; debug 1 logs both once).
 - **Keys, not pointers:** results are keyed by the (ref, root node) pair and applied only to references found again in this frame's cell walk. A stale pointer is never dereferenced, so a cell that unloads between frames can't crash it.
 - **Query results:** read them with `GetData(..., 0)` only, and treat S_FALSE as visible. Never read them back through LockRect; see [[d3d9-gpu-readback-stall]].
-- **Candidate types:** statics, containers, doors, furniture, activators and items. Lights, trees, grass, actors and the player are never candidates. Bounds that reach below the water plane are always drawn, because they show through refraction.
+- **Candidate types:** statics, containers, doors, furniture, activators and items, plus characters and creatures by exact vtable (0xA6FC9C / 0xA710F4; the actor lists also hold spell projectiles) when `OcclusionCullActors` is set. Lights, trees, grass and the player are never candidates. Bounds that reach below the water plane are always drawn, because they show through refraction.
 - **Debug modes (`[Develop] OcclusionCullDebug`, read at load):** 1 logs stats each second; 2 freezes the first non-empty hidden set after a load (save at the spot to inspect; holes show in the wrong places only when you walk away from the frozen spot); 3 measures only and never culls.
 - **The water reflection pass is not culled** ([[reflection-occlusion-not-worth-it]]).
