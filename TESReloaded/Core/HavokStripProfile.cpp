@@ -1,5 +1,4 @@
 #include "HavokStripProfile.h"
-#include "HavokStripCache.h"
 
 #include <intrin.h>
 #include <algorithm>
@@ -12,6 +11,7 @@ namespace HavokStripProfile {
 
 		const UInt32 kGetChildShapeSlot = 0x00A9D038;   // hkNiTriStripsShape vtable 0xA9D010, slot 10
 		const UInt32 kGetChildShape     = 0x00915D00;
+		const UInt32 kStripLookupPatch  = 0x00915D3F;   // start of the strip walk; a jump here means another plugin replaced it
 
 		/// Walk-length bins: strips skipped before the key's strip was found.
 		const int WalkBinCount = 7;
@@ -130,8 +130,8 @@ namespace HavokStripProfile {
 		Logger::Log("[FrameProfile]   -- hkNiTriStripsShape triangle lookup (0x915D00; update phase; per frame; recording re-walks the strips) --");
 		Logger::Log("[FrameProfile]   calls %.1f, strips walked %.1f (%.1f per call), off-main-thread calls dropped %.1f, distinct strip data %u",
 			gCalls * Inv, gWalked * Inv, gCalls ? (double)gWalked / gCalls : 0.0, gOffThread * Inv, (UInt32)gData.size());
-		if (HavokStripCache::Installed())
-			Logger::Log("[FrameProfile]   (strip cache installed: the engine no longer walks these; counts are the walk it replaced)");
+		if (*(const UInt8*)kStripLookupPatch == 0xE9)
+			Logger::Log("[FrameProfile]   (strip walk patched, e.g. by ProtoPlugin's HavokStripCache: counts are the walk it replaced)");
 
 		std::string Line = "[FrameProfile]   calls by strips walked:";
 		char Buffer[160];

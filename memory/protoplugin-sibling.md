@@ -18,7 +18,9 @@ Oblivion Reloaded (INI `Data\OBSE\Plugins\ProtoPlugin.ini`). It also vendors a p
 - knockdown update 0x6545E0: four `GetAV(Fatigue)` calls 0x654644 / 0x654888 / 0x6549A7 / 0x654C83
   (RagdollRecovery; holds ragdolls down, distinct from OR's RagdollCollision layer matrix)
 - follow speed recursion 0x5E38AA (FollowCycleGuard); cell-reset delete 0x4CFBEF (ResetSparesActors)
-- NiTriStrips link time on the loader thread (StripJoin, render data only; see [[havok-strip-cache]])
+- NiTriStrips link time on the loader thread (StripJoin, render data only)
+- strip walk 0x915D3F (jump) and the `~NiTriStripsData` call 0x71A113 (HavokStripCache, moved here
+  from OR; see [[havok-strip-cache]])
 
 **Tools** in its `tools/` (usage in `tools/README.md`):
 - `petool.py`: static disassembly and caller search on Oblivion.exe. Stack offsets it prints are
