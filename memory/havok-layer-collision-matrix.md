@@ -13,9 +13,9 @@ CustomPick rows 0x1C/0x1D.
 
 **The fix lives in ProtoPlugin** ([[protoplugin-sibling]]): `ProtoPlugin/RagdollCollision.cpp`,
 `[Ragdoll] bActorsPushRagdolls` (default 1). It sets the pair at GameInitialized; no code is patched.
-Its full write-up (filter function, collision-filter vtables, the open live-limb snagging question)
-is ProtoPlugin's `memory/module-ragdollcollision.md`. OR's `[Main] RagdollActorCollision` key is
-gone; a leftover line in an old INI is ignored.
+Tested extensively in game: walking actors do not snag on live actors' limbs. Its full write-up
+(filter function, collision-filter vtables) is ProtoPlugin's `memory/module-ragdollcollision.md`.
+OR's `[Main] RagdollActorCollision` key is gone; a leftover line in an old INI is ignored.
 
 **How to apply:** OR must not change rows 8 or 20 of the matrix, or hook `0x88B157`. Mind the proxy
 O(n²) manifold cost in [[many-actors-havok-cost]] if actor collision grows.
